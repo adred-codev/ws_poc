@@ -1,0 +1,29 @@
+{
+  "name": "odin-websocket-poc",
+  "version": "1.0.0",
+  "description": "WebSocket PoC with NATS pub/sub to replace polling mechanism",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "dev": "nodemon src/server.js",
+    "start": "node src/server.js",
+    "publisher": "node src/publisher.js",
+    "test": "node tests/load-test.js",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down"
+  },
+  "keywords": ["websocket", "nats", "real-time", "pubsub", "odin"],
+  "author": "Odin Development Team",
+  "license": "ISC",
+  "dependencies": {
+    "ws": "^8.14.2",
+    "nats": "^2.19.0",
+    "jsonwebtoken": "^9.0.2",
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}
