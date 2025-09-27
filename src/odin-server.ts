@@ -26,6 +26,13 @@ import {
   PriceUpdateMessage,
   TradeExecutedMessage
 } from './types/odin.types';
+import { metricsService } from './services/metrics-service';
+import metricsRoutes from './routes/metrics-routes';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const sc = StringCodec();
 
@@ -66,10 +73,27 @@ class OdinWebSocketServer {
     await this.setupNATS();
     this.setupHTTPServer();
     this.setupWebSocketServer();
+    this.setupMetricsIntegration();
     this.startHealthCheck();
     this.startMetricsReporting();
     this.startNonceCleaner();
     console.log('🚀 Odin WebSocket Server initialized with production features');
+  }
+
+  private setupMetricsIntegration(): void {
+    // Set component status for NATS
+    metricsService.setComponentStatus('nats', this.nats?.isClosed() ? 'disconnected' : 'connected');
+    metricsService.setComponentStatus('websocket', 'healthy');
+    metricsService.setComponentStatus('publisher', 'active');
+
+    // Set up NATS connection monitoring
+    if (this.nats) {
+      this.nats.closed().then(() => {
+        metricsService.setComponentStatus('nats', 'disconnected');
+      });
+    }
+
+    console.log('📊 Metrics service integration complete');
   }
 
   private async setupNATS(): Promise<void> {
@@ -140,12 +164,16 @@ class OdinWebSocketServer {
           // Track metrics
           const latency = Date.now() - startTime;
           this.updateLatencyMetrics(latency);
+          metricsService.recordLatency(latency);
+          metricsService.recordMessage(true);
           this.metrics.messagesDelivered += delivered;
           this.metrics.messagesPublished++;
 
         } catch (error) {
           console.error(`❌ Error processing ${type} message:`, error);
           this.metrics.errors++;
+          metricsService.recordError('message_processing', error instanceof Error ? error.message : 'Unknown error');
+          metricsService.recordMessage(false);
         }
       }
     })();
@@ -189,6 +217,12 @@ class OdinWebSocketServer {
   private setupHTTPServer(): void {
     this.app.use(cors());
     this.app.use(express.json());
+
+    // Serve metrics dashboard
+    this.app.use(express.static(path.join(__dirname, 'public')));
+
+    // Mount metrics routes
+    this.app.use('/api', metricsRoutes);
 
     // Health check endpoint
     this.app.get('/health', (req: Request, res: Response) => {
@@ -306,6 +340,7 @@ class OdinWebSocketServer {
     this.server.listen(config.server.httpPort, () => {
       console.log(`🌐 HTTP server running on port ${config.server.httpPort}`);
       console.log(`📊 Metrics available at http://localhost:${config.server.httpPort}/metrics`);
+      console.log(`📈 Dashboard available at http://localhost:${config.server.httpPort}/dashboard.html`);
       if (migrationConfig.enabled) {
         console.log(`🔄 Polling fallback available at /api/poll`);
       }
@@ -354,6 +389,7 @@ class OdinWebSocketServer {
     if (!tokenData && config.env !== 'development') {
       console.log(`🚫 Unauthorized connection attempt: ${clientId}`);
       ws.close(1008, 'Unauthorized');
+      metricsService.recordConnection(false);
       return;
     }
 
@@ -365,6 +401,7 @@ class OdinWebSocketServer {
     });
 
     this.metrics.connectionCount++;
+    metricsService.recordConnection(true);
 
     // Send welcome message
     this.sendToClient(clientId, {
@@ -397,12 +434,14 @@ class OdinWebSocketServer {
       this.clients.delete(clientId);
       this.connectionState.delete(clientId);
       this.metrics.connectionCount--;
+      metricsService.recordDisconnection();
     });
 
     // Handle errors
     ws.on('error', (error: Error) => {
       console.error(`❌ WebSocket error for ${clientId}:`, error);
       this.metrics.errors++;
+      metricsService.recordError('websocket', error.message);
     });
 
     // Start heartbeat
