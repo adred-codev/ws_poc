@@ -1,0 +1,38 @@
+FROM node:20-alpine
+
+# Install tini for signal handling
+RUN apk add --no-cache tini
+
+# Create non-root user
+RUN addgroup -g 1001 -S appgroup && \
+    adduser -u 1001 -S appuser -G appgroup
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install all dependencies for building
+RUN npm ci
+
+# Copy source files
+COPY tsconfig.json ./
+COPY src ./src
+
+# Build TypeScript manually
+RUN npx tsc
+
+# Remove dev dependencies to reduce image size
+RUN npm prune --production
+
+# Change ownership
+RUN chown -R appuser:appgroup /app
+
+# Switch to non-root user
+USER appuser
+
+# Use tini
+ENTRYPOINT ["/sbin/tini", "--"]
+
+# Run publisher
+CMD ["node", "dist/odin-publisher.js"]

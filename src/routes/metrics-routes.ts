@@ -130,9 +130,15 @@ router.get('/health-check', (req: Request, res: Response) => {
       }
     };
 
-    const overallHealthy = Object.values(checks).every(check =>
-      typeof check.healthy === 'boolean' ? check.healthy : true
-    );
+    const overallHealthy = Object.values(checks).every(check => {
+      if ('healthy' in check && typeof check.healthy === 'boolean') {
+        return check.healthy;
+      }
+      if ('memoryHealthy' in check && 'errorRateHealthy' in check) {
+        return check.memoryHealthy && check.errorRateHealthy;
+      }
+      return true;
+    });
 
     const statusCode = overallHealthy ? 200 : 503;
 

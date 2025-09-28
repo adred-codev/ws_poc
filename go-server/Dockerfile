@@ -36,6 +36,9 @@ WORKDIR /app
 COPY --from=builder /app/build/odin-ws-server .
 COPY --from=builder /app/config.json .
 
+# Copy static files for dashboard
+COPY static ./static
+
 # Change ownership to non-root user
 RUN chown -R appuser:appgroup /app
 

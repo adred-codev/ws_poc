@@ -1,0 +1,1 @@
+{"success":true,"timestamp":1759027038375,"data":{"status":"healthy","connections":{"active":0,"total":0,"successRate":"0%"},"performance":{"messagesPerSecond":0,"averageLatency":"0.0ms","errorRate":"0.00%"},"system":{"uptime":"36s","memory":"88.3%","health":"healthy"},"components":{"nats":"connected","websocket":"healthy","publisher":"active"},"loadTest":false}}

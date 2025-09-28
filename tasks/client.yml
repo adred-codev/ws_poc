@@ -1,0 +1,212 @@
+version: '3'
+
+vars:
+  CLIENT_PORT: "5173"
+  CLIENT_BUILD_PORT: "8080"
+  NODE_SERVER_PORT: "3001"
+  GO_SERVER_PORT: "3002"
+
+tasks:
+  # React client tasks (primary)
+  install:
+    desc: "📦 Install React client dependencies"
+    dir: client-react
+    cmds:
+      - npm install
+      - echo "✅ React client dependencies installed"
+
+  dev:
+    desc: "🛠️ Start React client in development mode"
+    dir: client-react
+    cmds:
+      - echo "Starting React client development server..."
+      - npm run dev
+
+  build:
+    desc: "🔨 Build React client for production"
+    dir: client-react
+    cmds:
+      - echo "Building React client..."
+      - npm run build
+      - echo "✅ React client built successfully"
+
+  serve:
+    desc: "🌐 Serve React client (development)"
+    dir: client-react
+    cmds:
+      - |
+        echo "Starting React client on http://localhost:{{.CLIENT_PORT}}"
+        npm run dev &
+        sleep 2
+        echo "✅ React client running"
+        echo "📊 Dashboard: http://localhost:{{.CLIENT_PORT}}"
+
+  preview:
+    desc: "👁️ Preview production build"
+    dir: client-react
+    cmds:
+      - echo "Previewing production build..."
+      - npm run preview
+
+  # Legacy HTML client tasks
+  serve:legacy:
+    desc: "🌐 Serve legacy HTML client on port {{.CLIENT_BUILD_PORT}}"
+    cmds:
+      - |
+        echo "Starting legacy web client server..."
+        python3 -m http.server {{.CLIENT_BUILD_PORT}} --directory client &
+        sleep 1
+        echo "✅ Legacy client server started on port {{.CLIENT_BUILD_PORT}}"
+        echo "🌐 Client: http://localhost:{{.CLIENT_BUILD_PORT}}"
+
+  serve:php:
+    desc: "🐘 Serve web client using PHP (alternative)"
+    cmds:
+      - |
+        if command -v php &> /dev/null; then
+          echo "Starting PHP client server..."
+          cd client && php -S localhost:{{.CLIENT_PORT}} &
+          sleep 1
+          echo "✅ PHP client server started on port {{.CLIENT_PORT}}"
+        else
+          echo "❌ PHP not available, use 'task client:serve' instead"
+          exit 1
+        fi
+
+  serve:node:
+    desc: "🟢 Serve web client using Node.js http-server (alternative)"
+    cmds:
+      - |
+        if command -v npx &> /dev/null; then
+          echo "Starting Node.js client server..."
+          npx http-server client -p {{.CLIENT_PORT}} --cors &
+          sleep 1
+          echo "✅ Node.js client server started on port {{.CLIENT_PORT}}"
+        else
+          echo "❌ Node.js/npx not available, use 'task client:serve' instead"
+          exit 1
+        fi
+
+  open:
+    desc: "🖥️  Open React client in browser"
+    cmds:
+      - |
+        if curl -s http://localhost:{{.CLIENT_PORT}} > /dev/null; then
+          open http://localhost:{{.CLIENT_PORT}}
+        else
+          echo "❌ React client not running. Start with: task client:serve"
+          exit 1
+        fi
+
+  open:node:
+    desc: "🟢 Open client connected to Node.js server"
+    cmds:
+      - |
+        echo "Opening client for Node.js server (port {{.NODE_SERVER_PORT}})..."
+        if curl -s http://localhost:{{.CLIENT_PORT}} > /dev/null; then
+          # Create a modified client that connects to Node.js server
+          open "http://localhost:{{.CLIENT_PORT}}?server=node&port={{.NODE_SERVER_PORT}}"
+        else
+          echo "❌ Client server not running. Start with: task client:serve"
+          exit 1
+        fi
+
+  open:go:
+    desc: "⚡ Open client connected to Go server"
+    cmds:
+      - |
+        echo "Opening client for Go server (port {{.GO_SERVER_PORT}})..."
+        if curl -s http://localhost:{{.CLIENT_PORT}} > /dev/null; then
+          # Create a modified client that connects to Go server
+          open "http://localhost:{{.CLIENT_PORT}}?server=go&port={{.GO_SERVER_PORT}}"
+        else
+          echo "❌ Client server not running. Start with: task client:serve"
+          exit 1
+        fi
+
+  test:node:
+    desc: "🧪 Test client connection to Node.js server"
+    cmds:
+      - |
+        echo "Testing client connection to Node.js server..."
+        if curl -s http://localhost:{{.NODE_SERVER_PORT}}/health > /dev/null; then
+          echo "✅ Node.js server is reachable from client"
+          echo "🌐 WebSocket URL: ws://localhost:{{.NODE_SERVER_PORT}}/ws"
+        else
+          echo "❌ Node.js server is not reachable"
+          exit 1
+        fi
+
+  test:go:
+    desc: "🧪 Test client connection to Go server"
+    cmds:
+      - |
+        echo "Testing client connection to Go server..."
+        if curl -s http://localhost:{{.GO_SERVER_PORT}}/health > /dev/null; then
+          echo "✅ Go server is reachable from client"
+          echo "🌐 WebSocket URL: ws://localhost:{{.GO_SERVER_PORT}}/ws"
+        else
+          echo "❌ Go server is not reachable"
+          exit 1
+        fi
+
+  stop:
+    desc: "🛑 Stop client server"
+    cmds:
+      - |
+        echo "Stopping client server..."
+        pkill -f "python3 -m http.server {{.CLIENT_PORT}}" || true
+        pkill -f "php -S localhost:{{.CLIENT_PORT}}" || true
+        pkill -f "http-server.*{{.CLIENT_PORT}}" || true
+        echo "✅ Client server stopped"
+
+  status:
+    desc: "📊 Check client server status"
+    cmds:
+      - |
+        echo "Checking client server status..."
+        if curl -s http://localhost:{{.CLIENT_PORT}} > /dev/null; then
+          echo "✅ Client server is running on port {{.CLIENT_PORT}}"
+          echo "🌐 Available at: http://localhost:{{.CLIENT_PORT}}"
+        else
+          echo "❌ Client server is not running"
+          echo "💡 Start with: task client:serve"
+        fi
+
+  update:node-config:
+    desc: "🔧 Update client to connect to Node.js server by default"
+    cmds:
+      - |
+        echo "Updating client default configuration for Node.js server..."
+        sed -i.bak "s/ws:\/\/localhost:[0-9]*/ws:\/\/localhost:{{.NODE_SERVER_PORT}}/g" client/index.html
+        sed -i.bak "s/http:\/\/localhost:[0-9]*/http:\/\/localhost:{{.NODE_SERVER_PORT}}/g" client/index.html
+        echo "✅ Client configured for Node.js server (port {{.NODE_SERVER_PORT}})"
+
+  update:go-config:
+    desc: "🔧 Update client to connect to Go server by default"
+    cmds:
+      - |
+        echo "Updating client default configuration for Go server..."
+        sed -i.bak "s/ws:\/\/localhost:[0-9]*/ws:\/\/localhost:{{.GO_SERVER_PORT}}/g" client/index.html
+        sed -i.bak "s/http:\/\/localhost:[0-9]*/http:\/\/localhost:{{.GO_SERVER_PORT}}/g" client/index.html
+        echo "✅ Client configured for Go server (port {{.GO_SERVER_PORT}})"
+
+  restore:config:
+    desc: "🔄 Restore original client configuration"
+    cmds:
+      - |
+        if [ -f client/index.html.bak ]; then
+          echo "Restoring original client configuration..."
+          mv client/index.html.bak client/index.html
+          echo "✅ Original client configuration restored"
+        else
+          echo "⚠️  No backup found, configuration unchanged"
+        fi
+
+  clean:
+    desc: "🧹 Clean up client backup files"
+    cmds:
+      - |
+        echo "Cleaning up client backup files..."
+        rm -f client/index.html.bak
+        echo "✅ Client cleanup complete"

@@ -14,12 +14,131 @@ services:
       - "--http_port=8222"
     volumes:
       - nats_data:/data
+    networks:
+      - odin-network
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8222/healthz"]
       interval: 30s
       timeout: 10s
       retries: 3
+    # Resource limits for NATS
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 256M
+        reservations:
+          cpus: '0.5'
+          memory: 128M
+
+  ws-go:
+    build:
+      context: ./go-server
+      dockerfile: Dockerfile
+    container_name: odin-ws-go
+    ports:
+      - "3002:3002"  # WebSocket port
+      - "9090:9090"  # Metrics port
+    environment:
+      - NATS_URL=nats://nats:4222
+      - SERVER_PORT=3002
+      - METRICS_PORT=9090
+    networks:
+      - odin-network
+    depends_on:
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+    volumes:
+      - ./go-server/config.json:/app/config.json:ro
+      - ./go-server/static:/app/static:ro
+    # IDENTICAL RESOURCE CONSTRAINTS
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'           # Max 2 CPU cores
+          memory: 512M          # Max 512MB RAM
+        reservations:
+          cpus: '1.0'           # Guaranteed 1 CPU core
+          memory: 256M          # Guaranteed 256MB RAM
+    mem_swappiness: 10          # Reduce swap usage
+    pids_limit: 200             # Max process/thread count
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    blkio_config:
+      weight: 500               # Disk I/O weight (100-1000)
+
+  ws-node:
+    build:
+      context: .
+      dockerfile: Dockerfile.node
+    container_name: odin-ws-node
+    ports:
+      - "3001:3001"  # WebSocket port
+    environment:
+      - NATS_URL=nats://nats:4222
+      - PORT=3001
+      - NODE_ENV=production
+      - NODE_OPTIONS=--max-old-space-size=400  # Limit Node.js heap
+    networks:
+      - odin-network
+    depends_on:
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+    volumes:
+      - ./src:/app/src:ro
+      - ./public:/app/public:ro
+    # IDENTICAL RESOURCE CONSTRAINTS
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'           # Max 2 CPU cores
+          memory: 512M          # Max 512MB RAM
+        reservations:
+          cpus: '1.0'           # Guaranteed 1 CPU core
+          memory: 256M          # Guaranteed 256MB RAM
+    mem_swappiness: 10          # Reduce swap usage
+    pids_limit: 200             # Max process/thread count
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    blkio_config:
+      weight: 500               # Disk I/O weight (100-1000)
+
+  publisher:
+    build:
+      context: .
+      dockerfile: Dockerfile.publisher
+    container_name: odin-publisher
+    environment:
+      - NATS_URL=nats://nats:4222
+      - NODE_ENV=production
+    networks:
+      - odin-network
+    depends_on:
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+        reservations:
+          cpus: '0.25'
+          memory: 64M
+
+
+networks:
+  odin-network:
+    driver: bridge
+    driver_opts:
+      com.docker.network.driver.mtu: 1450  # Optimize for containers
 
 volumes:
   nats_data:

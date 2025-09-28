@@ -138,12 +138,21 @@ class MetricsService extends EventEmitter {
   }
 
   private startMetricsCollection(): void {
+    // Track message counts for rate calculation
+    let lastMessageCount = 0;
+    let lastTimestamp = Date.now();
+
     // Update metrics every second
     const metricsInterval = setInterval(() => {
       this.updateSystemMetrics();
+      this.calculateMessageRate(lastMessageCount, lastTimestamp);
       this.updateHistoryArrays();
       this.calculateRates();
       this.emit('metrics-updated', this.getMetrics());
+
+      // Update tracking variables
+      lastMessageCount = this.metrics.messages.total;
+      lastTimestamp = Date.now();
     }, 1000);
 
     // Clean up old history every 5 minutes
@@ -276,6 +285,16 @@ class MetricsService extends EventEmitter {
 
   public updateMessageRate(rate: number): void {
     this.metrics.messages.perSecond = rate;
+  }
+
+  private calculateMessageRate(lastMessageCount: number, lastTimestamp: number): void {
+    const currentTime = Date.now();
+    const timeDelta = (currentTime - lastTimestamp) / 1000; // Convert to seconds
+    const messageDelta = this.metrics.messages.total - lastMessageCount;
+
+    if (timeDelta > 0) {
+      this.metrics.messages.perSecond = messageDelta / timeDelta;
+    }
   }
 
   // Latency tracking methods

@@ -1,0 +1,9 @@
+📊 Node.js Server Metrics:
+=========================
+Timestamp: 1759027084640
+Connections: 0 active, 16 total
+Messages/sec: 1.9980019980019983
+Latency: avg=0.4073422849218793ms, max=2ms
+Uptime: 82085ms
+Health: healthy
+Components: WebSocket=healthy, NATS=connected

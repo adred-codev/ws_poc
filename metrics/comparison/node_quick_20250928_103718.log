@@ -1,0 +1,115 @@
+
+> odin-websocket-poc@1.0.0 load-test:quick
+> tsx src/load-test.ts quick
+
+🧪 WebSocket Load Testing Tool
+Server: ws://localhost:3001/ws
+Test Type: quick
+
+🧪 Running Quick Test (100 connections)
+🚀 Starting WebSocket Load Test
+   Target: ws://localhost:3001/ws
+   Max Connections: 100
+   Ramp-up Duration: 10000ms
+   Test Duration: 30000ms
+
+📈 Ramping up 100 connections over 10000ms
+   Connection interval: 100.0ms
+📊 Live Metrics:
+   Active Connections: 11/100
+   Successful: 49, Failed: 0
+   Messages: 5 sent, 36 received
+   Rate: 7.2 msg/sec, 9.8 conn/sec
+   Latency: min=0.6ms, max=2.5ms
+   Errors: 38
+
+📊 Live Metrics:
+   Active Connections: 16/100
+   Successful: 99, Failed: 0
+   Messages: 18 sent, 84 received
+   Rate: 9.6 msg/sec, 10.0 conn/sec
+   Latency: min=0.4ms, max=2.5ms
+   Errors: 83
+
+📊 Running sustained load test...
+📊 Live Metrics:
+   Active Connections: 16/100
+   Successful: 100, Failed: 0
+   Messages: 34 sent, 132 received
+   Rate: 9.6 msg/sec, 0.2 conn/sec
+   Latency: min=0.4ms, max=2.5ms
+   Errors: 84
+
+📊 Live Metrics:
+   Active Connections: 16/100
+   Successful: 100, Failed: 0
+   Messages: 50 sent, 180 received
+   Rate: 9.6 msg/sec, 0.0 conn/sec
+   Latency: min=0.4ms, max=2.5ms
+   Errors: 84
+
+📊 Live Metrics:
+   Active Connections: 16/100
+   Successful: 100, Failed: 0
+   Messages: 66 sent, 228 received
+   Rate: 9.6 msg/sec, 0.0 conn/sec
+   Latency: min=0.4ms, max=2.5ms
+   Errors: 84
+
+📊 Live Metrics:
+   Active Connections: 16/100
+   Successful: 100, Failed: 0
+   Messages: 82 sent, 292 received
+   Rate: 12.8 msg/sec, 0.0 conn/sec
+   Latency: min=0.4ms, max=2.5ms
+   Errors: 84
+
+📊 Live Metrics:
+   Active Connections: 16/100
+   Successful: 100, Failed: 0
+   Messages: 98 sent, 351 received
+   Rate: 11.8 msg/sec, 0.0 conn/sec
+   Latency: min=0.4ms, max=3.0ms
+   Errors: 84
+
+📊 Live Metrics:
+   Active Connections: 16/100
+   Successful: 100, Failed: 0
+   Messages: 114 sent, 404 received
+   Rate: 10.6 msg/sec, 0.0 conn/sec
+   Latency: min=0.4ms, max=8.0ms
+   Errors: 84
+
+🧹 Cleaning up connections...
+
+🎯 LOAD TEST RESULTS
+==================================================
+Test Duration: 40.2s
+
+📊 Connection Metrics:
+   Total Attempted: 100
+   Successful: 100 (100.0%)
+   Failed: 0
+
+💬 Message Metrics:
+   Messages Sent: 114
+   Messages Received: 404
+   Average Rate: 10.1 msg/sec
+
+⚡ Latency Metrics:
+   Average: 0.0ms
+   Minimum: 0.4ms
+   Maximum: 8.0ms
+
+❌ Errors:
+   Client load-test-1-1759027039703 closed unexpectedly: 1008 - WebSocket not available for this user yet
+   Client load-test-3-1759027039903 closed unexpectedly: 1008 - WebSocket not available for this user yet
+   Client load-test-4-1759027040003 closed unexpectedly: 1008 - WebSocket not available for this user yet
+   Client load-test-6-1759027040204 closed unexpectedly: 1008 - WebSocket not available for this user yet
+   Client load-test-7-1759027040305 closed unexpectedly: 1008 - WebSocket not available for this user yet
+   Client load-test-8-1759027040406 closed unexpectedly: 1008 - WebSocket not available for this user yet
+   Client load-test-9-1759027040507 closed unexpectedly: 1008 - WebSocket not available for this user yet
+   Client load-test-11-1759027040708 closed unexpectedly: 1008 - WebSocket not available for this user yet
+   Client load-test-12-1759027040809 closed unexpectedly: 1008 - WebSocket not available for this user yet
+   Client load-test-14-1759027041011 closed unexpectedly: 1008 - WebSocket not available for this user yet
+   ... and 74 more errors

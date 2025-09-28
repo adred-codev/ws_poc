@@ -103,8 +103,8 @@ func (s *Server) setupHTTPServer() {
 	// Stats endpoint
 	mux.HandleFunc("/stats", s.handleStats)
 
-	// Dashboard endpoint
-	mux.HandleFunc("/dashboard", s.handleDashboard)
+	// Dashboard endpoint removed - using React client instead
+	// mux.HandleFunc("/dashboard", s.handleDashboard)
 
 	// Generate test token endpoint (development only)
 	mux.HandleFunc("/auth/token", s.handleGenerateToken)
@@ -186,8 +186,21 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	// Read the dashboard HTML file
-	dashboardPath := "go-server/static/dashboard.html"
-	content, err := os.ReadFile(dashboardPath)
+	// Try container path first, then local development path
+	dashboardPaths := []string{
+		"static/dashboard.html",         // Docker container path
+		"go-server/static/dashboard.html", // Local development path
+	}
+
+	var content []byte
+	var err error
+	for _, path := range dashboardPaths {
+		content, err = os.ReadFile(path)
+		if err == nil {
+			break
+		}
+	}
+
 	if err != nil {
 		s.logger.Printf("Error reading dashboard file: %v", err)
 		http.Error(w, "Dashboard not found", http.StatusNotFound)

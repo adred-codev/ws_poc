@@ -1,0 +1,170 @@
+
+> odin-websocket-poc@1.0.0 load-test:stress
+> tsx src/load-test.ts stress
+
+🧪 WebSocket Load Testing Tool
+Server: ws://localhost:3001/ws
+Test Type: stress
+
+🧪 Running Stress Test (5000 connections)
+🚀 Starting WebSocket Load Test
+   Target: ws://localhost:3001/ws
+   Max Connections: 5000
+   Ramp-up Duration: 60000ms
+   Test Duration: 300000ms
+
+📈 Ramping up 5000 connections over 60000ms
+   Connection interval: 12.0ms
+📊 Live Metrics:
+   Active Connections: 35/5000
+   Successful: 381, Failed: 0
+   Messages: 7 sent, 104 received
+   Rate: 20.8 msg/sec, 76.2 conn/sec
+   Latency: min=0.4ms, max=2.1ms
+   Errors: 346
+
+📊 Live Metrics:
+   Active Connections: 82/5000
+   Successful: 761, Failed: 0
+   Messages: 24 sent, 312 received
+   Rate: 41.6 msg/sec, 76.0 conn/sec
+   Latency: min=0.3ms, max=2.1ms
+   Errors: 679
+
+📊 Live Metrics:
+   Active Connections: 115/5000
+   Successful: 1147, Failed: 0
+   Messages: 54 sent, 595 received
+   Rate: 56.6 msg/sec, 77.2 conn/sec
+   Latency: min=0.2ms, max=10.4ms
+   Errors: 1032
+
+📊 Live Metrics:
+   Active Connections: 159/5000
+   Successful: 1533, Failed: 0
+   Messages: 100 sent, 983 received
+   Rate: 77.6 msg/sec, 77.2 conn/sec
+   Latency: min=0.2ms, max=10.4ms
+   Errors: 1374
+
+📊 Live Metrics:
+   Active Connections: 203/5000
+   Successful: 1917, Failed: 0
+   Messages: 166 sent, 1485 received
+   Rate: 100.4 msg/sec, 76.8 conn/sec
+   Latency: min=0.2ms, max=10.4ms
+   Errors: 1714
+
+📊 Live Metrics:
+   Active Connections: 238/5000
+   Successful: 2297, Failed: 0
+   Messages: 235 sent, 2053 received
+   Rate: 113.6 msg/sec, 76.0 conn/sec
+   Latency: min=0.2ms, max=10.4ms
+   Errors: 2059
+
+📊 Live Metrics:
+   Active Connections: 280/5000
+   Successful: 2687, Failed: 0
+   Messages: 321 sent, 2762 received
+   Rate: 141.8 msg/sec, 78.0 conn/sec
+   Latency: min=0.2ms, max=10.4ms
+   Errors: 2407
+
+📊 Live Metrics:
+   Active Connections: 327/5000
+   Successful: 3078, Failed: 0
+   Messages: 429 sent, 3610 received
+   Rate: 169.6 msg/sec, 78.2 conn/sec
+   Latency: min=0.2ms, max=36.6ms
+   Errors: 2751
+
+📊 Live Metrics:
+   Active Connections: 369/5000
+   Successful: 3473, Failed: 0
+   Messages: 543 sent, 4529 received
+   Rate: 183.5 msg/sec, 78.8 conn/sec
+   Latency: min=0.2ms, max=36.6ms
+   Errors: 3104
+
+📊 Live Metrics:
+   Active Connections: 408/5000
+   Successful: 3866, Failed: 0
+   Messages: 663 sent, 5540 received
+   Rate: 202.2 msg/sec, 78.6 conn/sec
+   Latency: min=0.2ms, max=36.6ms
+   Errors: 3458
+
+📊 Live Metrics:
+   Active Connections: 454/5000
+   Successful: 4254, Failed: 0
+   Messages: 815 sent, 7132 received
+   Rate: 318.3 msg/sec, 77.6 conn/sec
+   Latency: min=0.2ms, max=36.6ms
+   Errors: 3800
+
+📊 Live Metrics:
+   Active Connections: 495/5000
+   Successful: 4644, Failed: 0
+   Messages: 978 sent, 8348 received
+   Rate: 243.2 msg/sec, 78.0 conn/sec
+   Latency: min=0.2ms, max=36.6ms
+   Errors: 4149
+
+📊 Running sustained load test...
+📊 Live Metrics:
+   Active Connections: 532/5000
+   Successful: 5000, Failed: 0
+   Messages: 1145 sent, 9690 received
+   Rate: 268.3 msg/sec, 71.2 conn/sec
+   Latency: min=0.1ms, max=36.6ms
+   Errors: 4468
+
+📊 Live Metrics:
+   Active Connections: 532/5000
+   Successful: 5000, Failed: 0
+   Messages: 1324 sent, 11027 received
+   Rate: 267.4 msg/sec, 0.0 conn/sec
+   Latency: min=0.1ms, max=36.6ms
+   Errors: 4468
+
+📊 Live Metrics:
+   Active Connections: 532/5000
+   Successful: 5000, Failed: 0
+   Messages: 1505 sent, 12347 received
+   Rate: 264.0 msg/sec, 0.0 conn/sec
+   Latency: min=0.1ms, max=36.6ms
+   Errors: 4468
+
+📊 Live Metrics:
+   Active Connections: 532/5000
+   Successful: 5000, Failed: 0
+   Messages: 1677 sent, 13667 received
+   Rate: 263.9 msg/sec, 0.0 conn/sec
+   Latency: min=0.1ms, max=36.6ms
+   Errors: 4468
+
+📊 Live Metrics:
+   Active Connections: 532/5000
+   Successful: 5000, Failed: 0
+   Messages: 1856 sent, 14999 received
+   Rate: 266.3 msg/sec, 0.0 conn/sec
+   Latency: min=0.1ms, max=36.6ms
+   Errors: 4468
+
+📊 Live Metrics:
+   Active Connections: 532/5000
+   Successful: 5000, Failed: 0
+   Messages: 2037 sent, 16321 received
+   Rate: 264.4 msg/sec, 0.0 conn/sec
+   Latency: min=0.1ms, max=36.6ms
+   Errors: 4468
+
+📊 Live Metrics:
+   Active Connections: 532/5000
+   Successful: 5000, Failed: 0
+   Messages: 2209 sent, 17670 received
+   Rate: 269.8 msg/sec, 0.0 conn/sec
+   Latency: min=0.1ms, max=36.6ms
+   Errors: 4468
+
