@@ -1,19 +1,24 @@
 import { useAtom } from 'jotai';
 import { useEffect, useRef } from 'react';
-import { Play, Square, Wifi, WifiOff, Server } from 'lucide-react';
+import { Play, Square, Wifi, WifiOff, Server, RefreshCw } from 'lucide-react';
 import {
   selectedServerAtom,
   wsConnectionAtom,
   wsStatusAtom,
-  wsMessagesAtom
+  wsMessagesAtom,
+  reconnectAtom
 } from '../store/atoms';
+
+const MAX_RECONNECT_ATTEMPTS = 5;
 
 function WebSocketTab() {
   const [selectedServer, setSelectedServer] = useAtom(selectedServerAtom);
   const [ws, setWs] = useAtom(wsConnectionAtom);
   const [status, setStatus] = useAtom(wsStatusAtom);
   const [messages, setMessages] = useAtom(wsMessagesAtom);
+  const [reconnect, setReconnect] = useAtom(reconnectAtom);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const isIntentionalDisconnect = useRef(false);
 
   const servers = {
     node: { url: 'ws://localhost:3001/ws', label: 'Node.js', color: 'green' },
@@ -21,9 +26,10 @@ function WebSocketTab() {
   };
 
   const connect = () => {
-    if (ws) {
-      ws.close();
+    if (reconnect.timeoutId) {
+      clearTimeout(reconnect.timeoutId);
     }
+    isIntentionalDisconnect.current = false;
 
     setStatus('connecting');
     const websocket = new WebSocket(servers[selectedServer].url);
@@ -31,6 +37,7 @@ function WebSocketTab() {
     websocket.onopen = () => {
       setStatus('connected');
       addMessage('system', { message: `Connected to ${servers[selectedServer].label} server` });
+      setReconnect({ timeoutId: null, attempt: 0 });
     };
 
     websocket.onmessage = (event) => {
@@ -42,22 +49,46 @@ function WebSocketTab() {
       }
     };
 
-    websocket.onerror = () => {
-      setStatus('disconnected');
-      addMessage('error', { message: 'Connection error' });
+    websocket.onerror = (err) => {
+      addMessage('error', { message: `Connection error: ${err.type}` });
     };
 
     websocket.onclose = () => {
-      setStatus('disconnected');
-      addMessage('system', { message: 'Disconnected from server' });
+      if (isIntentionalDisconnect.current) {
+        setStatus('disconnected');
+        addMessage('system', { message: 'Disconnected from server' });
+        return;
+      }
+
+      if (reconnect.attempt < MAX_RECONNECT_ATTEMPTS) {
+        const attempt = reconnect.attempt + 1;
+        const delay = Math.pow(2, attempt) * 1000;
+        setStatus('reconnecting');
+        addMessage('system', { message: `Connection lost. Reconnecting in ${delay / 1000}s... (Attempt ${attempt})` });
+
+        const timeoutId = setTimeout(() => {
+          connect();
+        }, delay);
+
+        setReconnect({ timeoutId, attempt });
+      } else {
+        setStatus('disconnected');
+        addMessage('error', { message: 'Could not reconnect to the server.' });
+      }
     };
 
     setWs(websocket);
   };
 
   const disconnect = () => {
+    if (reconnect.timeoutId) {
+      clearTimeout(reconnect.timeoutId);
+    }
+    setReconnect({ timeoutId: null, attempt: 0 });
+    isIntentionalDisconnect.current = true;
+
     if (ws) {
-      ws.close();
+      ws.close(1000, 'User disconnected');
       setWs(null);
     }
   };
@@ -99,7 +130,7 @@ function WebSocketTab() {
           </div>
 
           <div className="flex items-center gap-2">
-            {status === 'connected' ? (
+            {status === 'connected' || status === 'reconnecting' ? (
               <button
                 onClick={disconnect}
                 className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-md transition-colors"
@@ -123,9 +154,12 @@ function WebSocketTab() {
           <div className={`flex items-center gap-2 px-3 py-1 rounded-full ${
             status === 'connected' ? 'bg-green-900 text-green-300' :
             status === 'connecting' ? 'bg-yellow-900 text-yellow-300' :
+            status === 'reconnecting' ? 'bg-orange-900 text-orange-300' :
             'bg-red-900 text-red-300'
           }`}>
-            {status === 'connected' ? <Wifi size={16} /> : <WifiOff size={16} />}
+            {status === 'connected' ? <Wifi size={16} /> :
+             status === 'reconnecting' ? <RefreshCw size={16} className="animate-spin" /> :
+             <WifiOff size={16} />}
             <span className="text-sm font-medium capitalize">{status}</span>
           </div>
 

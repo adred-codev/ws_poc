@@ -8,8 +8,15 @@ export const selectedServerAtom = atom<'node' | 'go'>('node');
 
 // WebSocket state
 export const wsConnectionAtom = atom<WebSocket | null>(null);
-export const wsStatusAtom = atom<'disconnected' | 'connecting' | 'connected'>('disconnected');
+export const wsStatusAtom = atom<'disconnected' | 'connecting' | 'connected' | 'reconnecting'>('disconnected');
 export const wsMessagesAtom = atom<Array<{ time: string; type: string; data: any }>>([]);
+export const reconnectAtom = atom<{
+  timeoutId: NodeJS.Timeout | null;
+  attempt: number;
+}>({
+  timeoutId: null,
+  attempt: 0,
+});
 
 // Metrics state
 export const metricsDataAtom = atom<{
