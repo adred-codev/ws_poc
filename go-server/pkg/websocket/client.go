@@ -126,23 +126,8 @@ func (c *Client) writePump() {
 				return
 			}
 
-			w, err := c.conn.NextWriter(websocket.TextMessage)
-			if err != nil {
-				c.logger.Printf("Error getting writer for client %s: %v", c.ID, err)
-				c.metrics.RecordError("websocket_write")
-				return
-			}
-			w.Write(message)
-
-			// Add queued chat messages to the current websocket message
-			n := len(c.send)
-			for i := 0; i < n; i++ {
-				w.Write([]byte{'\n'})
-				w.Write(<-c.send)
-			}
-
-			if err := w.Close(); err != nil {
-				c.logger.Printf("Error closing writer for client %s: %v", c.ID, err)
+			if err := c.conn.WriteMessage(websocket.TextMessage, message); err != nil {
+				c.logger.Printf("Error writing message for client %s: %v", c.ID, err)
 				c.metrics.RecordError("websocket_write")
 				return
 			}

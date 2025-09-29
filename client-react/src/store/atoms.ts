@@ -1,98 +1,152 @@
 import { atom } from 'jotai';
 
-// Tab state
+// The active tab in the main UI
 export const activeTabAtom = atom<'websocket' | 'metrics' | 'container'>('websocket');
 
-// Server selection
+// The server currently being viewed in the UI
 export const selectedServerAtom = atom<'node' | 'go'>('node');
 
-// WebSocket state
-export const wsConnectionAtom = atom<WebSocket | null>(null);
-export const wsStatusAtom = atom<'disconnected' | 'connecting' | 'connected' | 'reconnecting'>('disconnected');
-export const wsMessagesAtom = atom<Array<{ time: string; type: string; data: any }>>([]);
-export const reconnectAtom = atom<{
-  timeoutId: NodeJS.Timeout | null;
-  attempt: number;
+// --- WebSocket State ---
+
+type WsStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
+type WsMessage = { time: string; type: string; data: any };
+type ReconnectState = { timeoutId: NodeJS.Timeout | null; attempt: number };
+
+export type ServerState = {
+  ws: WebSocket | null;
+  status: WsStatus;
+  messages: WsMessage[];
+  reconnect: ReconnectState;
+  isIntentionalDisconnect: boolean;
+};
+
+export const webSocketStateAtom = atom<{
+  [key in 'node' | 'go']: ServerState;
 }>({
-  timeoutId: null,
-  attempt: 0,
+  node: {
+    ws: null,
+    status: 'disconnected',
+    messages: [],
+    reconnect: { timeoutId: null, attempt: 0 },
+    isIntentionalDisconnect: false,
+  },
+  go: {
+    ws: null,
+    status: 'disconnected',
+    messages: [],
+    reconnect: { timeoutId: null, attempt: 0 },
+    isIntentionalDisconnect: false,
+  },
 });
 
-// Metrics state
-export const metricsDataAtom = atom<{
+// --- Metrics State ---
+
+export type MetricsData = {
+  labels: string[];
   connections: number[];
   memory: number[];
   cpu: number[];
-  goroutines: number[];
-  messages: number[];
-  timestamps: string[];
+};
+
+export const metricsDataAtom = atom<{
+  [key in 'node' | 'go']: MetricsData;
 }>({
-  connections: [],
-  memory: [],
-  cpu: [],
-  goroutines: [],
-  messages: [],
-  timestamps: []
+  node: { labels: [], connections: [], memory: [], cpu: [] },
+  go: { labels: [], connections: [], memory: [], cpu: [] },
 });
 
-// Container specs state
+// --- Container State ---
+
 export const containerSpecsAtom = atom<{
-  node: {
-    cpu: string;
-    memory: string;
-    pids: number;
-    diskIO: number;
-    status: string;
-  };
-  go: {
-    cpu: string;
-    memory: string;
-    pids: number;
-    diskIO: number;
-    status: string;
-  };
+  [key in 'node' | 'go']: { cpu: string; memory: string; pids: number; diskIO: number; status: string; };
 }>({
-  node: {
-    cpu: '2.0 cores',
-    memory: '512MB',
-    pids: 200,
-    diskIO: 500,
-    status: 'healthy'
-  },
-  go: {
-    cpu: '2.0 cores',
-    memory: '512MB',
-    pids: 200,
-    diskIO: 500,
-    status: 'healthy'
-  }
+  node: { cpu: '2.0 cores', memory: '512MB', pids: 200, diskIO: 500, status: 'healthy' },
+  go: { cpu: '2.0 cores', memory: '512MB', pids: 200, diskIO: 500, status: 'healthy' },
 });
 
-// Live container stats
 export const liveContainerStatsAtom = atom<{
-  node: {
-    cpuUsage: number;
-    memoryUsage: number;
-    memoryPercent: number;
-    networkIO: string;
-  };
-  go: {
-    cpuUsage: number;
-    memoryUsage: number;
-    memoryPercent: number;
-    networkIO: string;
-  };
+  [key in 'node' | 'go']: { cpuUsage: number; memoryUsage: number; memoryPercent: number; networkIO: string; };
 }>({
-  node: {
-    cpuUsage: 0,
-    memoryUsage: 0,
-    memoryPercent: 0,
-    networkIO: '0B / 0B'
-  },
-  go: {
-    cpuUsage: 0,
-    memoryUsage: 0,
-    memoryPercent: 0,
-    networkIO: '0B / 0B'
+  node: { cpuUsage: 0, memoryUsage: 0, memoryPercent: 0, networkIO: '0B / 0B' },
+  go: { cpuUsage: 0, memoryUsage: 0, memoryPercent: 0, networkIO: '0B / 0B' },
+});
+
+
+// --- DERIVED ATOMS FOR EASY ACCESS/UPDATES ---
+
+// --- WebSocket Derived Atoms ---
+
+export const currentServerStateAtom = atom((get) => {
+  const selected = get(selectedServerAtom);
+  return get(webSocketStateAtom)[selected];
+});
+
+export const currentMessagesAtom = atom((get) => {
+  const selected = get(selectedServerAtom);
+  return get(webSocketStateAtom)[selected].messages;
+});
+
+export const updateServerStateAtom = atom(
+  null,
+  (get, set, { server, partialState }: { server: 'node' | 'go', partialState: Partial<ServerState> }) => {
+    const state = get(webSocketStateAtom);
+    set(webSocketStateAtom, {
+      ...state,
+      [server]: { ...state[server], ...partialState },
+    });
   }
+);
+
+export const addMessageAtom = atom(
+  null,
+  (get, set, { server, type, data }: { server: 'node' | 'go', type: string, data: any }) => {
+    const state = get(webSocketStateAtom);
+    const newMessage = { time: new Date().toLocaleTimeString(), type, data };
+    set(webSocketStateAtom, {
+      ...state,
+      [server]: {
+        ...state[server],
+        messages: [...state[server].messages.slice(-99), newMessage],
+      },
+    });
+  }
+);
+
+// --- Metrics Derived Atoms ---
+
+export const currentMetricsDataAtom = atom((get) => {
+  const selected = get(selectedServerAtom);
+  return get(metricsDataAtom)[selected];
+});
+
+export const addMetricsDataAtom = atom(
+  null,
+  (get, set, { server, metrics }: { server: 'node' | 'go', metrics: { connections: number; memory: number; cpu: number } }) => {
+    const state = get(metricsDataAtom);
+    const now = new Date();
+    const newLabel = `${now.getHours()}:${now.getMinutes()}:${now.getSeconds()}`;
+
+    const newState = {
+      ...state,
+      [server]: {
+        labels: [...state[server].labels.slice(-29), newLabel],
+        connections: [...state[server].connections.slice(-29), metrics.connections],
+        memory: [...state[server].memory.slice(-29), metrics.memory],
+        cpu: [...state[server].cpu.slice(-29), metrics.cpu],
+      },
+    };
+    set(metricsDataAtom, newState);
+  }
+);
+
+// --- Container Derived Atoms ---
+
+export const currentContainerSpecsAtom = atom((get) => {
+  const selected = get(selectedServerAtom);
+  return get(containerSpecsAtom)[selected];
+});
+
+export const currentLiveContainerStatsAtom = atom((get) => {
+  const selected = get(selectedServerAtom);
+  return get(liveContainerStatsAtom)[selected];
 });
