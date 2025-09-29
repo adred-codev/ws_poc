@@ -206,7 +206,7 @@ function MetricsTab() {
     };
 
     fetchAllMetrics();
-    const interval = setInterval(fetchAllMetrics, 5000);
+    const interval = setInterval(fetchAllMetrics, 3000);
     return () => clearInterval(interval);
   }, [addMetrics]);
 

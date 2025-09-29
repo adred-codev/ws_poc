@@ -10,7 +10,6 @@ function ContainerTab() {
 
   // Container stats with real-time metrics
   useEffect(() => {
-    let goCpuBase = 5;
     
     const updateContainerStats = async () => {
       // Try to fetch real metrics from servers
@@ -21,6 +20,7 @@ function ContainerTab() {
       let goMemoryMB = 0;
       let nodeMemoryMB = 0;
       let nodeCpuPercent = 0;
+      let goCpuPercent = 0;
 
       try {
         const nodeResponse = await fetch('http://localhost:3001/metrics');
@@ -42,8 +42,9 @@ function ContainerTab() {
           goHealthy = true;
           const data = await goResponse.json();
           goConnections = data.connections?.active || 0;
-          // Use accurate memory from enhanced metrics
+          // Use accurate memory and CPU from enhanced metrics
           goMemoryMB = data.performance?.memory_mb || 0;
+          goCpuPercent = data.performance?.cpu_percent || 0;
         }
       } catch {
         goHealthy = false;
@@ -62,9 +63,6 @@ function ContainerTab() {
       }));
       
       // Use real metrics from both servers
-      goCpuBase = goHealthy ?
-        Math.min(2 + goConnections * 1.5, 40) : 0; // Go CPU estimation for network I/O display
-
       setLiveStats({
         node: {
           cpuUsage: nodeHealthy ? nodeCpuPercent : 0, // Real CPU from systeminformation
@@ -75,8 +73,8 @@ function ContainerTab() {
             '0B/s ↓ / 0B/s ↑'
         },
         go: {
-          cpuUsage: goHealthy ? goCpuBase + Math.random() * 3 : 0,
-          memoryUsage: goHealthy ? goMemoryMB : 0, // Use real memory from Go
+          cpuUsage: goHealthy ? goCpuPercent : 0, // Real CPU from Go enhanced metrics
+          memoryUsage: goHealthy ? goMemoryMB : 0, // Real memory from Go enhanced metrics
           memoryPercent: goHealthy ? (goMemoryMB / 512) * 100 : 0,
           networkIO: goHealthy ? 
             `${(goConnections * 0.4).toFixed(1)}MB/s ↓ / ${(goConnections * 0.08).toFixed(1)}MB/s ↑` :
@@ -223,7 +221,7 @@ function ServerCard({ title, specs, liveStats, isSelected, onSelect, color }: {
           <div className="text-gray-400 text-sm mb-2">Live Usage</div>
           <div className="space-y-3">
             <UsageBar label="CPU" value={liveStats.cpuUsage} max={100} unit="%" color="blue" />
-            <UsageBar label="Memory" value={liveStats.memoryPercent} max={100} unit="%" detail={`${liveStats.memoryUsage.toFixed(0)}MB / 512MB`} color="green" />
+            <UsageBar label="Memory" value={liveStats.memoryPercent} max={100} unit="%" detail={`${liveStats.memoryUsage.toFixed(2)}MB / 512MB`} color="green" />
           </div>
           <div className="mt-3 text-sm">
             <div className="text-gray-500">Network I/O</div>
