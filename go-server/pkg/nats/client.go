@@ -15,7 +15,7 @@ import (
 
 type Client struct {
 	conn      *nats.Conn
-	metrics   *metrics.Metrics
+	metrics   metrics.MetricsInterface
 	subs      map[string]*nats.Subscription
 	subsMutex sync.RWMutex
 	handlers  map[string]func([]byte)
@@ -31,7 +31,7 @@ type Config struct {
 	PingInterval      time.Duration
 }
 
-func NewClient(config Config, metrics *metrics.Metrics, logger *log.Logger) (*Client, error) {
+func NewClient(config Config, metrics metrics.MetricsInterface, logger *log.Logger) (*Client, error) {
 	opts := []nats.Option{
 		nats.MaxReconnects(config.MaxReconnects),
 		nats.ReconnectWait(config.ReconnectWait),

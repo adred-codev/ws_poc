@@ -7,8 +7,8 @@ import (
 
 // EnhancedMetrics provides comprehensive and accurate metrics collection
 type EnhancedMetrics struct {
-	// Don't embed Metrics to avoid duplicate registration
-	originalMetrics *Metrics
+	// Use simple metrics instead of Prometheus
+	simpleMetrics *SimpleMetrics
 
 	systemMetrics     *SystemMetrics
 	runtimeMetrics    *RuntimeMetricsReader
@@ -22,10 +22,10 @@ type EnhancedMetrics struct {
 	updateInterval  time.Duration
 }
 
-// NewEnhancedMetrics creates a new enhanced metrics instance that reuses existing metrics
-func NewEnhancedMetrics(existingMetrics *Metrics) *EnhancedMetrics {
+// NewEnhancedMetrics creates a new enhanced metrics instance with simple metrics
+func NewEnhancedMetrics() *EnhancedMetrics {
 	return &EnhancedMetrics{
-		originalMetrics:   existingMetrics,
+		simpleMetrics:     NewSimpleMetrics(),
 		systemMetrics:     NewSystemMetrics(),
 		runtimeMetrics:    NewRuntimeMetricsReader(),
 		cpuTracker:        NewCPUTracker(),
@@ -60,35 +60,35 @@ func (em *EnhancedMetrics) updateAllMetrics() {
 	// Sample CPU (keep as fallback)
 	em.cpuTracker.Sample()
 
-	// Update Prometheus metrics through original metrics
+	// Update simple metrics instead of Prometheus
 	// Use system metrics for accurate CPU, runtime metrics for memory
-	em.originalMetrics.UpdateMemoryUsage(uint64(em.systemMetrics.GetMemoryMB() * 1024 * 1024))
-	em.originalMetrics.UpdateCPUUsage(em.systemMetrics.GetCPUPercent())
+	em.simpleMetrics.UpdateMemoryUsage(uint64(em.systemMetrics.GetMemoryMB() * 1024 * 1024))
+	em.simpleMetrics.UpdateCPUUsage(em.systemMetrics.GetCPUPercent())
 
 	em.lastUpdateTime = time.Now()
 }
 
 // AddConnection tracks a new WebSocket connection
 func (em *EnhancedMetrics) AddConnection(id, remoteAddr string) {
-	em.originalMetrics.IncrementConnections()
+	em.simpleMetrics.IncrementConnections()
 	em.connectionTracker.AddConnection(id, remoteAddr)
 }
 
 // RemoveConnection removes a tracked connection
 func (em *EnhancedMetrics) RemoveConnection(id string) {
-	em.originalMetrics.DecrementConnections()
+	em.simpleMetrics.DecrementConnections()
 	em.connectionTracker.RemoveConnection(id)
 }
 
 // UpdateConnectionMessage updates message statistics for a connection
 func (em *EnhancedMetrics) UpdateConnectionMessage(id string, sent bool, bytes int) {
 	if sent {
-		em.originalMetrics.IncrementMessagesSent()
+		em.simpleMetrics.IncrementMessagesSent()
 	} else {
-		em.originalMetrics.IncrementMessagesReceived()
+		em.simpleMetrics.IncrementMessagesReceived()
 	}
 
-	em.originalMetrics.RecordMessageSize(bytes)
+	em.simpleMetrics.RecordMessageSize(bytes)
 	em.connectionTracker.UpdateConnectionStats(id, sent, uint64(bytes))
 }
 
@@ -129,15 +129,13 @@ func (em *EnhancedMetrics) GetAccurateStats() map[string]interface{} {
 
 // GetSimpleStats returns simplified metrics for the React client
 func (em *EnhancedMetrics) GetSimpleStats() map[string]interface{} {
-	return map[string]interface{}{
-		"connections": map[string]interface{}{
-			"active": em.connectionTracker.GetActiveCount(),
-		},
-		"system": map[string]interface{}{
-			"memory": map[string]interface{}{
-				"heap_alloc": uint64(em.systemMetrics.GetMemoryMB() * 1024 * 1024),
-			},
-			"goroutines": em.systemMetrics.GetSystemInfo()["runtime"].(map[string]interface{})["goroutines"],
-		},
+	// Combine simple metrics with enhanced connection tracking
+	stats := em.simpleMetrics.GetSimpleStats()
+
+	// Override with more accurate connection count
+	if statsMap, ok := stats["connections"].(map[string]interface{}); ok {
+		statsMap["active"] = em.connectionTracker.GetActiveCount()
 	}
+
+	return stats
 }

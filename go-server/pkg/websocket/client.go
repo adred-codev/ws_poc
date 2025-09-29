@@ -54,7 +54,7 @@ type Client struct {
 	seenNonces map[string]time.Time
 
 	// Metrics
-	metrics *metrics.Metrics
+	metrics metrics.MetricsInterface
 
 	// Logger
 	logger *log.Logger
@@ -64,7 +64,7 @@ type Client struct {
 }
 
 // NewClient creates a new client instance
-func NewClient(conn *websocket.Conn, hub *Hub, metrics *metrics.Metrics, logger *log.Logger) *Client {
+func NewClient(conn *websocket.Conn, hub *Hub, metrics metrics.MetricsInterface, logger *log.Logger) *Client {
 	return &Client{
 		conn:        conn,
 		send:        make(chan []byte, 256),
@@ -263,7 +263,7 @@ func (c *Client) isDuplicateMessage(nonce string) bool {
 }
 
 // ServeWS handles websocket requests from the peer
-func ServeWS(hub *Hub, metrics *metrics.Metrics, logger *log.Logger, w http.ResponseWriter, r *http.Request) {
+func ServeWS(hub *Hub, metrics metrics.MetricsInterface, logger *log.Logger, w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		logger.Printf("WebSocket upgrade error: %v", err)

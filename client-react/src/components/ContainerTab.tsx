@@ -36,13 +36,13 @@ function ContainerTab() {
       }
       
       try {
-        const goResponse = await fetch('http://localhost:3002/stats');
+        const goResponse = await fetch('http://localhost:3002/metrics/enhanced');
         if (goResponse.ok) {
           goHealthy = true;
           const data = await goResponse.json();
           goConnections = data.connections?.active || 0;
-          // Use actual memory from Go server
-          goMemoryMB = (data.system?.memory?.heap_alloc || 0) / 1024 / 1024;
+          // Use accurate memory from enhanced metrics
+          goMemoryMB = data.performance?.memory_mb || 0;
         }
       } catch {
         goHealthy = false;
@@ -104,7 +104,7 @@ function ContainerTab() {
           Both WebSocket servers are configured with identical resource constraints to ensure fair performance comparison.
         </p>
         <p className="text-yellow-500 text-sm mt-2 italic">
-          Note: Node.js container metrics are simulated based on connections. Go memory is real, other metrics are derived.
+          Note: Node.js container metrics are simulated based on connections. Go metrics (memory, CPU, connections) are now accurate via enhanced metrics endpoint.
         </p>
       </div>
 

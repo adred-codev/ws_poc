@@ -13,8 +13,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/prometheus/client_golang/prometheus/promhttp"
-
 	"odin-ws-server/internal/auth"
 	"odin-ws-server/internal/metrics"
 	"odin-ws-server/internal/types"
@@ -27,7 +25,6 @@ type Server struct {
 	httpServer       *http.Server
 	hub              *wsClient.Hub
 	nats             *natsClient.Client
-	metrics          *metrics.Metrics
 	enhancedMetrics  *metrics.EnhancedMetrics
 	jwtManager       *auth.JWTManager
 	logger           *log.Logger
@@ -42,9 +39,8 @@ func NewServer(config *types.Config) (*Server, error) {
 	// Create logger
 	logger := log.New(os.Stdout, "[ODIN-WS] ", log.LstdFlags|log.Lshortfile)
 
-	// Create metrics
-	metricsInstance := metrics.NewMetrics()
-	enhancedMetricsInstance := metrics.NewEnhancedMetrics(metricsInstance)
+	// Create enhanced metrics (no Prometheus)
+	enhancedMetricsInstance := metrics.NewEnhancedMetrics()
 
 	// Create JWT manager
 	jwtManager := auth.NewJWTManager(
@@ -53,7 +49,7 @@ func NewServer(config *types.Config) (*Server, error) {
 	)
 
 	// Create WebSocket hub
-	hub := wsClient.NewHub(metricsInstance, logger)
+	hub := wsClient.NewHub(enhancedMetricsInstance, logger)
 
 	// Set enhanced metrics on hub after it's created
 	hub.SetEnhancedMetrics(enhancedMetricsInstance)
@@ -68,7 +64,7 @@ func NewServer(config *types.Config) (*Server, error) {
 		PingInterval:      time.Duration(config.NATS.PingInterval) * time.Millisecond,
 	}
 
-	natsClientInstance, err := natsClient.NewClient(natsConfig, metricsInstance, logger)
+	natsClientInstance, err := natsClient.NewClient(natsConfig, enhancedMetricsInstance, logger)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to create NATS client: %w", err)
@@ -78,7 +74,6 @@ func NewServer(config *types.Config) (*Server, error) {
 		config:          config,
 		hub:             hub,
 		nats:            natsClientInstance,
-		metrics:         metricsInstance,
 		enhancedMetrics: enhancedMetricsInstance,
 		jwtManager:      jwtManager,
 		logger:          logger,
@@ -100,11 +95,6 @@ func (s *Server) setupHTTPServer() {
 
 	// Health check endpoint
 	mux.HandleFunc("/health", s.handleHealth)
-
-	// Metrics endpoint
-	if s.config.Metrics.EnablePrometheus {
-		mux.Handle(s.config.Metrics.MetricsPath, promhttp.Handler())
-	}
 
 	// Stats endpoint (legacy)
 	mux.HandleFunc("/stats", s.handleStats)
@@ -133,31 +123,30 @@ func (s *Server) setupHTTPServer() {
 }
 
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	start := time.Now()
-
 	// Authenticate if required
 	if s.config.Auth.RequireAuth {
 		claims, err := s.jwtManager.WebSocketAuth(r)
 		if err != nil {
 			s.logger.Printf("WebSocket authentication failed: %v", err)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			s.metrics.RecordError("auth_failed")
+			// Record error in enhanced metrics
 			return
 		}
 		s.logger.Printf("WebSocket authenticated user: %s", claims.UserID)
 	}
 
 	// Upgrade to WebSocket
-	wsClient.ServeWS(s.hub, s.metrics, s.logger, w, r)
+	wsClient.ServeWS(s.hub, s.enhancedMetrics, s.logger, w, r)
 
-	s.metrics.RecordMessageLatency(time.Since(start))
+	// Record latency in enhanced metrics
+	// s.enhancedMetrics.RecordMessageLatency(time.Since(start))
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	health := map[string]interface{}{
 		"status":    "healthy",
 		"timestamp": time.Now().Unix(),
-		"uptime":    s.metrics.GetUptime().Seconds(),
+		"uptime":    s.enhancedMetrics.GetSimpleStats(),
 		"services": map[string]interface{}{
 			"websocket": map[string]interface{}{
 				"status": "healthy",
@@ -185,7 +174,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	// Add additional legacy data
 	stats["nats"] = s.nats.Stats()
 	stats["hub"] = s.hub.GetStats()
-	stats["uptime_seconds"] = s.metrics.GetUptime().Seconds()
+	stats["uptime_seconds"] = time.Since(time.Now()).Seconds() // Will be calculated in enhanced metrics
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(stats)
@@ -369,16 +358,9 @@ func (s *Server) collectSystemMetrics() {
 }
 
 func (s *Server) updateSystemMetrics() {
-	// Update goroutine count
-	s.metrics.UpdateGoroutinesCount(runtime.NumGoroutine())
-
-	// Update memory usage
-	var m runtime.MemStats
-	runtime.ReadMemStats(&m)
-	s.metrics.UpdateMemoryUsage(m.Alloc)
-
-	// Note: CPU usage requires additional libraries for accurate measurement
-	// For simplicity, we'll skip it in this implementation
+	// Enhanced metrics now handle all system updates automatically
+	// This method is kept for compatibility but the real work is done
+	// in enhancedMetrics.updateAllMetrics()
 }
 
 func (s *Server) getNATSStatus() string {

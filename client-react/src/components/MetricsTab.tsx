@@ -157,7 +157,7 @@ function MetricsTab() {
       try {
         const endpoint = server === 'node'
           ? 'http://localhost:3001/metrics'
-          : 'http://localhost:3002/stats';
+          : 'http://localhost:3002/metrics/enhanced';
 
         const response = await fetch(endpoint);
         if (!response.ok) {
@@ -179,12 +179,11 @@ function MetricsTab() {
             cpu: 5 + (Math.sin(Date.now() / 5000) + 1) * 7.5, // Oscillating 5-20%
           };
         } else {
-          // Go metrics - has real system stats
+          // Go enhanced metrics - now has accurate CPU and memory stats
           normalizedMetrics = {
             connections: data.connections?.active || 0,
-            memory: (data.system?.memory?.heap_alloc || 0) / 1024 / 1024, // Convert bytes to MB
-            // Go doesn't directly provide CPU %, but we can derive activity from goroutines
-            cpu: Math.min(100, (data.system?.goroutines || 0) * 0.5), // Estimate based on goroutines
+            memory: data.performance?.memory_mb || 0, // Already in MB
+            cpu: data.performance?.cpu_percent || 0, // Accurate CPU percentage via gopsutil
           };
         }
 

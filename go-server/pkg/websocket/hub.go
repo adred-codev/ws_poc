@@ -30,7 +30,7 @@ type Hub struct {
 	nonceMutex sync.RWMutex
 
 	// Metrics
-	metrics *metrics.Metrics
+	metrics metrics.MetricsInterface
 
 	// Enhanced metrics for detailed tracking
 	enhancedMetrics *metrics.EnhancedMetrics
@@ -47,7 +47,7 @@ type Hub struct {
 	wg     sync.WaitGroup
 }
 
-func NewHub(metricsInstance *metrics.Metrics, logger *log.Logger) *Hub {
+func NewHub(metricsInstance metrics.MetricsInterface, logger *log.Logger) *Hub {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Hub{
