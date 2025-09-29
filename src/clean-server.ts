@@ -5,20 +5,20 @@ import cors from 'cors';
 import jwt from 'jsonwebtoken';
 
 // Application Services
-import { ConnectionService } from './application/services/ConnectionService';
-import { MessageService } from './application/services/MessageService';
+import { ConnectionService } from './application/services/ConnectionService.js';
+import { MessageService } from './application/services/MessageService.js';
 
 // Infrastructure
-import { InMemoryClientRepository } from './infrastructure/persistence/InMemoryClientRepository';
-import { WebSocketMessageRepository } from './infrastructure/websocket/WebSocketMessageRepository';
-import { NatsEventSubscriber } from './infrastructure/nats/NatsEventSubscriber';
+import { InMemoryClientRepository } from './infrastructure/persistence/InMemoryClientRepository.js';
+import { WebSocketMessageRepository } from './infrastructure/websocket/WebSocketMessageRepository.js';
+import { NatsEventSubscriber } from './infrastructure/nats/NatsEventSubscriber.js';
 
 // Presentation
-import { WebSocketController } from './presentation/controllers/WebSocketController';
-import { HealthController } from './presentation/controllers/HealthController';
+import { WebSocketController } from './presentation/controllers/WebSocketController.js';
+import { HealthController } from './presentation/controllers/HealthController.js';
 
 // Configuration
-import { config } from './config/odin.config';
+import { config } from './config/odin.config.js';
 
 /**
  * Clean Architecture WebSocket Server

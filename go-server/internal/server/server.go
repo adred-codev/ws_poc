@@ -13,7 +13,6 @@ import (
 	"syscall"
 	"time"
 
-	"odin-ws-server/internal/auth"
 	"odin-ws-server/internal/metrics"
 	"odin-ws-server/internal/types"
 	natsClient "odin-ws-server/pkg/nats"
@@ -26,7 +25,6 @@ type Server struct {
 	hub              *wsClient.Hub
 	nats             *natsClient.Client
 	enhancedMetrics  *metrics.EnhancedMetrics
-	jwtManager       *auth.JWTManager
 	logger           *log.Logger
 	ctx              context.Context
 	cancel           context.CancelFunc
@@ -42,11 +40,6 @@ func NewServer(config *types.Config) (*Server, error) {
 	// Create enhanced metrics (no Prometheus)
 	enhancedMetricsInstance := metrics.NewEnhancedMetrics()
 
-	// Create JWT manager
-	jwtManager := auth.NewJWTManager(
-		config.Auth.JWTSecret,
-		time.Duration(config.Auth.TokenExpiration)*time.Second,
-	)
 
 	// Create WebSocket hub
 	hub := wsClient.NewHub(enhancedMetricsInstance, logger)
@@ -75,7 +68,6 @@ func NewServer(config *types.Config) (*Server, error) {
 		hub:             hub,
 		nats:            natsClientInstance,
 		enhancedMetrics: enhancedMetricsInstance,
-		jwtManager:      jwtManager,
 		logger:          logger,
 		ctx:             ctx,
 		cancel:          cancel,
@@ -108,8 +100,6 @@ func (s *Server) setupHTTPServer() {
 	// Dashboard endpoint removed - using React client instead
 	// mux.HandleFunc("/dashboard", s.handleDashboard)
 
-	// Generate test token endpoint (development only)
-	mux.HandleFunc("/auth/token", s.handleGenerateToken)
 
 	// CORS middleware
 	corsHandler := s.corsMiddleware(mux)
@@ -123,23 +113,8 @@ func (s *Server) setupHTTPServer() {
 }
 
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	// Authenticate if required
-	if s.config.Auth.RequireAuth {
-		claims, err := s.jwtManager.WebSocketAuth(r)
-		if err != nil {
-			s.logger.Printf("WebSocket authentication failed: %v", err)
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			// Record error in enhanced metrics
-			return
-		}
-		s.logger.Printf("WebSocket authenticated user: %s", claims.UserID)
-	}
-
 	// Upgrade to WebSocket
 	wsClient.ServeWS(s.hub, s.enhancedMetrics, s.logger, w, r)
-
-	// Record latency in enhanced metrics
-	// s.enhancedMetrics.RecordMessageLatency(time.Since(start))
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -225,26 +200,6 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	w.Write(content)
 }
 
-func (s *Server) handleGenerateToken(w http.ResponseWriter, r *http.Request) {
-	if r.Method != "GET" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	token, err := s.jwtManager.GenerateTestToken()
-	if err != nil {
-		s.logger.Printf("Error generating test token: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	response := map[string]string{
-		"token": token,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
-}
 
 func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

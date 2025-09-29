@@ -1,5 +1,5 @@
-import { Client } from '../entities/Client';
-import { ClientId } from '../value-objects/ClientId';
+import { Client } from '../entities/Client.js';
+import { ClientId } from '../value-objects/ClientId.js';
 
 export interface IClientRepository {
   save(client: Client): Promise<void>;

@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
-import { ConnectionService } from '../../application/services/ConnectionService';
-import { MessageService } from '../../application/services/MessageService';
-import { NatsEventSubscriber } from '../../infrastructure/nats/NatsEventSubscriber';
+import { ConnectionService } from '../../application/services/ConnectionService.js';
+import { MessageService } from '../../application/services/MessageService.js';
+import { NatsEventSubscriber } from '../../infrastructure/nats/NatsEventSubscriber.js';
 
 export class HealthController {
   private readonly startTime = Date.now();

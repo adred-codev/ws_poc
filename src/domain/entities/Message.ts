@@ -1,7 +1,7 @@
-import { MessageType } from '../../types/odin.types';
-import { Nonce } from '../value-objects/Nonce';
-import { TokenId } from '../value-objects/TokenId';
-import { Price } from '../value-objects/Price';
+import { MessageType } from '../../types/odin.types.js';
+import { Nonce } from '../value-objects/Nonce.js';
+import { TokenId } from '../value-objects/TokenId.js';
+import { Price } from '../value-objects/Price.js';
 
 export abstract class Message {
   protected readonly _type: MessageType;

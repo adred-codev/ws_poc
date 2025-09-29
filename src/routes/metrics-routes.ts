@@ -1,6 +1,6 @@
 import express, { Request, Response } from 'express';
 import { WebSocket } from 'ws';
-import { metricsService, DetailedMetrics } from '../services/metrics-service';
+import { metricsService, DetailedMetrics } from '../services/metrics-service.js';
 
 const router = express.Router();
 

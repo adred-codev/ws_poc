@@ -1,9 +1,9 @@
-import { Client } from '../entities/Client';
-import { ClientId } from '../value-objects/ClientId';
-import { IClientRepository } from '../repositories/IClientRepository';
-import { IMessageRepository } from '../repositories/IMessageRepository';
-import { MessageType } from '../../types/odin.types';
-import { Message } from '../entities/Message';
+import { Client } from '../entities/Client.js';
+import { ClientId } from '../value-objects/ClientId.js';
+import { IClientRepository } from '../repositories/IClientRepository.js';
+import { IMessageRepository } from '../repositories/IMessageRepository.js';
+import { MessageType } from '../../types/odin.types.js';
+import { Message } from '../entities/Message.js';
 
 export interface ConnectClientRequest {
   ip: string;

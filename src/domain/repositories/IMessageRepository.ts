@@ -1,5 +1,5 @@
-import { Message } from '../entities/Message';
-import { ClientId } from '../value-objects/ClientId';
+import { Message } from '../entities/Message.js';
+import { ClientId } from '../value-objects/ClientId.js';
 
 export interface IMessageRepository {
   publishToClient(clientId: ClientId, message: Message): Promise<boolean>;

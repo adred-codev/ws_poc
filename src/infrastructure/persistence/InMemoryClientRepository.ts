@@ -1,6 +1,6 @@
-import { Client } from '../../domain/entities/Client';
-import { ClientId } from '../../domain/value-objects/ClientId';
-import { IClientRepository } from '../../domain/repositories/IClientRepository';
+import { Client } from '../../domain/entities/Client.js';
+import { ClientId } from '../../domain/value-objects/ClientId.js';
+import { IClientRepository } from '../../domain/repositories/IClientRepository.js';
 
 export class InMemoryClientRepository implements IClientRepository {
   private readonly clients: Map<string, Client> = new Map();

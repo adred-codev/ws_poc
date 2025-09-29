@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 
 import jwt from 'jsonwebtoken';
-import { config } from '../config/odin.config';
+import { config } from '../config/odin.config.js';
 
 interface TokenPayload {
   userId: string;

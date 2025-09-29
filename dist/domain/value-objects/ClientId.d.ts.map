@@ -1,0 +1,1 @@
+{"version":3,"file":"ClientId.d.ts","sourceRoot":"","sources":["../../../src/domain/value-objects/ClientId.ts"],"names":[],"mappings":"AAAA,qBAAa,QAAQ;IACnB,OAAO,CAAC,QAAQ,CAAC,MAAM,CAAS;gBAEpB,KAAK,EAAE,MAAM;IAOzB,IAAI,KAAK,IAAI,MAAM,CAElB;IAED,MAAM,CAAC,KAAK,EAAE,QAAQ,GAAG,OAAO;IAIhC,QAAQ,IAAI,MAAM;IAIlB,MAAM,CAAC,QAAQ,IAAI,QAAQ;CAK5B"}

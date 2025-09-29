@@ -1,8 +1,7 @@
 import express, { Request, Response } from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
 import { connect, NatsConnection, StringCodec, Subscription } from 'nats';
-import jwt from 'jsonwebtoken';
-import { config, subjects } from './config/odin.config';
+import { config, subjects } from './config/odin.config.js';
 import { createServer, IncomingMessage, Server } from 'http';
 import cors from 'cors';
 
@@ -122,21 +121,6 @@ class OdinWebSocketServer {
       });
     });
 
-    // Generate test JWT token endpoint (development only)
-    if (config.env === 'development') {
-      this.app.post('/auth/token', (req: Request, res: Response) => {
-        const { userId = 'test-user' } = req.body;
-        const token = jwt.sign(
-          {
-            userId,
-            iat: Math.floor(Date.now() / 1000),
-            exp: Math.floor(Date.now() / 1000) + (24 * 60 * 60) // 24 hours
-          },
-          config.jwt.secret
-        );
-        res.json({ token, userId });
-      });
-    }
 
     this.server.listen(config.server.httpPort, () => {
       console.log(`🌐 HTTP server running on port ${config.server.httpPort}`);
@@ -167,13 +151,6 @@ class OdinWebSocketServer {
 
     console.log(`🔗 New client connected: ${clientId}`);
 
-    // Authenticate connection (simplified for PoC)
-    const token = this.extractTokenFromRequest(request);
-    if (!this.validateToken(token)) {
-      console.log(`🚫 Unauthorized connection attempt: ${clientId}`);
-      ws.close(1008, 'Unauthorized');
-      return;
-    }
 
     this.clients.set(clientId, { ws, ...clientInfo });
     this.stats.totalConnections++;
@@ -213,21 +190,6 @@ class OdinWebSocketServer {
     this.startHeartbeat(clientId);
   }
 
-  private extractTokenFromRequest(request: IncomingMessage): string | null {
-    const url = new URL(request.url || '', 'http://localhost');
-    return url.searchParams.get('token') || request.headers.authorization?.split(' ')[1] || null;
-  }
-
-  private validateToken(token: string | null): boolean {
-    if (!token) return config.env === 'development'; // Allow no auth in dev mode
-
-    try {
-      jwt.verify(token, config.jwt.secret);
-      return true;
-    } catch {
-      return false;
-    }
-  }
 
   private handleClientMessage(clientId: string, message: ClientMessage): void {
     console.log(`📨 Message from ${clientId}:`, message.type);

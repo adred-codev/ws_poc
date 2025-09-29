@@ -22,7 +22,7 @@ RUN npx tsc
 FROM node:20-alpine
 
 # Install runtime dependencies
-RUN apk add --no-cache tini
+RUN apk add --no-cache tini wget
 
 # Create non-root user (matching Go container)
 RUN addgroup -g 1001 -S appgroup && \
@@ -35,6 +35,9 @@ WORKDIR /app
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/package*.json ./
+
+# Copy static files that might be needed
+COPY public ./public
 
 # Create necessary directories
 RUN mkdir -p logs && \

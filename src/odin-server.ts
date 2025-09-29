@@ -1,7 +1,6 @@
 import express, { Request, Response } from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
 import { connect, NatsConnection, StringCodec } from 'nats';
-import jwt from 'jsonwebtoken';
 import { createServer } from 'http';
 import cors from 'cors';
 import crypto from 'crypto';
@@ -12,7 +11,7 @@ import {
   migrationConfig,
   metricsConfig,
   updateFrequencies
-} from './config/odin.config';
+} from './config/odin.config.js';
 import {
   MessageType,
   OdinMessage,
@@ -21,14 +20,12 @@ import {
   ServerMetrics,
   TradeRequest,
   TradeResponse,
-  AuthTokenRequest,
-  AuthTokenResponse,
   PriceUpdateMessage,
   TradeExecutedMessage
-} from './types/odin.types';
-import { metricsService } from './services/metrics-service';
-import { enhancedMetricsService } from './services/enhanced-metrics';
-import metricsRoutes from './routes/metrics-routes';
+} from './types/odin.types.js';
+import { metricsService } from './services/metrics-service.js';
+import { enhancedMetricsService } from './services/enhanced-metrics.js';
+import metricsRoutes from './routes/metrics-routes.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -253,14 +250,15 @@ class OdinWebSocketServer {
           : 0;
 
         // Combine legacy metrics with enhanced metrics
+        const { connectionCount: legacyConnectionCount, ...legacyMetrics } = this.metrics;
         res.json({
           // Enhanced metrics (accurate CPU, memory, connections)
           connectionCount: enhancedData.connectionCount,
           memory: enhancedData.memory,
           cpu: enhancedData.cpu,
 
-          // Legacy metrics for compatibility
-          ...this.metrics,
+          // Legacy metrics for compatibility (excluding connectionCount to avoid duplicate)
+          ...legacyMetrics,
           averageLatency: avgLatency,
           errorRate: (this.metrics.errors / Math.max(1, this.metrics.messagesPublished)).toFixed(4),
           uptime: Math.floor((Date.now() - this.metrics.startTime) / 1000)
@@ -366,21 +364,6 @@ class OdinWebSocketServer {
       });
     });
 
-    // JWT token endpoint
-    if (config.env === 'development') {
-      this.app.post('/auth/token', (req: Request<{}, AuthTokenResponse, AuthTokenRequest>, res: Response<AuthTokenResponse>) => {
-        const { userId = 'test-user' } = req.body;
-        const token = jwt.sign(
-          {
-            userId,
-            iat: Math.floor(Date.now() / 1000),
-            exp: Math.floor(Date.now() / 1000) + config.jwt.expiry
-          },
-          config.jwt.secret
-        );
-        res.json({ token, userId });
-      });
-    }
 
     this.server.listen(config.server.httpPort, () => {
       console.log(`🌐 HTTP server running on port ${config.server.httpPort}`);
@@ -427,16 +410,6 @@ class OdinWebSocketServer {
 
     console.log(`🔗 New client connected: ${clientId}`);
 
-    // Validate JWT token
-    const token = this.extractTokenFromRequest(request);
-    const tokenData = this.validateToken(token);
-
-    if (!tokenData && config.env !== 'development') {
-      console.log(`🚫 Unauthorized connection attempt: ${clientId}`);
-      ws.close(1008, 'Unauthorized');
-      metricsService.recordConnection(false);
-      return;
-    }
 
     // Store client
     this.clients.set(clientId, { ws, ...clientInfo });
@@ -500,20 +473,6 @@ class OdinWebSocketServer {
     this.startHeartbeat(clientId);
   }
 
-  private extractTokenFromRequest(request: IncomingMessage): string | null {
-    const url = new URL(request.url || '', 'http://localhost');
-    return url.searchParams.get('token') || request.headers.authorization?.split(' ')[1] || null;
-  }
-
-  private validateToken(token: string | null): any {
-    if (!token) return null;
-
-    try {
-      return jwt.verify(token, config.jwt.secret);
-    } catch {
-      return null;
-    }
-  }
 
   private handleClientMessage(clientId: string, message: any): void {
     const client = this.clients.get(clientId);

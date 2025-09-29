@@ -4,7 +4,7 @@ import {
   UpdateFrequencies,
   NatsSubjects,
   OdinConfig,
-} from '../types/odin.types';
+} from '../types/odin.types.js';
 
 dotenv.config();
 
@@ -79,10 +79,10 @@ export const scalingConfig: ScalingConfig = {
 
 // Migration configuration (dual-mode support)
 export const migrationConfig: MigrationConfig = {
-  enabled: true,
+  enabled: false, // Disable migration for stress testing
   pollingEndpoint: '/api/poll',
   websocketEndpoint: '/ws',
-  rolloutPercentage: 10, // Start with 10% on WebSocket
+  rolloutPercentage: 100, // Allow all WebSocket connections
   fallbackEnabled: true,
   dualModeDuration: 30 * 24 * 60 * 60 * 1000, // 30 days
 };

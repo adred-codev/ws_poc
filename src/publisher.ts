@@ -1,5 +1,7 @@
+import express, { Request, Response } from 'express';
 import { connect, NatsConnection, StringCodec } from 'nats';
-import { config, subjects } from './config/odin.config';
+import { config, subjects } from './config/odin.config.js';
+import cors from 'cors';
 
 const sc = StringCodec();
 
@@ -18,6 +20,26 @@ interface PublisherStats {
   messagesPublished: number;
   startTime: number;
   errors: number;
+}
+
+interface ControlAPIRequest {
+  action: 'start' | 'stop' | 'configure';
+  connections?: number;
+  messagesPerSecond?: number;
+  duration?: number;
+  tokens?: string[];
+}
+
+interface ControlAPIResponse {
+  success: boolean;
+  message: string;
+  stats?: PublisherStats;
+  activeTokens?: string[];
+  configuration?: {
+    connections: number;
+    messagesPerSecond: number;
+    tokens: string[];
+  };
 }
 
 interface PriceUpdate {
@@ -56,12 +78,17 @@ class TokenPricePublisher {
     startTime: Date.now(),
     errors: 0
   };
+  private app!: express.Application;
+  private httpServer: any;
+  private isPublishing: boolean = false;
+  private targetMessagesPerSecond: number = 0;
+  private targetConnections: number = 0;
 
   async initialize(): Promise<void> {
     await this.setupNATS();
     this.initializeTokenData();
-    this.startPublishing();
-    console.log('🚀 Token Price Publisher initialized');
+    this.setupHTTPServer();
+    console.log('🚀 Token Price Publisher initialized with HTTP control API');
   }
 
   private async setupNATS(): Promise<void> {
@@ -112,25 +139,202 @@ class TokenPricePublisher {
     console.log('💰 Initialized token data:', Array.from(this.tokens.keys()));
   }
 
-  private startPublishing(): void {
-    config.simulation.tokens.forEach(tokenId => {
-      // Different update frequencies for different tokens (simulating real market)
-      const updateInterval = this.getUpdateInterval(tokenId);
+  private setupHTTPServer(): void {
+    this.app = express();
+    this.app.use(cors());
+    this.app.use(express.json());
 
+    // Control endpoint for stress testing
+    this.app.post('/control', (req: Request<{}, ControlAPIResponse, ControlAPIRequest>, res: Response<ControlAPIResponse>) => {
+      this.handleControlRequest(req, res);
+    });
+
+    // Stats endpoint
+    this.app.get('/stats', (req: Request, res: Response) => {
+      res.json({
+        success: true,
+        stats: this.stats,
+        isPublishing: this.isPublishing,
+        activeTokens: Array.from(this.tokens.keys()),
+        configuration: {
+          connections: this.targetConnections,
+          messagesPerSecond: this.targetMessagesPerSecond,
+          tokens: Array.from(this.tokens.keys())
+        }
+      });
+    });
+
+    // Health check
+    this.app.get('/health', (req: Request, res: Response) => {
+      res.json({
+        status: 'healthy',
+        nats: this.nats?.isClosed() ? 'disconnected' : 'connected',
+        publishing: this.isPublishing,
+        uptime: Date.now() - this.stats.startTime
+      });
+    });
+
+    const port = 3003;
+    this.httpServer = this.app.listen(port, () => {
+      console.log(`🌐 Publisher HTTP control API running on port ${port}`);
+      console.log(`📊 Stats: http://localhost:${port}/stats`);
+      console.log(`🎛️  Control: POST http://localhost:${port}/control`);
+    });
+  }
+
+  private handleControlRequest(req: Request<{}, ControlAPIResponse, ControlAPIRequest>, res: Response<ControlAPIResponse>): void {
+    const { action, connections, messagesPerSecond, duration, tokens } = req.body;
+
+    try {
+      switch (action) {
+        case 'start':
+          if (this.isPublishing) {
+            res.json({ success: false, message: 'Publishing already active' });
+            return;
+          }
+
+          // Configure parameters
+          this.targetConnections = connections || 100;
+          this.targetMessagesPerSecond = messagesPerSecond || 10;
+
+          // Update token list if provided
+          if (tokens && tokens.length > 0) {
+            // Clear existing tokens and reinitialize with new list
+            this.tokens.clear();
+            tokens.forEach(tokenId => {
+              this.tokens.set(tokenId, {
+                id: tokenId,
+                price: Math.random() * 100,
+                volume24h: Math.random() * 1000000,
+                marketCap: Math.random() * 1000000000,
+                priceChange24h: 0,
+                lastUpdate: Date.now(),
+                trend: 'neutral',
+                volatility: Math.random() * 0.1 + 0.02
+              });
+            });
+          }
+
+          this.startPublishing(messagesPerSecond);
+
+          // Auto-stop after duration if specified
+          if (duration && duration > 0) {
+            setTimeout(() => {
+              this.stopPublishing();
+              console.log(`⏹️  Auto-stopped publishing after ${duration}ms`);
+            }, duration);
+          }
+
+          res.json({
+            success: true,
+            message: `Started publishing with ${this.targetMessagesPerSecond} msg/sec for ${this.tokens.size} tokens`,
+            stats: this.stats,
+            activeTokens: Array.from(this.tokens.keys())
+          });
+          break;
+
+        case 'stop':
+          if (!this.isPublishing) {
+            res.json({ success: false, message: 'Publishing not active' });
+            return;
+          }
+
+          this.stopPublishing();
+          res.json({
+            success: true,
+            message: 'Publishing stopped',
+            stats: this.stats
+          });
+          break;
+
+        case 'configure':
+          this.targetConnections = connections || this.targetConnections;
+          this.targetMessagesPerSecond = messagesPerSecond || this.targetMessagesPerSecond;
+
+          if (tokens && tokens.length > 0) {
+            // Update tokens without restarting
+            this.tokens.clear();
+            tokens.forEach(tokenId => {
+              this.tokens.set(tokenId, {
+                id: tokenId,
+                price: Math.random() * 100,
+                volume24h: Math.random() * 1000000,
+                marketCap: Math.random() * 1000000000,
+                priceChange24h: 0,
+                lastUpdate: Date.now(),
+                trend: 'neutral',
+                volatility: Math.random() * 0.1 + 0.02
+              });
+            });
+          }
+
+          res.json({
+            success: true,
+            message: 'Configuration updated',
+            configuration: {
+              connections: this.targetConnections,
+              messagesPerSecond: this.targetMessagesPerSecond,
+              tokens: Array.from(this.tokens.keys())
+            }
+          });
+          break;
+
+        default:
+          res.json({ success: false, message: 'Invalid action. Use start, stop, or configure' });
+      }
+    } catch (error) {
+      console.error('❌ Control API error:', error);
+      res.json({ success: false, message: 'Internal server error' });
+    }
+  }
+
+  private startPublishing(messagesPerSecond?: number): void {
+    if (this.isPublishing) {
+      console.log('⚠️  Publishing already active');
+      return;
+    }
+
+    this.isPublishing = true;
+    const targetRate = messagesPerSecond || this.targetMessagesPerSecond || 10;
+    const intervalMs = Math.max(100, 1000 / (targetRate / this.tokens.size)); // Min 100ms interval
+
+    console.log(`▶️  Starting publishing at ${targetRate} msg/sec (${intervalMs}ms interval per token)`);
+
+    this.tokens.forEach((_, tokenId) => {
       const interval = setInterval(() => {
-        this.publishPriceUpdate(tokenId);
-      }, updateInterval);
+        if (this.isPublishing) {
+          this.publishPriceUpdate(tokenId);
+        }
+      }, intervalMs);
 
       this.publishingIntervals.set(tokenId, interval);
-      console.log(`⏰ Started publishing ${tokenId} every ${updateInterval}ms`);
     });
 
     // Publish market statistics less frequently
     const statsInterval = setInterval(() => {
-      this.publishMarketStats();
+      if (this.isPublishing) {
+        this.publishMarketStats();
+      }
     }, 30000); // Every 30 seconds
 
     this.publishingIntervals.set('market-stats', statsInterval);
+  }
+
+  private stopPublishing(): void {
+    if (!this.isPublishing) {
+      return;
+    }
+
+    console.log('⏹️  Stopping publishing...');
+    this.isPublishing = false;
+
+    // Clear all intervals
+    for (const interval of this.publishingIntervals.values()) {
+      clearInterval(interval);
+    }
+    this.publishingIntervals.clear();
+
+    console.log('✅ Publishing stopped');
   }
 
   private getUpdateInterval(tokenId: string): number {
@@ -284,9 +488,12 @@ class TokenPricePublisher {
   async shutdown(): Promise<void> {
     console.log('🛑 Shutting down publisher...');
 
-    // Clear all intervals
-    for (const interval of this.publishingIntervals.values()) {
-      clearInterval(interval);
+    // Stop publishing
+    this.stopPublishing();
+
+    // Close HTTP server
+    if (this.httpServer) {
+      this.httpServer.close();
     }
 
     // Close NATS connection

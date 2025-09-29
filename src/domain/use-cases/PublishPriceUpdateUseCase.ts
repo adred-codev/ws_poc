@@ -1,9 +1,9 @@
-import { PriceUpdateMessage, MessageSource } from '../entities/Message';
-import { TokenId } from '../value-objects/TokenId';
-import { Price } from '../value-objects/Price';
-import { Nonce } from '../value-objects/Nonce';
-import { IMessageRepository } from '../repositories/IMessageRepository';
-import { IClientRepository } from '../repositories/IClientRepository';
+import { PriceUpdateMessage, MessageSource } from '../entities/Message.js';
+import { TokenId } from '../value-objects/TokenId.js';
+import { Price } from '../value-objects/Price.js';
+import { Nonce } from '../value-objects/Nonce.js';
+import { IMessageRepository } from '../repositories/IMessageRepository.js';
+import { IClientRepository } from '../repositories/IClientRepository.js';
 
 export interface PublishPriceUpdateRequest {
   tokenId: string;

@@ -1,8 +1,8 @@
 import { WebSocket } from 'ws';
-import { Message } from '../../domain/entities/Message';
-import { ClientId } from '../../domain/value-objects/ClientId';
-import { IMessageRepository } from '../../domain/repositories/IMessageRepository';
-import { IClientRepository } from '../../domain/repositories/IClientRepository';
+import { Message } from '../../domain/entities/Message.js';
+import { ClientId } from '../../domain/value-objects/ClientId.js';
+import { IMessageRepository } from '../../domain/repositories/IMessageRepository.js';
+import { IClientRepository } from '../../domain/repositories/IClientRepository.js';
 
 export interface WebSocketConnection {
   clientId: ClientId;

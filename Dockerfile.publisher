@@ -1,29 +1,39 @@
+# Build stage
+FROM node:20-alpine AS builder
+
+# Set working directory
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+COPY tsconfig.json ./
+
+# Install dependencies
+RUN npm ci
+
+# Copy source code
+COPY src ./src
+
+# Build TypeScript
+RUN npx tsc
+
+# Runtime stage
 FROM node:20-alpine
 
-# Install tini for signal handling
+# Install runtime dependencies
 RUN apk add --no-cache tini
 
 # Create non-root user
 RUN addgroup -g 1001 -S appgroup && \
     adduser -u 1001 -S appuser -G appgroup
 
+# Set working directory
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
-
-# Install all dependencies for building
-RUN npm ci
-
-# Copy source files
-COPY tsconfig.json ./
-COPY src ./src
-
-# Build TypeScript manually
-RUN npx tsc
-
-# Remove dev dependencies to reduce image size
-RUN npm prune --production
+# Copy built application
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/package*.json ./
 
 # Change ownership
 RUN chown -R appuser:appgroup /app

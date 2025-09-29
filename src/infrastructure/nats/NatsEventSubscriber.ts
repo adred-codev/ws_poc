@@ -1,6 +1,6 @@
 import { connect, NatsConnection, StringCodec, Subscription } from 'nats';
-import { MessageService } from '../../application/services/MessageService';
-import { MessageSource } from '../../domain/entities/Message';
+import { MessageService } from '../../application/services/MessageService.js';
+import { MessageSource } from '../../domain/entities/Message.js';
 
 const sc = StringCodec();
 

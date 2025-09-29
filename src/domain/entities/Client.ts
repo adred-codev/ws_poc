@@ -1,5 +1,5 @@
-import { ClientId } from '../value-objects/ClientId';
-import { Nonce } from '../value-objects/Nonce';
+import { ClientId } from '../value-objects/ClientId.js';
+import { Nonce } from '../value-objects/Nonce.js';
 
 export class Client {
   private readonly _id: ClientId;

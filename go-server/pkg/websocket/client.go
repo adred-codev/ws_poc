@@ -47,8 +47,6 @@ type Client struct {
 	// Client information
 	ID          string
 	ConnectedAt time.Time
-	UserID      string
-	AuthToken   string
 
 	// Message tracking for deduplication
 	seenNonces map[string]time.Time

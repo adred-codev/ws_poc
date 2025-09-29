@@ -1,9 +1,9 @@
 import { WebSocket } from 'ws';
 import { IncomingMessage } from 'http';
-import { ConnectionService } from '../../application/services/ConnectionService';
-import { MessageService } from '../../application/services/MessageService';
-import { ClientId } from '../../domain/value-objects/ClientId';
-import { WebSocketMessageRepository } from '../../infrastructure/websocket/WebSocketMessageRepository';
+import { ConnectionService } from '../../application/services/ConnectionService.js';
+import { MessageService } from '../../application/services/MessageService.js';
+import { ClientId } from '../../domain/value-objects/ClientId.js';
+import { WebSocketMessageRepository } from '../../infrastructure/websocket/WebSocketMessageRepository.js';
 
 export interface ClientMessage {
   type: string;

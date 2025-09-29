@@ -1,8 +1,8 @@
-import { Message, PriceUpdateMessage, TradeExecutedMessage, HeartbeatMessage, MessageSource } from '../../domain/entities/Message';
-import { ClientId } from '../../domain/value-objects/ClientId';
-import { IMessageRepository } from '../../domain/repositories/IMessageRepository';
-import { IClientRepository } from '../../domain/repositories/IClientRepository';
-import { PublishPriceUpdateUseCase, PublishPriceUpdateRequest, PublishPriceUpdateResponse } from '../../domain/use-cases/PublishPriceUpdateUseCase';
+import { Message, PriceUpdateMessage, TradeExecutedMessage, HeartbeatMessage, MessageSource } from '../../domain/entities/Message.js';
+import { ClientId } from '../../domain/value-objects/ClientId.js';
+import { IMessageRepository } from '../../domain/repositories/IMessageRepository.js';
+import { IClientRepository } from '../../domain/repositories/IClientRepository.js';
+import { PublishPriceUpdateUseCase, PublishPriceUpdateRequest, PublishPriceUpdateResponse } from '../../domain/use-cases/PublishPriceUpdateUseCase.js';
 
 export interface MessageMetrics {
   messagesPublished: number;

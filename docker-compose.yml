@@ -50,9 +50,6 @@ services:
       nats:
         condition: service_healthy
     restart: unless-stopped
-    volumes:
-      - ./go-server/config.json:/app/config.json:ro
-      - ./go-server/static:/app/static:ro
     # IDENTICAL RESOURCE CONSTRAINTS
     deploy:
       resources:
@@ -89,9 +86,6 @@ services:
       nats:
         condition: service_healthy
     restart: unless-stopped
-    volumes:
-      - ./src:/app/src:ro
-      - ./public:/app/public:ro
     # IDENTICAL RESOURCE CONSTRAINTS
     deploy:
       resources:

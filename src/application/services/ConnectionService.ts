@@ -1,8 +1,8 @@
-import { Client } from '../../domain/entities/Client';
-import { ClientId } from '../../domain/value-objects/ClientId';
-import { IClientRepository } from '../../domain/repositories/IClientRepository';
-import { ConnectClientUseCase, ConnectClientRequest, ConnectClientResponse } from '../../domain/use-cases/ConnectClientUseCase';
-import { IMessageRepository } from '../../domain/repositories/IMessageRepository';
+import { Client } from '../../domain/entities/Client.js';
+import { ClientId } from '../../domain/value-objects/ClientId.js';
+import { IClientRepository } from '../../domain/repositories/IClientRepository.js';
+import { ConnectClientUseCase, ConnectClientRequest, ConnectClientResponse } from '../../domain/use-cases/ConnectClientUseCase.js';
+import { IMessageRepository } from '../../domain/repositories/IMessageRepository.js';
 
 export interface ConnectionMetrics {
   totalConnections: number;

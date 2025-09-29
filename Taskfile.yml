@@ -5,8 +5,6 @@ includes:
   node: ./tasks/nodejs.yml
   go: ./tasks/go.yml
   test: ./tasks/test.yml
-  dev: ./tasks/dev.yml
-  docker: ./tasks/docker.yml
 
 vars:
   NODE_SERVER_PORT: "3001"
@@ -17,63 +15,28 @@ vars:
 tasks:
   # Quick start commands - the main entry points
   start:
-    desc: "🚀 Start complete Node.js stack (NATS + Server + Publisher)"
-    deps: [nats:start]
+    desc: "🚀 Start complete Node.js stack (NATS + Server + Publisher) - Containerized"
     cmds:
-      - task: node:server
-      - sleep 2
-      - task: node:publisher
+      - echo "🐳 Starting containerized Node.js stack..."
+      - docker-compose up -d nats ws-node publisher
+      - sleep 5
       - echo "✅ Node.js stack ready!"
       - echo "🔌 WebSocket at ws://localhost:{{.NODE_SERVER_PORT}}/ws"
       - echo "📊 Dashboard at http://localhost:{{.NODE_SERVER_PORT}}/dashboard"
+      - echo "📊 Container resources - 512MB RAM, 2 CPU cores"
 
   start:go:
-    desc: "⚡ Start complete Go stack (NATS + Go Server + Publisher)"
-    deps: [nats:start, go:build]
+    desc: "⚡ Start complete Go stack (NATS + Go Server + Publisher) - Containerized"
     cmds:
-      - task: go:server
-      - sleep 2
-      - task: node:publisher  # Still use Node.js publisher for data generation
+      - echo "🐳 Starting containerized Go stack..."
+      - docker-compose up -d nats ws-go publisher
+      - sleep 5
       - echo "✅ Go stack ready!"
       - echo "📈 Stats API at http://localhost:{{.GO_SERVER_PORT}}/stats"
       - echo "🔌 WebSocket at ws://localhost:{{.GO_SERVER_PORT}}/ws"
 
-  start:both:
-    desc: "🔄 Start both servers for performance comparison"
-    deps: [nats:start, go:build]
-    cmds:
-      - task: node:server    # Port 3001
-      - task: go:server      # Port 3002
-      - sleep 2
-      - task: node:publisher
-      - echo "✅ Both servers running!"
-      - echo "🟢 Node.js WS at ws://localhost:{{.NODE_SERVER_PORT}}/ws"
-      - echo "⚡ Go WS at ws://localhost:{{.GO_SERVER_PORT}}/ws"
 
-  start:docker:
-    desc: "🐳 Start complete stack using Docker Compose"
-    cmds:
-      - task: docker:up
-      - echo "✅ Docker stack ready!"
-      - echo "🟢 Node.js (containerized) at ws://localhost:3001/ws"
-      - echo "⚡ Go (containerized) at ws://localhost:3002/ws"
-      - echo "📈 NATS Monitor at http://localhost:8222"
 
-  # Development workflows
-  dev:
-    desc: "🛠️  Development mode with Node.js (auto-restart)"
-    cmds:
-      - task: start
-
-  dev:go:
-    desc: "🛠️  Development mode with Go"
-    cmds:
-      - task: start:go
-
-  dev:compare:
-    desc: "🆚 Development mode with both servers for comparison"
-    cmds:
-      - task: start:both
 
   # Testing workflows
   test:
@@ -88,13 +51,16 @@ tasks:
 
   # Utility commands
   stop:
-    desc: "🛑 Stop all running services"
+    desc: "🛑 Stop all running services (containers and host processes)"
     cmds:
+      - echo "🛑 Stopping containers..."
+      - docker-compose down || true
+      - echo "🛑 Stopping host processes..."
       - task: nats:stop
       - pkill -f "tsx src" || true
       - pkill -f "odin-ws-server" || true
       - pkill -f "python3 -m http.server" || true
-      - echo "✅ All services stopped"
+      - echo "✅ All services stopped (containers and host processes)"
 
   clean:
     desc: "🧹 Clean up build artifacts and stop services"
@@ -102,55 +68,6 @@ tasks:
       - task: stop
       - task: go:clean
       - echo "✅ Cleanup complete"
-
-  status:
-    desc: "📋 Check status of all services"
-    cmds:
-      - echo "🔍 Checking service status..."
-      - echo "NATS Server:" && (curl -s http://localhost:{{.NATS_MONITOR_PORT}}/varz | jq -r '.server_name // "Not running"')
-      - echo "Node.js Server:" && (curl -s http://localhost:{{.NODE_SERVER_PORT}}/health | jq -r '.status // "Not running"')
-      - echo "Go Server:" && (curl -s http://localhost:{{.GO_SERVER_PORT}}/health | jq -r '.status // "Not running"')
-
-  # Setup and installation
-  setup:
-    desc: "⚙️  Initial setup - install dependencies and build"
-    cmds:
-      - task: dev:setup
-
-  help:
-    desc: "❓ Show available commands"
-    cmds:
-      - echo "🚀 Odin WebSocket Server - Task Commands"
-      - echo ""
-      - echo "Quick Start:"
-      - echo "  task start         - Start Node.js stack"
-      - echo "  task start:go      - Start Go stack"
-      - echo "  task start:both    - Start both servers for comparison"
-      - echo "  task start:docker  - Start everything in Docker containers"
-      - echo ""
-      - echo "Development:"
-      - echo "  task dev           - Development mode (Node.js)"
-      - echo "  task dev:go        - Development mode (Go)"
-      - echo "  task dev:compare   - Both servers for comparison"
-      - echo ""
-      - echo "Docker:"
-      - echo "  task docker:up     - Start all containers"
-      - echo "  task docker:status - Show container status"
-      - echo "  task docker:logs   - View container logs"
-      - echo "  task docker:down   - Stop all containers"
-      - echo ""
-      - echo "Testing:"
-      - echo "  task test          - Quick load test"
-      - echo "  task test:all      - Comprehensive testing"
-      - echo "  task docker:test:compare - Compare containerized servers"
-      - echo ""
-      - echo "Management:"
-      - echo "  task status        - Check service status"
-      - echo "  task stop          - Stop all services"
-      - echo "  task clean         - Clean up and stop"
-      - echo "  task setup         - Initial setup"
-      - echo ""
-      - echo "For more commands run task --list"
 
   default:
     desc: "🏠 Default task - show help"

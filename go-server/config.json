@@ -27,7 +27,7 @@
     "requireAuth": false
   },
   "metrics": {
-    "enablePrometheus": true,
+    "enablePrometheus": false,
     "metricsPath": "/metrics",
     "updateInterval": 1
   }

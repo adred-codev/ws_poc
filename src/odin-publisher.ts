@@ -4,7 +4,7 @@ import {
   config,
   subjects,
   updateFrequencies
-} from './config/odin.config';
+} from './config/odin.config.js';
 import {
   TokenData,
   PriceUpdateMessage,
@@ -13,8 +13,8 @@ import {
   BatchUpdateMessage,
   MarketStatsMessage,
   HolderUpdateMessage
-} from './types/odin.types';
-import { MessageType } from './types/odin.types';
+} from './types/odin.types.js';
+import { MessageType } from './types/odin.types.js';
 
 const sc = StringCodec();
 
