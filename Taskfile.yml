@@ -1,75 +1,232 @@
 version: '3'
 
 includes:
-  nats: ./tasks/nats.yml
-  node: ./tasks/nodejs.yml
-  go: ./tasks/go.yml
   test: ./tasks/test.yml
 
 vars:
   NODE_SERVER_PORT: "3001"
   GO_SERVER_PORT: "3002"
+  PUBLISHER_PORT: "3003"
   NATS_PORT: "4222"
   NATS_MONITOR_PORT: "8222"
 
 tasks:
-  # Quick start commands - the main entry points
+  # Main entry points - containerized services
   start:
-    desc: "🚀 Start complete Node.js stack (NATS + Server + Publisher) - Containerized"
+    desc: "🚀 Start complete containerized stack (NATS + Node.js + Go + Publisher)"
     cmds:
-      - echo "🐳 Starting containerized Node.js stack..."
+      - echo "🐳 Starting complete containerized stack..."
+      - docker-compose up -d
+      - sleep 10
+      - echo "✅ All services ready!"
+      - echo ""
+      - echo "Services:"
+      - echo "  🔌 Node.js WebSocket at ws://localhost:3001/ws"
+      - echo "  ⚡ Go WebSocket at ws://localhost:3002/ws"
+      - echo "  🎛️  Publisher Control at http://localhost:3003/control"
+      - echo "  📊 NATS Monitor at http://localhost:8222"
+
+  start:node:
+    desc: "🟢 Start Node.js stack only (NATS + Node.js + Publisher)"
+    cmds:
+      - echo "🐳 Starting Node.js stack..."
       - docker-compose up -d nats ws-node publisher
       - sleep 5
       - echo "✅ Node.js stack ready!"
-      - echo "🔌 WebSocket at ws://localhost:{{.NODE_SERVER_PORT}}/ws"
-      - echo "📊 Dashboard at http://localhost:{{.NODE_SERVER_PORT}}/dashboard"
-      - echo "📊 Container resources - 512MB RAM, 2 CPU cores"
+      - echo "  🔌 WebSocket at ws://localhost:3001/ws"
 
   start:go:
-    desc: "⚡ Start complete Go stack (NATS + Go Server + Publisher) - Containerized"
+    desc: "⚡ Start Go stack only (NATS + Go + Publisher)"
     cmds:
-      - echo "🐳 Starting containerized Go stack..."
+      - echo "🐳 Starting Go stack..."
       - docker-compose up -d nats ws-go publisher
       - sleep 5
       - echo "✅ Go stack ready!"
-      - echo "📈 Stats API at http://localhost:{{.GO_SERVER_PORT}}/stats"
-      - echo "🔌 WebSocket at ws://localhost:{{.GO_SERVER_PORT}}/ws"
+      - echo "  🔌 WebSocket at ws://localhost:3002/ws"
 
-
-
-
-  # Testing workflows
-  test:
-    desc: "🧪 Run quick load test on active server"
+  # Publisher control
+  publisher:start:
+    desc: "▶️  Start publisher stress test"
     cmds:
-      - task: test:quick
+      - |
+        curl -s -X POST http://localhost:3003/control \
+          -H "Content-Type: application/json" \
+          -d '{"action": "start", "messagesPerSecond": 50, "connections": 100}' \
+          | jq .
 
-  test:all:
-    desc: "🧪 Run comprehensive performance comparison"
+  publisher:stop:
+    desc: "⏹️  Stop publisher"
     cmds:
-      - task: test:compare:performance
+      - |
+        curl -s -X POST http://localhost:3003/control \
+          -H "Content-Type: application/json" \
+          -d '{"action": "stop"}' \
+          | jq .
 
-  # Utility commands
+  publisher:stats:
+    desc: "📊 Show publisher statistics"
+    cmds:
+      - curl -s http://localhost:3003/stats | jq .
+
+  # Health and status checks
+  status:
+    desc: "📊 Check status of all services"
+    cmds:
+      - echo "📊 Service Status Check"
+      - echo "======================="
+      - echo ""
+      - echo "🐳 Docker Containers:"
+      - docker-compose ps
+      - echo ""
+      - echo "🏥 Health Checks:"
+      - |
+        if curl -s http://localhost:3001/health > /dev/null; then
+          echo "  ✅ Node.js server healthy"
+        else
+          echo "  ❌ Node.js server not healthy"
+        fi
+      - |
+        if curl -s http://localhost:3002/health > /dev/null; then
+          echo "  ✅ Go server healthy"
+        else
+          echo "  ❌ Go server not healthy"
+        fi
+      - |
+        if curl -s http://localhost:3003/health > /dev/null; then
+          echo "  ✅ Publisher healthy"
+        else
+          echo "  ❌ Publisher not healthy"
+        fi
+
+  logs:
+    desc: "📜 Show logs from all services"
+    cmds:
+      - docker-compose logs --tail=20
+
+  logs:node:
+    desc: "📜 Show Node.js server logs"
+    cmds:
+      - docker-compose logs -f ws-node
+
+  logs:go:
+    desc: "📜 Show Go server logs"
+    cmds:
+      - docker-compose logs -f ws-go
+
+  logs:publisher:
+    desc: "📜 Show publisher logs"
+    cmds:
+      - docker-compose logs -f publisher
+
+  # Build and rebuild
+  build:
+    desc: "🔨 Build all containers"
+    cmds:
+      - echo "🔨 Building all containers..."
+      - docker-compose build
+      - echo "✅ All containers built"
+
+  rebuild:
+    desc: "🔄 Rebuild and restart all services"
+    cmds:
+      - echo "🔄 Rebuilding and restarting..."
+      - task: stop
+      - docker-compose build
+      - task: start
+
+  rebuild:node:
+    desc: "🔄 Rebuild and restart Node.js service"
+    cmds:
+      - docker-compose stop ws-node
+      - docker-compose build ws-node
+      - docker-compose up -d ws-node
+
+  rebuild:go:
+    desc: "🔄 Rebuild and restart Go service"
+    cmds:
+      - docker-compose stop ws-go
+      - docker-compose build ws-go
+      - docker-compose up -d ws-go
+
+  # Testing
+  test:quick:
+    desc: "🧪 Quick connectivity test"
+    cmds:
+      - task: test:connectivity
+
+  test:stress:
+    desc: "🧪 Run stress test using publisher control API"
+    cmds:
+      - echo "🧪 Starting 30-second stress test..."
+      - task: publisher:start
+      - sleep 30
+      - task: publisher:stop
+      - echo "📊 Final stats:"
+      - task: publisher:stats
+
+  # Cleanup
   stop:
-    desc: "🛑 Stop all running services (containers and host processes)"
+    desc: "🛑 Stop all services"
     cmds:
-      - echo "🛑 Stopping containers..."
-      - docker-compose down || true
-      - echo "🛑 Stopping host processes..."
-      - task: nats:stop
-      - pkill -f "tsx src" || true
-      - pkill -f "odin-ws-server" || true
-      - pkill -f "python3 -m http.server" || true
-      - echo "✅ All services stopped (containers and host processes)"
+      - echo "🛑 Stopping all services..."
+      - docker-compose down
+      - echo "✅ All services stopped"
 
   clean:
-    desc: "🧹 Clean up build artifacts and stop services"
+    desc: "🧹 Clean up everything (containers, images, volumes)"
     cmds:
-      - task: stop
-      - task: go:clean
+      - echo "🧹 Cleaning up..."
+      - docker-compose down -v --remove-orphans
+      - docker system prune -f --volumes
       - echo "✅ Cleanup complete"
 
+  # Development helpers
+  shell:node:
+    desc: "🐚 Open shell in Node.js container"
+    cmds:
+      - docker-compose exec ws-node sh
+
+  shell:go:
+    desc: "🐚 Open shell in Go container"
+    cmds:
+      - docker-compose exec ws-go sh
+
+  # Help
   default:
-    desc: "🏠 Default task - show help"
+    desc: "🏠 Show main commands"
     cmds:
       - task: help
+
+  help:
+    desc: "📖 Show available commands"
+    silent: true
+    cmds:
+      - echo "🚀 WebSocket Performance Testing Stack"
+      - echo "======================================"
+      - echo ""
+      - echo "📦 Main Commands:"
+      - echo "  task start          - Start complete stack (recommended)"
+      - echo "  task start:node     - Start Node.js stack only"
+      - echo "  task start:go       - Start Go stack only"
+      - echo "  task stop           - Stop all services"
+      - echo ""
+      - echo "🧪 Testing:"
+      - echo "  task test:quick     - Quick connectivity test"
+      - echo "  task test:stress    - Stress test with publisher"
+      - echo "  task test:compare   - Compare Node.js vs Go performance"
+      - echo ""
+      - echo "📊 Monitoring:"
+      - echo "  task status         - Check all services"
+      - echo "  task logs           - View all logs"
+      - echo "  task publisher:stats - Publisher metrics"
+      - echo ""
+      - echo "🛠️  Development:"
+      - echo "  task build          - Build all containers"
+      - echo "  task rebuild        - Rebuild and restart"
+      - echo "  task clean          - Clean up everything"
+      - echo ""
+      - echo "🔗 URLs (after starting):"
+      - echo "  Node.js WS at ws://localhost:3001/ws"
+      - echo "  Go WS at ws://localhost:3002/ws"
+      - echo "  Publisher API at http://localhost:3003"
+      - echo "  NATS Monitor at http://localhost:8222"

@@ -45,4 +45,4 @@ USER appuser
 ENTRYPOINT ["/sbin/tini", "--"]
 
 # Run publisher
-CMD ["node", "dist/odin-publisher.js"]
+CMD ["node", "dist/publisher.js"]

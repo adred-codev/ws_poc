@@ -109,6 +109,8 @@ services:
       context: .
       dockerfile: Dockerfile.publisher
     container_name: odin-publisher
+    ports:
+      - "3003:3003"  # HTTP control API
     environment:
       - NATS_URL=nats://nats:4222
       - NODE_ENV=production

@@ -3,297 +3,258 @@ version: '3'
 vars:
   NODE_SERVER_PORT: "3001"
   GO_SERVER_PORT: "3002"
-  METRICS_DIR: "metrics"
+  PUBLISHER_PORT: "3003"
 
 tasks:
-  # Quick Tests
-  quick:
-    desc: "🧪 Quick load test (100 connections) on available server"
-    cmds:
-      - |
-        if curl -s http://localhost:{{.NODE_SERVER_PORT}}/health > /dev/null; then
-          echo "🟢 Testing Node.js server..."
-          task test:quick:node
-        elif curl -s http://localhost:{{.GO_SERVER_PORT}}/health > /dev/null; then
-          echo "⚡ Testing Go server..."
-          task test:quick:go
-        else
-          echo "❌ No servers running. Start with 'task start' or 'task start:go'"
-          exit 1
-        fi
-
-  quick:node:
-    desc: "🧪 Quick load test against Node.js server"
-    cmds:
-      - |
-        echo "🧪 Running quick load test against Node.js server..."
-        WS_URL=ws://localhost:{{.NODE_SERVER_PORT}}/ws npm run load-test:quick
-
-  quick:go:
-    desc: "🧪 Quick load test against Go server"
-    cmds:
-      - |
-        echo "🧪 Running quick load test against Go server..."
-        WS_URL=ws://localhost:{{.GO_SERVER_PORT}}/ws npm run load-test:quick
-
-  # Medium Tests
-  medium:node:
-    desc: "🧪 Medium load test (1000 connections) against Node.js server"
-    cmds:
-      - |
-        echo "🧪 Running medium load test against Node.js server..."
-        WS_URL=ws://localhost:{{.NODE_SERVER_PORT}}/ws npm run load-test:medium
-
-  medium:go:
-    desc: "🧪 Medium load test (1000 connections) against Go server"
-    cmds:
-      - |
-        echo "🧪 Running medium load test against Go server..."
-        WS_URL=ws://localhost:{{.GO_SERVER_PORT}}/ws npm run load-test:medium
-
-  # Stress Tests
-  stress:node:
-    desc: "🧪 Stress test (5000 connections) against Node.js server"
-    cmds:
-      - |
-        echo "🧪 Running stress test against Node.js server..."
-        echo "⚠️  This may take several minutes and use significant resources"
-        WS_URL=ws://localhost:{{.NODE_SERVER_PORT}}/ws npm run load-test:stress
-
-  stress:go:
-    desc: "🧪 Stress test (5000 connections) against Go server"
-    cmds:
-      - |
-        echo "🧪 Running stress test against Go server..."
-        echo "⚠️  This may take several minutes and use significant resources"
-        WS_URL=ws://localhost:{{.GO_SERVER_PORT}}/ws npm run load-test:stress
-
-  # Progressive Tests
-  progressive:node:
-    desc: "🧪 Progressive load test (100→1K→5K) against Node.js server"
-    cmds:
-      - |
-        echo "🧪 Running progressive load test against Node.js server..."
-        echo "⚠️  This will take 15+ minutes and use significant resources"
-        WS_URL=ws://localhost:{{.NODE_SERVER_PORT}}/ws npm run load-test:progressive
-
-  progressive:go:
-    desc: "🧪 Progressive load test (100→1K→5K) against Go server"
-    cmds:
-      - |
-        echo "🧪 Running progressive load test against Go server..."
-        echo "⚠️  This will take 15+ minutes and use significant resources"
-        WS_URL=ws://localhost:{{.GO_SERVER_PORT}}/ws npm run load-test:progressive
-
-  # Comparison Tests
-  compare:quick:
-    desc: "🆚 Quick performance comparison between Node.js and Go"
-    cmds:
-      - |
-        echo "🆚 Quick Performance Comparison"
-        echo "==============================="
-        timestamp=$(date +%Y%m%d_%H%M%S)
-        mkdir -p {{.METRICS_DIR}}/comparison
-
-        # Ensure both servers are running
-        if ! curl -s http://localhost:{{.NODE_SERVER_PORT}}/health > /dev/null; then
-          echo "❌ Node.js server not running on port {{.NODE_SERVER_PORT}}"
-          exit 1
-        fi
-        if ! curl -s http://localhost:{{.GO_SERVER_PORT}}/health > /dev/null; then
-          echo "❌ Go server not running on port {{.GO_SERVER_PORT}}"
-          exit 1
-        fi
-
-        # Collect baseline metrics
-        echo "📊 Collecting baseline metrics..."
-        task metrics:collect:all
-
-        # Test Node.js
-        echo ""
-        echo "🟢 Testing Node.js Server..."
-        echo "=============================="
-        WS_URL=ws://localhost:{{.NODE_SERVER_PORT}}/ws npm run load-test:quick > {{.METRICS_DIR}}/comparison/node_quick_${timestamp}.log 2>&1
-        task metrics:node:current > {{.METRICS_DIR}}/comparison/node_metrics_${timestamp}.txt
-
-        # Wait between tests
-        echo "⏳ Waiting 30 seconds between tests..."
-        sleep 30
-
-        # Test Go
-        echo ""
-        echo "⚡ Testing Go Server..."
-        echo "======================"
-        WS_URL=ws://localhost:{{.GO_SERVER_PORT}}/ws npm run load-test:quick > {{.METRICS_DIR}}/comparison/go_quick_${timestamp}.log 2>&1
-        task metrics:go:current > {{.METRICS_DIR}}/comparison/go_metrics_${timestamp}.txt
-
-        # Generate comparison report
-        echo ""
-        echo "📋 Generating Comparison Report..."
-        task test:generate:comparison:report
-
-  compare:stress:
-    desc: "🆚 Stress test comparison between Node.js and Go"
-    cmds:
-      - |
-        echo "🆚 Stress Test Comparison"
-        echo "========================="
-        echo "⚠️  This will take 20+ minutes and use significant resources"
-        echo "🔄 Continue? (Ctrl+C to cancel, Enter to proceed)"
-        read
-
-        timestamp=$(date +%Y%m%d_%H%M%S)
-        mkdir -p {{.METRICS_DIR}}/stress_comparison
-
-        # Test Node.js stress
-        echo ""
-        echo "🟢 Node.js Stress Test..."
-        WS_URL=ws://localhost:{{.NODE_SERVER_PORT}}/ws npm run load-test:stress > {{.METRICS_DIR}}/stress_comparison/node_stress_${timestamp}.log 2>&1
-
-        # Wait between tests
-        echo "⏳ Waiting 2 minutes between tests..."
-        sleep 120
-
-        # Test Go stress
-        echo ""
-        echo "⚡ Go Stress Test..."
-        WS_URL=ws://localhost:{{.GO_SERVER_PORT}}/ws npm run load-test:stress > {{.METRICS_DIR}}/stress_comparison/go_stress_${timestamp}.log 2>&1
-
-        echo "✅ Stress comparison complete. Results in {{.METRICS_DIR}}/stress_comparison/"
-
-  compare:performance:
-    desc: "🆚 Comprehensive performance comparison with metrics collection"
-    cmds:
-      - |
-        echo "🆚 Comprehensive Performance Comparison"
-        echo "======================================="
-        timestamp=$(date +%Y%m%d_%H%M%S)
-        mkdir -p {{.METRICS_DIR}}/performance
-
-        # Pre-test metrics
-        echo "📊 Collecting pre-test metrics..."
-        task metrics:collect:all
-
-        # Node.js tests
-        echo ""
-        echo "🟢 Node.js Performance Tests..."
-        echo "================================"
-        task test:quick:node > {{.METRICS_DIR}}/performance/node_quick_${timestamp}.log 2>&1
-        task metrics:node:current > {{.METRICS_DIR}}/performance/node_post_quick_${timestamp}.txt
-
-        sleep 30
-
-        task test:medium:node > {{.METRICS_DIR}}/performance/node_medium_${timestamp}.log 2>&1
-        task metrics:node:current > {{.METRICS_DIR}}/performance/node_post_medium_${timestamp}.txt
-
-        # Wait between server tests
-        echo "⏳ Waiting 2 minutes between server tests..."
-        sleep 120
-
-        # Go tests
-        echo ""
-        echo "⚡ Go Performance Tests..."
-        echo "========================="
-        task test:quick:go > {{.METRICS_DIR}}/performance/go_quick_${timestamp}.log 2>&1
-        task metrics:go:current > {{.METRICS_DIR}}/performance/go_post_quick_${timestamp}.txt
-
-        sleep 30
-
-        task test:medium:go > {{.METRICS_DIR}}/performance/go_medium_${timestamp}.log 2>&1
-        task metrics:go:current > {{.METRICS_DIR}}/performance/go_post_medium_${timestamp}.txt
-
-        # Generate comprehensive report
-        echo ""
-        echo "📋 Generating comprehensive performance report..."
-        task test:generate:performance:report
-
   # Connectivity Tests
   connectivity:
-    desc: "🔗 Test connectivity to all servers"
+    desc: "🔗 Test connectivity to all services"
     cmds:
       - |
-        echo "🔗 Testing Connectivity"
-        echo "======================="
+        echo "🔗 Testing Service Connectivity"
+        echo "==============================="
+        echo ""
 
         echo "NATS Server:"
-        if curl -s http://localhost:4222 > /dev/null; then
+        if curl -s http://localhost:4222 > /dev/null 2>&1; then
           echo "  ✅ NATS reachable"
         else
           echo "  ❌ NATS not reachable"
         fi
 
-        echo "Node.js Server:"
-        if curl -s http://localhost:{{.NODE_SERVER_PORT}}/health > /dev/null; then
+        echo "Node.js WebSocket Server:"
+        if curl -s http://localhost:{{.NODE_SERVER_PORT}}/health > /dev/null 2>&1; then
           echo "  ✅ Node.js server healthy"
         else
           echo "  ❌ Node.js server not healthy"
         fi
 
-        echo "Go Server:"
-        if curl -s http://localhost:{{.GO_SERVER_PORT}}/health > /dev/null; then
+        echo "Go WebSocket Server:"
+        if curl -s http://localhost:{{.GO_SERVER_PORT}}/health > /dev/null 2>&1; then
           echo "  ✅ Go server healthy"
         else
           echo "  ❌ Go server not healthy"
         fi
 
-  # Report Generation
-  generate:comparison:report:
-    desc: "📋 Generate detailed comparison report from collected data"
-    cmds:
-      - |
-        echo "📋 Performance Comparison Report"
-        echo "================================"
-        echo "Generated: $(date)"
-        echo ""
-
-        if [ -d "{{.METRICS_DIR}}/comparison" ]; then
-          echo "📁 Analysis based on data in {{.METRICS_DIR}}/comparison/"
-          echo ""
-
-          # Find latest test files
-          node_log=$(ls {{.METRICS_DIR}}/comparison/node_quick_*.log 2>/dev/null | tail -1)
-          go_log=$(ls {{.METRICS_DIR}}/comparison/go_quick_*.log 2>/dev/null | tail -1)
-
-          if [ -f "$node_log" ]; then
-            echo "🟢 Node.js Results:"
-            grep -E "(Total Attempted|Successful|Average Rate|Average.*ms)" "$node_log" | head -5
-            echo ""
-          fi
-
-          if [ -f "$go_log" ]; then
-            echo "⚡ Go Results:"
-            grep -E "(Total Attempted|Successful|Average Rate|Average.*ms)" "$go_log" | head -5
-            echo ""
-          fi
-
-          echo "💡 Detailed logs available in {{.METRICS_DIR}}/comparison/"
+        echo "Publisher Service:"
+        if curl -s http://localhost:{{.PUBLISHER_PORT}}/health > /dev/null 2>&1; then
+          echo "  ✅ Publisher healthy"
         else
-          echo "⚠️  No comparison data found. Run 'task test:compare:quick' first."
+          echo "  ❌ Publisher not healthy"
         fi
 
-  generate:performance:report:
-    desc: "📋 Generate comprehensive performance report"
+  # WebSocket Connection Tests
+  websocket:node:
+    desc: "🧪 Test Node.js WebSocket connection"
     cmds:
       - |
-        echo "📋 Comprehensive Performance Report"
+        echo "🧪 Testing Node.js WebSocket Connection"
+        echo "======================================="
+        node -e "
+        const WebSocket = require('ws');
+        console.log('Connecting to Node.js WebSocket...');
+        const ws = new WebSocket('ws://localhost:{{.NODE_SERVER_PORT}}/ws');
+
+        ws.on('open', () => {
+          console.log('✅ Connected to Node.js WebSocket');
+          ws.send(JSON.stringify({type: 'ping', timestamp: Date.now()}));
+        });
+
+        ws.on('message', (data) => {
+          const msg = JSON.parse(data.toString());
+          console.log('📨 Received:', msg.type);
+          if (msg.type === 'pong') {
+            console.log('✅ Ping/pong successful');
+            ws.close();
+            process.exit(0);
+          }
+        });
+
+        ws.on('error', (err) => {
+          console.error('❌ WebSocket error:', err.message);
+          process.exit(1);
+        });
+
+        setTimeout(() => {
+          console.error('❌ Connection timeout');
+          process.exit(1);
+        }, 5000);
+        "
+
+  websocket:go:
+    desc: "🧪 Test Go WebSocket connection"
+    cmds:
+      - |
+        echo "🧪 Testing Go WebSocket Connection"
         echo "==================================="
-        echo "Generated: $(date)"
+        node -e "
+        const WebSocket = require('ws');
+        console.log('Connecting to Go WebSocket...');
+        const ws = new WebSocket('ws://localhost:{{.GO_SERVER_PORT}}/ws');
+
+        ws.on('open', () => {
+          console.log('✅ Connected to Go WebSocket');
+          ws.send(JSON.stringify({type: 'ping', timestamp: Date.now()}));
+        });
+
+        ws.on('message', (data) => {
+          const msg = JSON.parse(data.toString());
+          console.log('📨 Received:', msg.type);
+          if (msg.type === 'pong') {
+            console.log('✅ Ping/pong successful');
+            ws.close();
+            process.exit(0);
+          }
+        });
+
+        ws.on('error', (err) => {
+          console.error('❌ WebSocket error:', err.message);
+          process.exit(1);
+        });
+
+        setTimeout(() => {
+          console.error('❌ Connection timeout');
+          process.exit(1);
+        }, 5000);
+        "
+
+  websocket:both:
+    desc: "🧪 Test both WebSocket servers"
+    cmds:
+      - task: websocket:node
+      - echo ""
+      - task: websocket:go
+
+  # Performance Tests
+  compare:
+    desc: "🆚 Compare Node.js vs Go WebSocket performance"
+    cmds:
+      - |
+        echo "🆚 WebSocket Performance Comparison"
+        echo "===================================="
         echo ""
 
-        if [ -d "{{.METRICS_DIR}}/performance" ]; then
-          echo "📁 Analysis based on data in {{.METRICS_DIR}}/performance/"
-          echo ""
-          echo "🔍 Run 'ls {{.METRICS_DIR}}/performance/' to see all collected data"
-          echo "📊 Use 'task metrics:generate:report' for current live metrics"
+        # Check both servers are running
+        if ! curl -s http://localhost:{{.NODE_SERVER_PORT}}/health > /dev/null; then
+          echo "❌ Node.js server not running. Start with: task start:node"
+          exit 1
+        fi
+
+        if ! curl -s http://localhost:{{.GO_SERVER_PORT}}/health > /dev/null; then
+          echo "❌ Go server not running. Start with: task start:go"
+          exit 1
+        fi
+
+        echo "📊 Pre-test metrics:"
+        echo "Node.js connections:" $(curl -s http://localhost:{{.NODE_SERVER_PORT}}/health | jq -r '.websocket.currentConnections // 0')
+        echo "Go connections:" $(curl -s http://localhost:{{.GO_SERVER_PORT}}/health | jq -r '.services.websocket.clients // 0')
+        echo ""
+
+        echo "🧪 Running concurrent WebSocket tests..."
+        echo "Testing 10 connections to each server..."
+
+        # Test both servers concurrently
+        (
+          echo "Testing Node.js..."
+          for i in {1..10}; do
+            (node -e "
+              const WebSocket = require('ws');
+              const ws = new WebSocket('ws://localhost:{{.NODE_SERVER_PORT}}/ws');
+              ws.on('open', () => ws.send(JSON.stringify({type: 'ping', timestamp: Date.now()})));
+              ws.on('message', () => setTimeout(() => ws.close(), 1000));
+              ws.on('error', () => {});
+            " &)
+          done
+          wait
+        ) &
+
+        (
+          echo "Testing Go..."
+          for i in {1..10}; do
+            (node -e "
+              const WebSocket = require('ws');
+              const ws = new WebSocket('ws://localhost:{{.GO_SERVER_PORT}}/ws');
+              ws.on('open', () => ws.send(JSON.stringify({type: 'ping', timestamp: Date.now()})));
+              ws.on('message', () => setTimeout(() => ws.close(), 1000));
+              ws.on('error', () => {});
+            " &)
+          done
+          wait
+        ) &
+
+        wait
+        sleep 2
+
+        echo ""
+        echo "📊 Post-test metrics:"
+        echo "Node.js:" $(curl -s http://localhost:{{.NODE_SERVER_PORT}}/health | jq -r '.websocket.currentConnections // 0') "connections," $(curl -s http://localhost:{{.NODE_SERVER_PORT}}/health | jq -r '.websocket.totalDelivered // 0') "messages"
+        echo "Go:" $(curl -s http://localhost:{{.GO_SERVER_PORT}}/health | jq -r '.services.websocket.clients // 0') "connections"
+        echo ""
+        echo "✅ Performance comparison complete"
+
+  # Publisher-driven stress test
+  stress:publisher:
+    desc: "🧪 Run publisher-controlled stress test"
+    cmds:
+      - |
+        echo "🧪 Publisher-Controlled Stress Test"
+        echo "===================================="
+
+        if ! curl -s http://localhost:{{.PUBLISHER_PORT}}/health > /dev/null; then
+          echo "❌ Publisher not running. Start with: task start"
+          exit 1
+        fi
+
+        echo "📊 Starting 60-second stress test..."
+        echo "Configuration: 100 msg/sec, 500 connections, 60s duration"
+        echo ""
+
+        # Start stress test
+        curl -s -X POST http://localhost:{{.PUBLISHER_PORT}}/control \
+          -H "Content-Type: application/json" \
+          -d '{
+            "action": "start",
+            "messagesPerSecond": 100,
+            "connections": 500,
+            "duration": 60000,
+            "tokens": ["BTC", "ETH", "SOL", "DOGE"]
+          }' | jq .
+
+        echo ""
+        echo "⏳ Test running... monitoring for 60 seconds"
+
+        # Monitor progress
+        for i in {1..12}; do
+          sleep 5
+          stats=$(curl -s http://localhost:{{.PUBLISHER_PORT}}/stats)
+          published=$(echo "$stats" | jq -r '.stats.messagesPublished // 0')
+          publishing=$(echo "$stats" | jq -r '.isPublishing // false')
+          echo "📊 $((i*5))s: $published messages published, active: $publishing"
+        done
+
+        echo ""
+        echo "📊 Final Results:"
+        curl -s http://localhost:{{.PUBLISHER_PORT}}/stats | jq .
+
+  # Load test using external script
+  load:quick:
+    desc: "🧪 Quick load test (if load-test script exists)"
+    cmds:
+      - |
+        if [ -f "src/load-test.ts" ]; then
+          echo "🧪 Running quick load test..."
+          echo "Testing Node.js server: ws://localhost:{{.NODE_SERVER_PORT}}/ws"
+          npx tsx src/load-test.ts ws://localhost:{{.NODE_SERVER_PORT}}/ws 100 30
         else
-          echo "⚠️  No performance data found. Run 'task test:compare:performance' first."
+          echo "⚠️  Load test script not found. Using basic WebSocket test..."
+          task: websocket:both
         fi
 
   # Cleanup
   clean:
-    desc: "🧹 Clean up test results and metrics"
+    desc: "🧹 Clean up test artifacts"
     cmds:
       - |
-        echo "🧹 Cleaning up test results..."
-        rm -rf {{.METRICS_DIR}}/comparison {{.METRICS_DIR}}/performance {{.METRICS_DIR}}/stress_comparison
+        echo "🧹 Cleaning up test artifacts..."
+        rm -rf test-results/ metrics/ logs/ || true
         echo "✅ Test cleanup complete"
