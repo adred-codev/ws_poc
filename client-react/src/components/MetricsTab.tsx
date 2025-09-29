@@ -50,7 +50,7 @@ const ServerMetricsPane = ({ server, title }: { server: 'node' | 'go'; title: st
           </span>
         </div>
         <div className="text-xs text-gray-400">
-          {server === 'node' ? '● Simulated CPU/Memory' : '● Real Memory, Est. CPU'}
+          {server === 'node' ? '● Real-time CPU/Memory' : '● Real-time CPU/Memory'}
         </div>
       </div>
 
@@ -68,14 +68,14 @@ const ServerMetricsPane = ({ server, title }: { server: 'node' | 'go'; title: st
           label="Memory (MB)"
           value={currentMetrics.memory.toFixed(2)}
           color={serverColor}
-          subtitle={server === 'go' ? 'Real-time' : 'Simulated'}
+          subtitle="Real-time"
         />
         <MetricCard
           icon={Cpu}
           label="CPU %"
           value={currentMetrics.cpu.toFixed(2)}
           color={serverColor}
-          subtitle="Estimated"
+          subtitle="Real-time"
         />
       </div>
 
@@ -169,14 +169,11 @@ function MetricsTab() {
         let normalizedMetrics;
 
         if (server === 'node') {
-          // Node.js metrics - only has connection count, no system metrics
-          // We'll need to add simulated values or extend the server
+          // Node.js enhanced metrics - now has accurate CPU and memory stats
           normalizedMetrics = {
             connections: data.connectionCount || 0,
-            // Since Node.js doesn't expose memory/CPU, we simulate realistic values
-            // In production, you'd add process.memoryUsage() and process.cpuUsage() to the server
-            memory: 100 + (Math.sin(Date.now() / 10000) + 1) * 50, // Oscillating 100-200MB
-            cpu: 5 + (Math.sin(Date.now() / 5000) + 1) * 7.5, // Oscillating 5-20%
+            memory: data.memory || 0, // Accurate memory from systeminformation
+            cpu: data.cpu || 0, // Accurate CPU from systeminformation
           };
         } else {
           // Go enhanced metrics - now has accurate CPU and memory stats
