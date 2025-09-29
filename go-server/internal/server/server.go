@@ -23,16 +23,17 @@ import (
 )
 
 type Server struct {
-	config      *types.Config
-	httpServer  *http.Server
-	hub         *wsClient.Hub
-	nats        *natsClient.Client
-	metrics     *metrics.Metrics
-	jwtManager  *auth.JWTManager
-	logger      *log.Logger
-	ctx         context.Context
-	cancel      context.CancelFunc
-	wg          sync.WaitGroup
+	config           *types.Config
+	httpServer       *http.Server
+	hub              *wsClient.Hub
+	nats             *natsClient.Client
+	metrics          *metrics.Metrics
+	enhancedMetrics  *metrics.EnhancedMetrics
+	jwtManager       *auth.JWTManager
+	logger           *log.Logger
+	ctx              context.Context
+	cancel           context.CancelFunc
+	wg               sync.WaitGroup
 }
 
 func NewServer(config *types.Config) (*Server, error) {
@@ -43,6 +44,7 @@ func NewServer(config *types.Config) (*Server, error) {
 
 	// Create metrics
 	metricsInstance := metrics.NewMetrics()
+	enhancedMetricsInstance := metrics.NewEnhancedMetrics(metricsInstance)
 
 	// Create JWT manager
 	jwtManager := auth.NewJWTManager(
@@ -52,6 +54,9 @@ func NewServer(config *types.Config) (*Server, error) {
 
 	// Create WebSocket hub
 	hub := wsClient.NewHub(metricsInstance, logger)
+
+	// Set enhanced metrics on hub after it's created
+	hub.SetEnhancedMetrics(enhancedMetricsInstance)
 
 	// Create NATS client
 	natsConfig := natsClient.Config{
@@ -70,14 +75,15 @@ func NewServer(config *types.Config) (*Server, error) {
 	}
 
 	server := &Server{
-		config:     config,
-		hub:        hub,
-		nats:       natsClientInstance,
-		metrics:    metricsInstance,
-		jwtManager: jwtManager,
-		logger:     logger,
-		ctx:        ctx,
-		cancel:     cancel,
+		config:          config,
+		hub:             hub,
+		nats:            natsClientInstance,
+		metrics:         metricsInstance,
+		enhancedMetrics: enhancedMetricsInstance,
+		jwtManager:      jwtManager,
+		logger:          logger,
+		ctx:             ctx,
+		cancel:          cancel,
 	}
 
 	// Create HTTP server
@@ -100,8 +106,14 @@ func (s *Server) setupHTTPServer() {
 		mux.Handle(s.config.Metrics.MetricsPath, promhttp.Handler())
 	}
 
-	// Stats endpoint
+	// Stats endpoint (legacy)
 	mux.HandleFunc("/stats", s.handleStats)
+
+	// Enhanced metrics endpoint
+	mux.HandleFunc("/metrics/enhanced", s.handleEnhancedMetrics)
+
+	// System metrics endpoint
+	mux.HandleFunc("/metrics/system", s.handleSystemMetrics)
 
 	// Dashboard endpoint removed - using React client instead
 	// mux.HandleFunc("/dashboard", s.handleDashboard)
@@ -167,21 +179,34 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
-	stats := map[string]interface{}{
-		"connections": map[string]interface{}{
-			"active": s.metrics.GetActiveConnections(),
-		},
-		"nats": s.nats.Stats(),
-		"hub":  s.hub.GetStats(),
-		"system": map[string]interface{}{
-			"uptime":     s.metrics.GetUptime().Seconds(),
-			"goroutines": runtime.NumGoroutine(),
-			"memory":     getMemoryStats(),
-		},
-	}
+	// Use enhanced metrics for more accurate data
+	stats := s.enhancedMetrics.GetSimpleStats()
+
+	// Add additional legacy data
+	stats["nats"] = s.nats.Stats()
+	stats["hub"] = s.hub.GetStats()
+	stats["uptime_seconds"] = s.metrics.GetUptime().Seconds()
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(stats)
+}
+
+func (s *Server) handleEnhancedMetrics(w http.ResponseWriter, r *http.Request) {
+	stats := s.enhancedMetrics.GetAccurateStats()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(stats)
+}
+
+func (s *Server) handleSystemMetrics(w http.ResponseWriter, r *http.Request) {
+	systemStats := map[string]interface{}{
+		"timestamp": time.Now().Unix(),
+		"system":    s.enhancedMetrics.GetAccurateStats()["system"],
+		"performance": s.enhancedMetrics.GetAccurateStats()["performance"],
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(systemStats)
 }
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
@@ -268,6 +293,9 @@ func (s *Server) Start() error {
 		defer s.wg.Done()
 		s.collectSystemMetrics()
 	}()
+
+	// Start enhanced metrics collection
+	s.enhancedMetrics.StartCollection()
 
 	// Start HTTP server
 	s.wg.Add(1)

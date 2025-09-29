@@ -32,6 +32,9 @@ type Hub struct {
 	// Metrics
 	metrics *metrics.Metrics
 
+	// Enhanced metrics for detailed tracking
+	enhancedMetrics *metrics.EnhancedMetrics
+
 	// Message rate tracking
 	messageRateTracker *metrics.MessageRateTracker
 
@@ -54,11 +57,17 @@ func NewHub(metricsInstance *metrics.Metrics, logger *log.Logger) *Hub {
 		unregister:         make(chan *Client, 100),
 		seenNonces:         make(map[string]time.Time),
 		metrics:            metricsInstance,
+		enhancedMetrics:    nil, // Will be set later by the server
 		messageRateTracker: metrics.NewMessageRateTracker(),
 		logger:             logger,
 		ctx:                ctx,
 		cancel:             cancel,
 	}
+}
+
+// SetEnhancedMetrics sets the enhanced metrics instance
+func (h *Hub) SetEnhancedMetrics(enhancedMetrics *metrics.EnhancedMetrics) {
+	h.enhancedMetrics = enhancedMetrics
 }
 
 func (h *Hub) Run() {
@@ -93,6 +102,15 @@ func (h *Hub) registerClient(client *Client) {
 	h.clients[client] = true
 	h.metrics.IncrementConnections()
 
+	// Also track in enhanced metrics if available
+	if h.enhancedMetrics != nil {
+		remoteAddr := "unknown"
+		if client.conn != nil {
+			remoteAddr = client.conn.RemoteAddr().String()
+		}
+		h.enhancedMetrics.AddConnection(client.ID, remoteAddr)
+	}
+
 	h.logger.Printf("Client %s connected. Total clients: %d", client.ID, len(h.clients))
 
 	// Send connection established message
@@ -123,6 +141,11 @@ func (h *Hub) unregisterClient(client *Client) {
 		close(client.send)
 		h.metrics.DecrementConnections()
 		h.metrics.RecordConnectionDuration(time.Since(client.ConnectedAt))
+
+		// Also remove from enhanced metrics if available
+		if h.enhancedMetrics != nil {
+			h.enhancedMetrics.RemoveConnection(client.ID)
+		}
 
 		h.logger.Printf("Client %s disconnected. Total clients: %d", client.ID, len(h.clients))
 	}
