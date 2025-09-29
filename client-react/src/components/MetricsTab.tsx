@@ -1,12 +1,155 @@
 import { useAtom, useSetAtom } from 'jotai';
 import { useEffect } from 'react';
 import { LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { Activity, Cpu, HardDrive } from 'lucide-react';
-import { selectedServerAtom, currentMetricsDataAtom, addMetricsDataAtom } from '../store/atoms';
+import { Activity, Cpu, HardDrive, Server } from 'lucide-react';
+import { metricsDataAtom, addMetricsDataAtom } from '../store/atoms';
+
+// Component for individual server metrics pane
+const ServerMetricsPane = ({ server, title }: { server: 'node' | 'go'; title: string }) => {
+  const [metricsData] = useAtom(metricsDataAtom);
+  const serverMetrics = metricsData[server];
+
+  const chartData = serverMetrics.labels.map((label, idx) => ({
+    time: label,
+    connections: serverMetrics.connections[idx] || 0,
+    memory: serverMetrics.memory[idx] || 0,
+    cpu: serverMetrics.cpu[idx] || 0,
+  }));
+
+  const currentMetrics = chartData[chartData.length - 1] || {
+    connections: 0,
+    memory: 0,
+    cpu: 0,
+  };
+
+  const serverColor = server === 'node' ? 'green' : 'blue';
+  const chartColors = {
+    node: {
+      connections: '#10B981',
+      memory: '#34D399',
+      cpu: '#6EE7B7'
+    },
+    go: {
+      connections: '#3B82F6',
+      memory: '#60A5FA',
+      cpu: '#93BBFC'
+    }
+  };
+
+  return (
+    <div className="bg-gray-800 rounded-lg p-6 space-y-4">
+      {/* Header */}
+      <div className="flex items-center justify-between border-b border-gray-700 pb-4">
+        <div className="flex items-center gap-3">
+          <Server size={20} className={server === 'node' ? 'text-green-400' : 'text-blue-400'} />
+          <h3 className="text-lg font-semibold text-gray-200">{title}</h3>
+          <span className={`px-2 py-1 rounded text-xs ${
+            server === 'node' ? 'bg-green-900/50 text-green-400' : 'bg-blue-900/50 text-blue-400'
+          }`}>
+            {server === 'node' ? 'Port 3001' : 'Port 3002'}
+          </span>
+        </div>
+        <div className="text-xs text-gray-400">
+          {server === 'node' ? '● Simulated CPU/Memory' : '● Real Memory, Est. CPU'}
+        </div>
+      </div>
+
+      {/* Metric Cards */}
+      <div className="grid grid-cols-3 gap-4">
+        <MetricCard
+          icon={Activity}
+          label="Connections"
+          value={currentMetrics.connections}
+          color={serverColor}
+          subtitle="Real-time"
+        />
+        <MetricCard
+          icon={HardDrive}
+          label="Memory (MB)"
+          value={currentMetrics.memory.toFixed(2)}
+          color={serverColor}
+          subtitle={server === 'go' ? 'Real-time' : 'Simulated'}
+        />
+        <MetricCard
+          icon={Cpu}
+          label="CPU %"
+          value={currentMetrics.cpu.toFixed(2)}
+          color={serverColor}
+          subtitle="Estimated"
+        />
+      </div>
+
+      {/* Charts */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <ChartCard title="Active Connections">
+          <ResponsiveContainer width="100%" height={200}>
+            <AreaChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+              <XAxis dataKey="time" stroke="#9CA3AF" fontSize={10} />
+              <YAxis stroke="#9CA3AF" fontSize={10} />
+              <Tooltip
+                contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
+                labelStyle={{ color: '#9CA3AF' }}
+              />
+              <Area
+                type="monotone"
+                dataKey="connections"
+                stroke={chartColors[server].connections}
+                fill={chartColors[server].connections}
+                fillOpacity={0.3}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        </ChartCard>
+
+        <ChartCard title="Memory Usage (MB)">
+          <ResponsiveContainer width="100%" height={200}>
+            <LineChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+              <XAxis dataKey="time" stroke="#9CA3AF" fontSize={10} />
+              <YAxis stroke="#9CA3AF" fontSize={10} />
+              <Tooltip
+                contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
+                labelStyle={{ color: '#9CA3AF' }}
+              />
+              <Line
+                type="monotone"
+                dataKey="memory"
+                stroke={chartColors[server].memory}
+                strokeWidth={2}
+                dot={false}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </ChartCard>
+
+        <ChartCard title="CPU Usage (%)">
+          <ResponsiveContainer width="100%" height={200}>
+            <AreaChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+              <XAxis dataKey="time" stroke="#9CA3AF" fontSize={10} />
+              <YAxis stroke="#9CA3AF" fontSize={10} />
+              <Tooltip
+                contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
+                labelStyle={{ color: '#9CA3AF' }}
+              />
+              <Area
+                type="monotone"
+                dataKey="cpu"
+                stroke={chartColors[server].cpu}
+                fill={chartColors[server].cpu}
+                fillOpacity={0.3}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        </ChartCard>
+      </div>
+    </div>
+  );
+};
 
 function MetricsTab() {
-  const [selectedServer, setSelectedServer] = useAtom(selectedServerAtom);
-  const [metricsData] = useAtom(currentMetricsDataAtom);
+  const [metricsData] = useAtom(metricsDataAtom);
   const addMetrics = useSetAtom(addMetricsDataAtom);
 
   useEffect(() => {
@@ -24,7 +167,7 @@ function MetricsTab() {
 
         // Normalize data to a common format
         let normalizedMetrics;
-        
+
         if (server === 'node') {
           // Node.js metrics - only has connection count, no system metrics
           // We'll need to add simulated values or extend the server
@@ -50,13 +193,13 @@ function MetricsTab() {
       } catch (error) {
         console.error(`Failed to fetch metrics for ${server}:`, error);
         // Add default values on error to keep the charts updating
-        addMetrics({ 
-          server, 
-          metrics: { 
-            connections: 0, 
-            memory: 0, 
-            cpu: 0 
-          } 
+        addMetrics({
+          server,
+          metrics: {
+            connections: 0,
+            memory: 0,
+            cpu: 0
+          }
         });
       }
     };
@@ -71,108 +214,52 @@ function MetricsTab() {
     return () => clearInterval(interval);
   }, [addMetrics]);
 
-  const chartData = metricsData.labels.map((label, idx) => ({
-    time: label,
-    connections: metricsData.connections[idx] || 0,
-    memory: metricsData.memory[idx] || 0,
-    cpu: metricsData.cpu[idx] || 0,
-  }));
+  // Calculate combined stats
+  const nodeData = metricsData.node;
+  const goData = metricsData.go;
 
-  const currentMetrics = chartData[chartData.length - 1] || {
-    connections: 0,
-    memory: 0,
-    cpu: 0,
-  };
+  const totalConnections =
+    (nodeData.connections[nodeData.connections.length - 1] || 0) +
+    (goData.connections[goData.connections.length - 1] || 0);
+
+  const totalMemory =
+    (nodeData.memory[nodeData.memory.length - 1] || 0) +
+    (goData.memory[goData.memory.length - 1] || 0);
+
+  const avgCpu =
+    ((nodeData.cpu[nodeData.cpu.length - 1] || 0) +
+    (goData.cpu[goData.cpu.length - 1] || 0)) / 2;
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-semibold">Real-time Performance Metrics</h2>
           <p className="text-xs mt-1 text-gray-400">
-            <span className="text-green-400">● Real data:</span> Connections (both), Memory (Go only) | 
-            <span className="text-yellow-400 ml-2">● Simulated:</span> CPU (both), Memory (Node.js)
+            Monitoring both Node.js and Go WebSocket servers
           </p>
         </div>
-        <select
-          value={selectedServer}
-          onChange={(e) => setSelectedServer(e.target.value as 'node' | 'go')}
-          className="bg-gray-700 text-gray-100 px-4 py-2 rounded-md border border-gray-600 focus:border-blue-500 focus:outline-none"
-        >
-          <option value="node">Node.js Server</option>
-          <option value="go">Go Server</option>
-        </select>
+        <div className="flex gap-4 text-sm">
+          <div className="bg-gray-700 px-3 py-1 rounded">
+            Total Connections: <span className="text-purple-400 font-bold">{totalConnections}</span>
+          </div>
+          <div className="bg-gray-700 px-3 py-1 rounded">
+            Total Memory: <span className="text-purple-400 font-bold">{totalMemory.toFixed(1)} MB</span>
+          </div>
+          <div className="bg-gray-700 px-3 py-1 rounded">
+            Avg CPU: <span className="text-purple-400 font-bold">{avgCpu.toFixed(1)}%</span>
+          </div>
+        </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
-        <MetricCard
-          icon={Activity}
-          label="Connections"
-          value={currentMetrics.connections}
-          color="blue"
-          subtitle="Real-time"
-        />
-        <MetricCard
-          icon={HardDrive}
-          label="Memory (MB)"
-          value={currentMetrics.memory.toFixed(2)}
-          color="green"
-          subtitle={selectedServer === 'go' ? 'Real-time' : 'Simulated'}
-        />
-        <MetricCard
-          icon={Cpu}
-          label="CPU %"
-          value={currentMetrics.cpu.toFixed(2)}
-          color="yellow"
-          subtitle="Estimated"
-        />
-      </div>
+      {/* Server Metrics Panes - Stacked Vertically */}
+      <div className="space-y-6">
+        {/* Node.js Metrics */}
+        <ServerMetricsPane server="node" title="Node.js Server Metrics" />
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <ChartCard title="Active Connections">
-          <ResponsiveContainer width="100%" height={250}>
-            <AreaChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-              <XAxis dataKey="time" stroke="#9CA3AF" fontSize={12} />
-              <YAxis stroke="#9CA3AF" fontSize={12} />
-              <Tooltip
-                contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
-                labelStyle={{ color: '#9CA3AF' }}
-              />
-              <Area type="monotone" dataKey="connections" stroke="#3B82F6" fill="#3B82F6" fillOpacity={0.3} />
-            </AreaChart>
-          </ResponsiveContainer>
-        </ChartCard>
-
-        <ChartCard title="Memory Usage (MB)">
-          <ResponsiveContainer width="100%" height={250}>
-            <LineChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-              <XAxis dataKey="time" stroke="#9CA3AF" fontSize={12} />
-              <YAxis stroke="#9CA3AF" fontSize={12} />
-              <Tooltip
-                contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
-                labelStyle={{ color: '#9CA3AF' }}
-              />
-              <Line type="monotone" dataKey="memory" stroke="#10B981" strokeWidth={2} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
-        </ChartCard>
-
-        <ChartCard title="CPU Usage (%)">
-          <ResponsiveContainer width="100%" height={250}>
-            <AreaChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-              <XAxis dataKey="time" stroke="#9CA3AF" fontSize={12} />
-              <YAxis stroke="#9CA3AF" fontSize={12} />
-              <Tooltip
-                contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }}
-                labelStyle={{ color: '#9CA3AF' }}
-              />
-              <Area type="monotone" dataKey="cpu" stroke="#F59E0B" fill="#F59E0B" fillOpacity={0.3} />
-            </AreaChart>
-          </ResponsiveContainer>
-        </ChartCard>
+        {/* Go Metrics */}
+        <ServerMetricsPane server="go" title="Go Server Metrics" />
       </div>
     </div>
   );
