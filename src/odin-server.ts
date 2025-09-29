@@ -27,6 +27,7 @@ import {
   TradeExecutedMessage
 } from './types/odin.types';
 import { metricsService } from './services/metrics-service';
+import { enhancedMetricsService } from './services/enhanced-metrics';
 import metricsRoutes from './routes/metrics-routes';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -73,14 +74,17 @@ class OdinWebSocketServer {
     await this.setupNATS();
     this.setupHTTPServer();
     this.setupWebSocketServer();
-    this.setupMetricsIntegration();
+    await this.setupMetricsIntegration();
     this.startHealthCheck();
     this.startMetricsReporting();
     this.startNonceCleaner();
     console.log('🚀 Odin WebSocket Server initialized with production features');
   }
 
-  private setupMetricsIntegration(): void {
+  private async setupMetricsIntegration(): Promise<void> {
+    // Start enhanced metrics collection
+    await enhancedMetricsService.start();
+
     // Set component status for NATS
     metricsService.setComponentStatus('nats', this.nats?.isClosed() ? 'disconnected' : 'connected');
     metricsService.setComponentStatus('websocket', 'healthy');
@@ -239,18 +243,59 @@ class OdinWebSocketServer {
       });
     });
 
-    // Metrics endpoint
+    // Metrics endpoint - now includes enhanced metrics
     this.app.get('/metrics', (req: Request, res: Response) => {
-      const avgLatency = this.metrics.latencyCount > 0
-        ? (this.metrics.latencySum / this.metrics.latencyCount).toFixed(2)
-        : 0;
+      try {
+        const enhancedData = enhancedMetricsService.getSimpleMetrics();
 
-      res.json({
-        ...this.metrics,
-        averageLatency: avgLatency,
-        errorRate: (this.metrics.errors / Math.max(1, this.metrics.messagesPublished)).toFixed(4),
-        uptime: Math.floor((Date.now() - this.metrics.startTime) / 1000)
-      });
+        const avgLatency = this.metrics.latencyCount > 0
+          ? (this.metrics.latencySum / this.metrics.latencyCount).toFixed(2)
+          : 0;
+
+        // Combine legacy metrics with enhanced metrics
+        res.json({
+          // Enhanced metrics (accurate CPU, memory, connections)
+          connectionCount: enhancedData.connectionCount,
+          memory: enhancedData.memory,
+          cpu: enhancedData.cpu,
+
+          // Legacy metrics for compatibility
+          ...this.metrics,
+          averageLatency: avgLatency,
+          errorRate: (this.metrics.errors / Math.max(1, this.metrics.messagesPublished)).toFixed(4),
+          uptime: Math.floor((Date.now() - this.metrics.startTime) / 1000)
+        });
+      } catch (error) {
+        console.error('Error getting enhanced metrics:', error);
+        // Fallback to legacy metrics only
+        const avgLatency = this.metrics.latencyCount > 0
+          ? (this.metrics.latencySum / this.metrics.latencyCount).toFixed(2)
+          : 0;
+
+        res.json({
+          ...this.metrics,
+          averageLatency: avgLatency,
+          errorRate: (this.metrics.errors / Math.max(1, this.metrics.messagesPublished)).toFixed(4),
+          uptime: Math.floor((Date.now() - this.metrics.startTime) / 1000),
+          connectionCount: this.metrics.connectionCount,
+          memory: 0,
+          cpu: 0
+        });
+      }
+    });
+
+    // Enhanced metrics endpoint (full detailed metrics)
+    this.app.get('/metrics/enhanced', (req: Request, res: Response) => {
+      try {
+        const enhancedData = enhancedMetricsService.getMetrics();
+        res.json(enhancedData);
+      } catch (error) {
+        console.error('Error getting enhanced metrics:', error);
+        res.status(500).json({
+          error: 'Enhanced metrics not available',
+          message: error instanceof Error ? error.message : 'Unknown error'
+        });
+      }
     });
 
     // Polling endpoint for gradual migration
@@ -403,6 +448,10 @@ class OdinWebSocketServer {
     this.metrics.connectionCount++;
     metricsService.recordConnection(true);
 
+    // Track connection in enhanced metrics
+    const remoteAddress = request.socket?.remoteAddress || 'unknown';
+    enhancedMetricsService.addConnection(clientId, remoteAddress);
+
     // Send welcome message
     this.sendToClient(clientId, {
       type: MessageType.CONNECTION_ESTABLISHED,
@@ -435,6 +484,9 @@ class OdinWebSocketServer {
       this.connectionState.delete(clientId);
       this.metrics.connectionCount--;
       metricsService.recordDisconnection();
+
+      // Remove from enhanced metrics
+      enhancedMetricsService.removeConnection(clientId);
     });
 
     // Handle errors
@@ -527,10 +579,14 @@ class OdinWebSocketServer {
         }
       }
 
-      client.ws.send(JSON.stringify(data));
+      const messageData = JSON.stringify(data);
+      client.ws.send(messageData);
+
+      // Track message in enhanced metrics
+      enhancedMetricsService.updateConnectionActivity(clientId, 'sent', messageData.length);
 
       // Track bandwidth saved (vs polling response)
-      this.metrics.bandwidthSaved += 5000 - JSON.stringify(data).length; // Assume 5KB polling response
+      this.metrics.bandwidthSaved += 5000 - messageData.length; // Assume 5KB polling response
 
       return true;
     }

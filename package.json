@@ -31,6 +31,8 @@
     "express": "^4.18.2",
     "jsonwebtoken": "^9.0.2",
     "nats": "^2.19.0",
+    "pidusage": "^4.0.1",
+    "systeminformation": "^5.27.10",
     "ws": "^8.14.2"
   },
   "devDependencies": {
