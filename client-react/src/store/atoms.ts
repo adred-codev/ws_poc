@@ -106,7 +106,7 @@ export const addMessageAtom = atom(
       ...state,
       [server]: {
         ...state[server],
-        messages: [...state[server].messages.slice(-99), newMessage],
+        messages: [...state[server].messages, newMessage],
       },
     });
   }

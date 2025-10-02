@@ -46,7 +46,7 @@ const ServerMetricsPane = ({ server, title }: { server: 'node' | 'go'; title: st
           <span className={`px-2 py-1 rounded text-xs ${
             server === 'node' ? 'bg-green-900/50 text-green-400' : 'bg-blue-900/50 text-blue-400'
           }`}>
-            {server === 'node' ? 'Port 3001' : 'Port 3002'}
+            {server === 'node' ? 'Port 3001' : 'Port 3004'}
           </span>
         </div>
         <div className="text-xs text-gray-400">
@@ -157,7 +157,7 @@ function MetricsTab() {
       try {
         const endpoint = server === 'node'
           ? 'http://localhost:3001/metrics'
-          : 'http://localhost:3002/metrics/enhanced';
+          : 'http://localhost:3004/stats';
 
         const response = await fetch(endpoint);
         if (!response.ok) {
@@ -176,11 +176,11 @@ function MetricsTab() {
             cpu: data.cpu || 0, // Accurate CPU from systeminformation
           };
         } else {
-          // Go enhanced metrics - now has accurate CPU and memory stats
+          // Go stats - now includes CPU and memory
           normalizedMetrics = {
-            connections: data.connections?.active || 0,
-            memory: data.performance?.memory_mb || 0, // Already in MB
-            cpu: data.performance?.cpu_percent || 0, // Accurate CPU percentage via gopsutil
+            connections: data.currentConnections || 0,
+            memory: data.memoryMB || 0,
+            cpu: data.cpuPercent || 0,
           };
         }
 

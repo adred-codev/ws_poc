@@ -26,6 +26,7 @@
   "author": "Odin Development Team",
   "license": "ISC",
   "dependencies": {
+    "@tanstack/react-virtual": "^3.13.12",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",

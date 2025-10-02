@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -20,15 +21,15 @@ import (
 )
 
 type Server struct {
-	config           *types.Config
-	httpServer       *http.Server
-	hub              *wsClient.Hub
-	nats             *natsClient.Client
-	enhancedMetrics  *metrics.EnhancedMetrics
-	logger           *log.Logger
-	ctx              context.Context
-	cancel           context.CancelFunc
-	wg               sync.WaitGroup
+	config          *types.Config
+	httpServer      *http.Server
+	hub             *wsClient.Hub
+	nats            *natsClient.Client
+	enhancedMetrics *metrics.EnhancedMetrics
+	logger          *log.Logger
+	ctx             context.Context
+	cancel          context.CancelFunc
+	wg              sync.WaitGroup
 }
 
 func NewServer(config *types.Config) (*Server, error) {
@@ -37,27 +38,23 @@ func NewServer(config *types.Config) (*Server, error) {
 	// Create logger
 	logger := log.New(os.Stdout, "[ODIN-WS] ", log.LstdFlags|log.Lshortfile)
 
-	// Create enhanced metrics (no Prometheus)
-	enhancedMetricsInstance := metrics.NewEnhancedMetrics()
-
+	// Create enhanced metrics
+	metricsInstance := metrics.NewEnhancedMetrics()
 
 	// Create WebSocket hub
-	hub := wsClient.NewHub(enhancedMetricsInstance, logger)
-
-	// Set enhanced metrics on hub after it's created
-	hub.SetEnhancedMetrics(enhancedMetricsInstance)
+	hub := wsClient.NewHub(metricsInstance, logger)
 
 	// Create NATS client
 	natsConfig := natsClient.Config{
-		URL:               config.NATS.URL,
-		MaxReconnects:     config.NATS.MaxReconnects,
-		ReconnectWait:     time.Duration(config.NATS.ReconnectWait) * time.Millisecond,
-		ReconnectJitter:   time.Duration(config.NATS.ReconnectJitter) * time.Millisecond,
-		MaxPingsOut:       config.NATS.MaxPingsOut,
-		PingInterval:      time.Duration(config.NATS.PingInterval) * time.Millisecond,
+		URL:             config.NATS.URL,
+		MaxReconnects:   config.NATS.MaxReconnects,
+		ReconnectWait:   time.Duration(config.NATS.ReconnectWait) * time.Millisecond,
+		ReconnectJitter: time.Duration(config.NATS.ReconnectJitter) * time.Millisecond,
+		MaxPingsOut:     config.NATS.MaxPingsOut,
+		PingInterval:    time.Duration(config.NATS.PingInterval) * time.Millisecond,
 	}
 
-	natsClientInstance, err := natsClient.NewClient(natsConfig, enhancedMetricsInstance, logger)
+	natsClientInstance, err := natsClient.NewClient(natsConfig, metricsInstance, logger)
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to create NATS client: %w", err)
@@ -67,7 +64,7 @@ func NewServer(config *types.Config) (*Server, error) {
 		config:          config,
 		hub:             hub,
 		nats:            natsClientInstance,
-		enhancedMetrics: enhancedMetricsInstance,
+		enhancedMetrics: metricsInstance,
 		logger:          logger,
 		ctx:             ctx,
 		cancel:          cancel,
@@ -100,15 +97,18 @@ func (s *Server) setupHTTPServer() {
 	// Dashboard endpoint removed - using React client instead
 	// mux.HandleFunc("/dashboard", s.handleDashboard)
 
-
 	// CORS middleware
 	corsHandler := s.corsMiddleware(mux)
 
 	s.httpServer = &http.Server{
-		Addr:         fmt.Sprintf("%s:%d", s.config.Server.Host, s.config.Server.Port),
-		Handler:      corsHandler,
-		ReadTimeout:  time.Duration(s.config.Server.ReadTimeout) * time.Second,
-		WriteTimeout: time.Duration(s.config.Server.WriteTimeout) * time.Second,
+		Addr:           fmt.Sprintf("%s:%d", s.config.Server.Host, s.config.Server.Port),
+		Handler:        corsHandler,
+		ReadTimeout:    time.Duration(s.config.Server.ReadTimeout) * time.Second,
+		WriteTimeout:   time.Duration(s.config.Server.WriteTimeout) * time.Second,
+		IdleTimeout:    120 * time.Second, // Keep connections alive longer
+		MaxHeaderBytes: 8192,              // Limit header size
+		// Optimize for high connection loads
+		ReadHeaderTimeout: 5 * time.Second, // Prevent slowloris attacks
 	}
 }
 
@@ -124,7 +124,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"uptime":    s.enhancedMetrics.GetSimpleStats(),
 		"services": map[string]interface{}{
 			"websocket": map[string]interface{}{
-				"status": "healthy",
+				"status":  "healthy",
 				"clients": s.hub.GetClientCount(),
 			},
 			"nats": map[string]interface{}{
@@ -164,8 +164,8 @@ func (s *Server) handleEnhancedMetrics(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSystemMetrics(w http.ResponseWriter, r *http.Request) {
 	systemStats := map[string]interface{}{
-		"timestamp": time.Now().Unix(),
-		"system":    s.enhancedMetrics.GetAccurateStats()["system"],
+		"timestamp":   time.Now().Unix(),
+		"system":      s.enhancedMetrics.GetAccurateStats()["system"],
 		"performance": s.enhancedMetrics.GetAccurateStats()["performance"],
 	}
 
@@ -177,7 +177,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	// Read the dashboard HTML file
 	// Try container path first, then local development path
 	dashboardPaths := []string{
-		"static/dashboard.html",         // Docker container path
+		"static/dashboard.html",           // Docker container path
 		"go-server/static/dashboard.html", // Local development path
 	}
 
@@ -200,7 +200,6 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	w.Write(content)
 }
 
-
 func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -214,6 +213,36 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 
 		next.ServeHTTP(w, r)
 	})
+}
+
+// createOptimizedListener creates a TCP listener optimized for high connection loads
+func (s *Server) createOptimizedListener(addr string) (net.Listener, error) {
+	// Parse address
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create TCP listener with optimizations
+	lc := net.ListenConfig{
+		// Enable SO_REUSEPORT for better load distribution
+		Control: func(network, address string, c syscall.RawConn) error {
+			return c.Control(func(fd uintptr) {
+				// Set SO_REUSEADDR
+				syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
+				// Set TCP_NODELAY to disable Nagle's algorithm
+				syscall.SetsockoptInt(int(fd), syscall.IPPROTO_TCP, syscall.TCP_NODELAY, 1)
+				// Set TCP_QUICKACK for faster acknowledgments
+				syscall.SetsockoptInt(int(fd), syscall.IPPROTO_TCP, 0x0c, 1) // TCP_QUICKACK
+				// Increase receive buffer size
+				syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_RCVBUF, 65536)
+				// Increase send buffer size
+				syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_SNDBUF, 65536)
+			})
+		},
+	}
+
+	return lc.Listen(context.Background(), "tcp", net.JoinHostPort(host, port))
 }
 
 func (s *Server) Start() error {
@@ -241,12 +270,21 @@ func (s *Server) Start() error {
 	// Start enhanced metrics collection
 	s.enhancedMetrics.StartCollection()
 
-	// Start HTTP server
+	// Start HTTP server with custom listener for high connection loads
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
 		s.logger.Printf("HTTP server listening on %s", s.httpServer.Addr)
-		if err := s.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+
+		// Create custom TCP listener with optimizations
+		listener, err := s.createOptimizedListener(s.httpServer.Addr)
+		if err != nil {
+			s.logger.Printf("Failed to create listener: %v", err)
+			return
+		}
+		defer listener.Close()
+
+		if err := s.httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
 			s.logger.Printf("HTTP server error: %v", err)
 		}
 	}()
@@ -389,16 +427,16 @@ func getMemoryStats() map[string]interface{} {
 	runtime.ReadMemStats(&m)
 
 	return map[string]interface{}{
-		"alloc":        m.Alloc,
-		"total_alloc":  m.TotalAlloc,
-		"sys":          m.Sys,
-		"heap_alloc":   m.HeapAlloc,
-		"heap_sys":     m.HeapSys,
-		"heap_idle":    m.HeapIdle,
-		"heap_inuse":   m.HeapInuse,
-		"stack_inuse":  m.StackInuse,
-		"stack_sys":    m.StackSys,
-		"num_gc":       m.NumGC,
+		"alloc":           m.Alloc,
+		"total_alloc":     m.TotalAlloc,
+		"sys":             m.Sys,
+		"heap_alloc":      m.HeapAlloc,
+		"heap_sys":        m.HeapSys,
+		"heap_idle":       m.HeapIdle,
+		"heap_inuse":      m.HeapInuse,
+		"stack_inuse":     m.StackInuse,
+		"stack_sys":       m.StackSys,
+		"num_gc":          m.NumGC,
 		"gc_cpu_fraction": m.GCCPUFraction,
 	}
 }

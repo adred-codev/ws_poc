@@ -22,6 +22,8 @@ function ContainerTab() {
       let nodeCpuPercent = 0;
       let goCpuPercent = 0;
 
+      // Node.js server not running - skip fetch
+      /*
       try {
         const nodeResponse = await fetch('http://localhost:3001/metrics');
         if (nodeResponse.ok) {
@@ -35,16 +37,17 @@ function ContainerTab() {
       } catch {
         nodeHealthy = false;
       }
+      */
       
       try {
-        const goResponse = await fetch('http://localhost:3002/metrics/enhanced');
+        const goResponse = await fetch('http://localhost:3004/stats');
         if (goResponse.ok) {
           goHealthy = true;
           const data = await goResponse.json();
-          goConnections = data.connections?.active || 0;
-          // Use accurate memory and CPU from enhanced metrics
-          goMemoryMB = data.performance?.memory_mb || 0;
-          goCpuPercent = data.performance?.cpu_percent || 0;
+          goConnections = data.currentConnections || 0;
+          // Now includes memory/CPU metrics
+          goMemoryMB = data.memoryMB || 0;
+          goCpuPercent = data.cpuPercent || 0;
         }
       } catch {
         goHealthy = false;

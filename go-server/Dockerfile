@@ -37,6 +37,9 @@ WORKDIR /app
 COPY --from=builder /app/build/odin-ws-server .
 COPY --from=builder /app/config.json .
 
+# Copy entrypoint script
+COPY entrypoint.sh .
+
 # Copy static files for dashboard
 COPY static ./static
 
@@ -53,5 +56,10 @@ EXPOSE 3002 9090
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:3002/health || exit 1
 
-# Run the application
-CMD ["./odin-ws-server"]
+# Set Go runtime optimizations for container limits
+ENV GOGC=50
+ENV GOMEMLIMIT=400MiB
+ENV GOMAXPROCS=2
+
+# Run the application with entrypoint
+ENTRYPOINT ["sh", "./entrypoint.sh"]

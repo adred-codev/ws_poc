@@ -11,10 +11,93 @@ import (
 	"odin-ws-server/internal/types"
 )
 
+// LRUCache implements a simple LRU cache for nonce deduplication
+type LRUCache struct {
+	cache map[string]*cacheNode
+	head, tail *cacheNode
+	capacity int
+	mu sync.RWMutex
+}
+
+type cacheNode struct {
+	key string
+	value time.Time
+	prev, next *cacheNode
+}
+
+func NewLRUCache(capacity int) *LRUCache {
+	head := &cacheNode{}
+	tail := &cacheNode{}
+	head.next = tail
+	tail.prev = head
+
+	return &LRUCache{
+		cache: make(map[string]*cacheNode, capacity),
+		head: head,
+		tail: tail,
+		capacity: capacity,
+	}
+}
+
+func (c *LRUCache) Get(key string) (time.Time, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if node, exists := c.cache[key]; exists {
+		c.moveToHead(node)
+		return node.value, true
+	}
+	return time.Time{}, false
+}
+
+func (c *LRUCache) Put(key string, value time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if node, exists := c.cache[key]; exists {
+		node.value = value
+		c.moveToHead(node)
+		return
+	}
+
+	if len(c.cache) >= c.capacity {
+		tail := c.removeTail()
+		delete(c.cache, tail.key)
+	}
+
+	newNode := &cacheNode{key: key, value: value}
+	c.cache[key] = newNode
+	c.addToHead(newNode)
+}
+
+func (c *LRUCache) addToHead(node *cacheNode) {
+	node.prev = c.head
+	node.next = c.head.next
+	c.head.next.prev = node
+	c.head.next = node
+}
+
+func (c *LRUCache) removeNode(node *cacheNode) {
+	node.prev.next = node.next
+	node.next.prev = node.prev
+}
+
+func (c *LRUCache) moveToHead(node *cacheNode) {
+	c.removeNode(node)
+	c.addToHead(node)
+}
+
+func (c *LRUCache) removeTail() *cacheNode {
+	tail := c.tail.prev
+	c.removeNode(tail)
+	return tail
+}
+
 // Hub maintains the set of active clients and broadcasts messages to them
 type Hub struct {
-	// Registered clients
-	clients map[*Client]bool
+	// Registered clients - use slice for better cache locality
+	clients []*Client
+	clientsMutex sync.RWMutex
 
 	// Inbound messages from clients
 	broadcast chan []byte
@@ -25,18 +108,11 @@ type Hub struct {
 	// Unregister requests from clients
 	unregister chan *Client
 
-	// Message tracking for deduplication
-	seenNonces map[string]time.Time
-	nonceMutex sync.RWMutex
+	// Simplified nonce tracking with LRU cache
+	nonces *LRUCache
 
-	// Metrics
+	// Metrics (simplified)
 	metrics metrics.MetricsInterface
-
-	// Enhanced metrics for detailed tracking
-	enhancedMetrics *metrics.EnhancedMetrics
-
-	// Message rate tracking
-	messageRateTracker *metrics.MessageRateTracker
 
 	// Logger
 	logger *log.Logger
@@ -45,40 +121,39 @@ type Hub struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+
+	// Pre-allocated message buffers
+	messagePool sync.Pool
 }
 
 func NewHub(metricsInstance metrics.MetricsInterface, logger *log.Logger) *Hub {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	return &Hub{
-		clients:            make(map[*Client]bool),
-		broadcast:          make(chan []byte, 1000), // Buffered channel for high throughput
-		register:           make(chan *Client, 100),
-		unregister:         make(chan *Client, 100),
-		seenNonces:         make(map[string]time.Time),
-		metrics:            metricsInstance,
-		enhancedMetrics:    nil, // Will be set later by the server
-		messageRateTracker: metrics.NewMessageRateTracker(),
-		logger:             logger,
-		ctx:                ctx,
-		cancel:             cancel,
+	hub := &Hub{
+		// Balanced optimization for stable 5K connections
+		clients:   make([]*Client, 0, 5000),  // Realistic pre-allocation
+		broadcast: make(chan []byte, 8192),   // Good buffer without excess
+		register:  make(chan *Client, 1000),  // Reasonable burst handling
+		unregister: make(chan *Client, 1000),
+		nonces:    NewLRUCache(50000), // Practical nonce cache size
+		metrics:   metricsInstance,
+		logger:    logger,
+		ctx:       ctx,
+		cancel:    cancel,
 	}
+
+	// Larger message pool buffers with available memory
+	hub.messagePool.New = func() interface{} {
+		return make([]byte, 0, 1024) // Bigger buffers with 380MB RAM headroom
+	}
+
+	return hub
 }
 
-// SetEnhancedMetrics sets the enhanced metrics instance
-func (h *Hub) SetEnhancedMetrics(enhancedMetrics *metrics.EnhancedMetrics) {
-	h.enhancedMetrics = enhancedMetrics
-}
 
 func (h *Hub) Run() {
 	h.wg.Add(1)
 	defer h.wg.Done()
-
-	// Start cleanup routine for old nonces
-	go h.cleanupNonces()
-
-	// Start message rate calculation
-	go h.updateMessageRate()
 
 	for {
 		select {
@@ -99,19 +174,13 @@ func (h *Hub) Run() {
 }
 
 func (h *Hub) registerClient(client *Client) {
-	h.clients[client] = true
+	h.clientsMutex.Lock()
+	h.clients = append(h.clients, client)
+	clientCount := len(h.clients)
+	h.clientsMutex.Unlock()
+
 	h.metrics.IncrementConnections()
-
-	// Also track in enhanced metrics if available
-	if h.enhancedMetrics != nil {
-		remoteAddr := "unknown"
-		if client.conn != nil {
-			remoteAddr = client.conn.RemoteAddr().String()
-		}
-		h.enhancedMetrics.AddConnection(client.ID, remoteAddr)
-	}
-
-	h.logger.Printf("Client %s connected. Total clients: %d", client.ID, len(h.clients))
+	h.logger.Printf("Client %s connected. Total clients: %d", client.ID, clientCount)
 
 	// Send connection established message
 	connMsg := types.ConnectionEstablishedMessage{
@@ -136,35 +205,48 @@ func (h *Hub) registerClient(client *Client) {
 }
 
 func (h *Hub) unregisterClient(client *Client) {
-	if _, ok := h.clients[client]; ok {
-		delete(h.clients, client)
-		close(client.send)
-		h.metrics.DecrementConnections()
-		h.metrics.RecordConnectionDuration(time.Since(client.ConnectedAt))
-
-		// Also remove from enhanced metrics if available
-		if h.enhancedMetrics != nil {
-			h.enhancedMetrics.RemoveConnection(client.ID)
+	h.clientsMutex.Lock()
+	// Find and remove client from slice
+	for i, c := range h.clients {
+		if c == client {
+			// Remove by swapping with last element
+			h.clients[i] = h.clients[len(h.clients)-1]
+			h.clients = h.clients[:len(h.clients)-1]
+			break
 		}
-
-		h.logger.Printf("Client %s disconnected. Total clients: %d", client.ID, len(h.clients))
 	}
+	clientCount := len(h.clients)
+	h.clientsMutex.Unlock()
+
+	close(client.send)
+	h.metrics.DecrementConnections()
+	h.metrics.RecordConnectionDuration(time.Since(client.ConnectedAt))
+	h.logger.Printf("Client %s disconnected. Total clients: %d", client.ID, clientCount)
 }
 
 func (h *Hub) forceUnregisterClient(client *Client) {
-	if _, ok := h.clients[client]; ok {
-		delete(h.clients, client)
-		close(client.send)
-		client.conn.Close()
-		h.metrics.DecrementConnections()
-		h.metrics.RecordConnectionError()
-
-		h.logger.Printf("Client %s force disconnected. Total clients: %d", client.ID, len(h.clients))
+	h.clientsMutex.Lock()
+	// Find and remove client from slice
+	for i, c := range h.clients {
+		if c == client {
+			// Remove by swapping with last element
+			h.clients[i] = h.clients[len(h.clients)-1]
+			h.clients = h.clients[:len(h.clients)-1]
+			break
+		}
 	}
+	clientCount := len(h.clients)
+	h.clientsMutex.Unlock()
+
+	close(client.send)
+	client.conn.Close()
+	h.metrics.DecrementConnections()
+	h.metrics.RecordConnectionError()
+	h.logger.Printf("Client %s force disconnected. Total clients: %d", client.ID, clientCount)
 }
 
 func (h *Hub) broadcastMessage(message []byte) {
-	// Check for message deduplication
+	// Check for message deduplication using LRU cache
 	if h.isDuplicateMessage(message) {
 		h.metrics.IncrementDuplicates()
 		return
@@ -173,96 +255,68 @@ func (h *Hub) broadcastMessage(message []byte) {
 	h.metrics.IncrementMessagesSent()
 	h.metrics.RecordMessageSize(len(message))
 
-	// Broadcast to all connected clients
-	var wg sync.WaitGroup
-	for client := range h.clients {
-		wg.Add(1)
-		go func(c *Client) {
-			defer wg.Done()
+	var clientsToUnregister []*Client
 
-			select {
-			case c.send <- message:
-				// Message sent successfully
-			default:
-				// Client's send channel is full, remove client
-				h.forceUnregisterClient(c)
-			}
-		}(client)
+	// Use read lock for better concurrency
+	h.clientsMutex.RLock()
+	for _, client := range h.clients {
+		select {
+		case client.send <- message:
+			// Message sent successfully
+		default:
+			// Client's send channel is full, mark for removal
+			clientsToUnregister = append(clientsToUnregister, client)
+		}
 	}
+	h.clientsMutex.RUnlock()
 
-	// Don't wait for all goroutines to complete to maintain high throughput
-	// The goroutines will complete in the background
+	// Unregister clients whose send channels were full
+	for _, client := range clientsToUnregister {
+		h.forceUnregisterClient(client)
+	}
 }
 
 func (h *Hub) isDuplicateMessage(message []byte) bool {
-	// Parse message to extract nonce
-	var baseMsg types.BaseMessage
-	if err := json.Unmarshal(message, &baseMsg); err != nil {
-		return false // If we can't parse it, assume it's not a duplicate
+	// Fast path: extract nonce without full JSON parsing
+	nonce := h.extractNonce(message)
+	if nonce == "" {
+		return false
 	}
 
-	if baseMsg.Nonce == "" {
-		return false // No nonce means we can't deduplicate
-	}
-
-	h.nonceMutex.Lock()
-	defer h.nonceMutex.Unlock()
-
-	// Check if we've seen this nonce before
-	if _, exists := h.seenNonces[baseMsg.Nonce]; exists {
+	// Check LRU cache for duplicate
+	if _, exists := h.nonces.Get(nonce); exists {
 		return true
 	}
 
-	// Store the nonce with current timestamp
-	h.seenNonces[baseMsg.Nonce] = time.Now()
+	// Store nonce in LRU cache
+	h.nonces.Put(nonce, time.Now())
 	return false
 }
 
-func (h *Hub) cleanupNonces() {
-	ticker := time.NewTicker(5 * time.Minute) // Cleanup every 5 minutes
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-h.ctx.Done():
-			return
-		case <-ticker.C:
-			h.performNonceCleanup()
-		}
-	}
-}
-
-func (h *Hub) performNonceCleanup() {
-	h.nonceMutex.Lock()
-	defer h.nonceMutex.Unlock()
-
-	cutoff := time.Now().Add(-10 * time.Minute) // Remove nonces older than 10 minutes
-	for nonce, timestamp := range h.seenNonces {
-		if timestamp.Before(cutoff) {
-			delete(h.seenNonces, nonce)
-		}
+// extractNonce quickly extracts nonce from JSON without full parsing
+func (h *Hub) extractNonce(message []byte) string {
+	// Simple string search for nonce field - much faster than JSON parsing
+	nonceStart := []byte(`"nonce":"`)
+	idx := indexOf(message, nonceStart)
+	if idx == -1 {
+		return ""
 	}
 
-	h.logger.Printf("Cleaned up old nonces. Current nonce count: %d", len(h.seenNonces))
-}
+	start := idx + len(nonceStart)
+	if start >= len(message) {
+		return ""
+	}
 
-func (h *Hub) updateMessageRate() {
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-h.ctx.Done():
-			return
-		case <-ticker.C:
-			// Get current message count and update rate
-			// This is a simplified rate calculation
-			h.messageRateTracker.Update(float64(h.metrics.GetActiveConnections()))
-			rate := h.messageRateTracker.GetRate()
-			h.metrics.UpdateMessagesPerSecond(rate)
+	// Find the closing quote
+	for i := start; i < len(message); i++ {
+		if message[i] == '"' {
+			return string(message[start:i])
 		}
 	}
+	return ""
 }
+
+
 
 // RegisterClient adds a client to the hub
 func (h *Hub) RegisterClient(client *Client) {
@@ -297,18 +351,20 @@ func (h *Hub) BroadcastMessage(message []byte) {
 
 // GetClientCount returns the number of connected clients
 func (h *Hub) GetClientCount() int {
-	return len(h.clients)
+	h.clientsMutex.RLock()
+	count := len(h.clients)
+	h.clientsMutex.RUnlock()
+	return count
 }
 
 // GetStats returns hub statistics
 func (h *Hub) GetStats() map[string]interface{} {
-	h.nonceMutex.RLock()
-	nonceCount := len(h.seenNonces)
-	h.nonceMutex.RUnlock()
+	h.clientsMutex.RLock()
+	clientCount := len(h.clients)
+	h.clientsMutex.RUnlock()
 
 	return map[string]interface{}{
-		"connected_clients": len(h.clients),
-		"seen_nonces":      nonceCount,
+		"connected_clients": clientCount,
 		"broadcast_queue":  len(h.broadcast),
 		"register_queue":   len(h.register),
 		"unregister_queue": len(h.unregister),
@@ -321,9 +377,11 @@ func (h *Hub) Shutdown() {
 	h.cancel()
 
 	// Close all client connections
-	for client := range h.clients {
+	h.clientsMutex.RLock()
+	for _, client := range h.clients {
 		client.conn.Close()
 	}
+	h.clientsMutex.RUnlock()
 
 	// Wait for hub goroutine to finish
 	h.wg.Wait()

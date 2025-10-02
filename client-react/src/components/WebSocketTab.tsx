@@ -1,6 +1,7 @@
 import { useAtom, useSetAtom } from 'jotai';
 import { useEffect, useRef } from 'react';
 import { Play, Square, Wifi, WifiOff, Server, RefreshCw } from 'lucide-react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   webSocketStateAtom,
   updateServerStateAtom,
@@ -10,7 +11,7 @@ import {
 const MAX_RECONNECT_ATTEMPTS = 5;
 const SERVERS = {
   node: { url: 'ws://localhost:3001/ws', label: 'Node.js' },
-  go: { url: 'ws://localhost:3002/ws', label: 'Go' }
+  go: { url: 'ws://localhost:3004/ws', label: 'Go' }
 };
 
 // A hook-like function to manage WebSocket connections
@@ -111,18 +112,99 @@ const useWebSocketManager = () => {
   return { connect, disconnect };
 };
 
+// Virtualized message list component for high performance
+const VirtualizedMessageList = ({ messages }: { messages: any[] }) => {
+  const parentRef = useRef<HTMLDivElement>(null);
+  const isAutoScrolling = useRef(false);
+
+  const virtualizer = useVirtualizer({
+    count: messages.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 28, // Slightly larger estimate for better spacing
+    overscan: 10, // More overscan for smoother experience
+    getItemKey: (index) => `message-${index}`, // Stable keys
+  });
+
+  // Debounced auto-scroll to bottom when new messages arrive
+  useEffect(() => {
+    if (messages.length > 0 && !isAutoScrolling.current) {
+      isAutoScrolling.current = true;
+      const timer = setTimeout(() => {
+        if (parentRef.current) {
+          virtualizer.scrollToIndex(messages.length - 1, {
+            align: 'end',
+            behavior: 'smooth'
+          });
+        }
+        isAutoScrolling.current = false;
+      }, 50); // Small delay to batch rapid updates
+
+      return () => clearTimeout(timer);
+    }
+  }, [messages.length, virtualizer]);
+
+  if (messages.length === 0) {
+    return (
+      <div className="h-full flex items-center justify-center">
+        <div className="text-gray-500 text-center py-4">No messages yet. Connect to start receiving messages.</div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      ref={parentRef}
+      className="h-full overflow-y-auto font-mono text-xs"
+      style={{ padding: '12px' }}
+    >
+      <div
+        style={{
+          height: `${virtualizer.getTotalSize()}px`,
+          position: 'relative',
+        }}
+      >
+        {virtualizer.getVirtualItems().map((virtualItem) => {
+          const msg = messages[virtualItem.index];
+          if (!msg) return null;
+
+          return (
+            <div
+              key={virtualItem.key}
+              data-index={virtualItem.index}
+              ref={virtualizer.measureElement}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                transform: `translateY(${virtualItem.start}px)`,
+              }}
+            >
+              <div className="flex gap-2 py-1 px-1 min-h-[24px]">
+                <span className="text-gray-500 shrink-0 text-xs">{msg.time}</span>
+                <span className={`shrink-0 px-2 py-0.5 rounded text-xs font-medium ${
+                    msg.type === 'system' ? 'bg-blue-900 text-blue-300' :
+                    msg.type === 'error' ? 'bg-red-900 text-red-300' :
+                    'bg-gray-700 text-gray-300'
+                  }`}>{msg.type}</span>
+                <span className="text-gray-200 break-words flex-1 leading-relaxed">
+                  {typeof msg.data === 'object' ? JSON.stringify(msg.data, null, 1) : String(msg.data)}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
 // Component for individual log pane
 const LogPane = ({ server, title }: { server: 'node' | 'go'; title: string }) => {
   const [webSocketState, setWebSocketState] = useAtom(webSocketStateAtom);
   const serverState = webSocketState[server];
   const { status, messages } = serverState;
   const { connect, disconnect } = useWebSocketManager();
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  // Remove auto-scroll for now
-  // useEffect(() => {
-  //   messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  // }, [messages]);
 
   const handleConnect = () => {
     if (status === 'disconnected') {
@@ -195,34 +277,15 @@ const LogPane = ({ server, title }: { server: 'node' | 'go'; title: string }) =>
         </div>
       </div>
 
-      {/* Message Log - with proper scrolling */}
+      {/* Message Log - with virtual scrolling */}
       <div className="flex-1 bg-gray-900 overflow-hidden min-h-0">
-        <div className="h-full overflow-y-auto p-3 font-mono text-xs">
-          {messages.length === 0 ? (
-            <div className="text-gray-500 text-center py-4">No messages yet. Connect to start receiving messages.</div>
-          ) : (
-            <div className="space-y-1">
-              {messages.map((msg, idx) => (
-                <div key={idx} className="flex gap-2">
-                  <span className="text-gray-500 shrink-0">{msg.time}</span>
-                  <span className={`shrink-0 px-1 py-0.5 rounded text-xs ${
-                      msg.type === 'system' ? 'bg-blue-900 text-blue-300' :
-                      msg.type === 'error' ? 'bg-red-900 text-red-300' :
-                      'bg-gray-700 text-gray-300'
-                    }`}>{msg.type}</span>
-                  <span className="text-gray-200 break-all">{typeof msg.data === 'object' ? JSON.stringify(msg.data) : msg.data}</span>
-                </div>
-              ))}
-              <div ref={messagesEndRef} />
-            </div>
-          )}
-        </div>
+        <VirtualizedMessageList messages={messages} />
       </div>
 
       {/* Footer stats */}
       <div className="p-2 bg-gray-800 border-t border-gray-700 flex items-center justify-between text-xs flex-shrink-0">
         <span className="text-gray-400">Messages: <span className="text-gray-200 font-medium">{messages.length}</span></span>
-        <span className="text-gray-400">URL: <span className="text-gray-200 font-medium">{server === 'node' ? 'ws://localhost:3001/ws' : 'ws://localhost:3002/ws'}</span></span>
+        <span className="text-gray-400">URL: <span className="text-gray-200 font-medium">{server === 'node' ? 'ws://localhost:3001/ws' : 'ws://localhost:3004/ws'}</span></span>
       </div>
     </div>
   );
