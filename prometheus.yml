@@ -6,10 +6,10 @@ global:
 
 # Scrape configurations
 scrape_configs:
-  # WebSocket Go Server 2 (production server with full monitoring)
-  - job_name: 'websocket-go-2'
+  # WebSocket Go Server (production server with full monitoring)
+  - job_name: 'websocket-go'
     static_configs:
-      - targets: ['ws-go-2:3002'] # Internal Docker network address
+      - targets: ['ws-go:3002'] # Internal Docker network address
     metrics_path: '/metrics'
 
   # NATS Server monitoring

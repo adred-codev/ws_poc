@@ -1,0 +1,170 @@
+version: "3.8"
+
+services:
+  # NATS Message Broker
+  nats:
+    image: nats:2.12-alpine
+    container_name: odin-nats
+    ports:
+      - "4222:4222" # Client connections
+      - "8222:8222" # HTTP monitoring
+      - "6222:6222" # Cluster routing
+    command:
+      - "--jetstream"
+      - "--store_dir=/data"
+      - "--http_port=8222"
+    volumes:
+      - nats_data:/data
+    networks:
+      - odin-network
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--quiet",
+          "--tries=1",
+          "--spider",
+          "http://localhost:8222/healthz",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 256M
+        reservations:
+          cpus: "0.5"
+          memory: 128M
+
+  # Go WebSocket Server (Production)
+  ws-go:
+    build:
+      context: ./src
+      dockerfile: Dockerfile
+    container_name: odin-ws-go
+    ports:
+      - "3004:3002" # WebSocket + Metrics port
+    command:
+      ["./odin-ws-server", "-addr", ":3002", "-nats", "nats://nats:4222"]
+    networks:
+      - odin-network
+    depends_on:
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 512M
+        reservations:
+          cpus: "1.0"
+          memory: 256M
+    mem_swappiness: 10
+    pids_limit: 1000
+    ulimits:
+      nofile:
+        soft: 200000
+        hard: 200000
+      nproc:
+        soft: 32768
+        hard: 32768
+    blkio_config:
+      weight: 500
+
+  # NATS Publisher Service
+  publisher:
+    build:
+      context: ./publisher
+      dockerfile: Dockerfile
+    container_name: odin-publisher
+    ports:
+      - "3003:3003" # HTTP control API
+    environment:
+      - NATS_URL=nats://nats:4222
+      - PORT=3003
+      - NODE_ENV=production
+      - TOKENS=BTC,ETH,ODIN,SOL,DOGE
+    networks:
+      - odin-network
+    depends_on:
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+        reservations:
+          cpus: "0.25"
+          memory: 64M
+
+  # Prometheus (Metrics Collection)
+  prometheus:
+    image: prom/prometheus:v3.6.0
+    container_name: odin-prometheus
+    ports:
+      - "9091:9090" # Prometheus UI
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+    networks:
+      - odin-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.5"
+          memory: 256M
+
+  # Grafana (Visualization)
+  grafana:
+    image: grafana/grafana:12.2.0
+    container_name: odin-grafana
+    ports:
+      - "3010:3000" # Grafana UI
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    networks:
+      - odin-network
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+
+networks:
+  odin-network:
+    driver: bridge
+    driver_opts:
+      com.docker.network.driver.mtu: 1450
+
+volumes:
+  nats_data:
+  prometheus_data:
+  grafana_data:
