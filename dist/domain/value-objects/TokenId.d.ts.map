@@ -1,1 +1,0 @@
-{"version":3,"file":"TokenId.d.ts","sourceRoot":"","sources":["../../../src/domain/value-objects/TokenId.ts"],"names":[],"mappings":"AAAA,qBAAa,OAAO;IAClB,OAAO,CAAC,QAAQ,CAAC,MAAM,CAAS;gBAEpB,KAAK,EAAE,MAAM;IAazB,IAAI,KAAK,IAAI,MAAM,CAElB;IAED,MAAM,CAAC,KAAK,EAAE,OAAO,GAAG,OAAO;IAI/B,QAAQ,IAAI,MAAM;IAIlB,MAAM,CAAC,UAAU,CAAC,KAAK,EAAE,MAAM,GAAG,OAAO;CAG1C"}

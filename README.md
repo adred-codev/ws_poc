@@ -1,468 +1,630 @@
-# 🚀 Odin WebSocket POC - Production-Ready Implementation
+# WebSocket Server Monitoring with Prometheus + Grafana
 
-**Real-time Token Price Updates with Clean Architecture & Comprehensive Load Testing**
+Complete monitoring setup for the WebSocket server with real-time metrics visualization.
 
-This production-ready WebSocket server replaces polling-based price updates with real-time connections using NATS pub/sub messaging. Built with TypeScript, clean architecture principles, and includes comprehensive load testing up to 5000+ concurrent connections.
+## 📋 Table of Contents
 
-## 🎯 Objectives & Business Impact
+- [Overview](#overview)
+- [Quick Start](#quick-start)
+- [What You Get](#what-you-get)
+- [Configuration](#configuration)
+- [Accessing Dashboards](#accessing-dashboards)
+- [Available Metrics](#available-metrics)
+- [Troubleshooting](#troubleshooting)
+- [Customization](#customization)
 
-### Cost & Performance Goals
-- **Replace polling**: 3M requests/minute → Real-time push (90% reduction)
-- **Reduce latency**: 2-60 seconds → <5ms (400-12000x improvement)
-- **Cut costs**: $3,000/month → $1,550/month (48% reduction)
-- **Scale to**: 100,000+ concurrent users
+---
 
-### Technical Implementation Analysis
-Based on the comprehensive [WebSocket Implementation Analysis Report](#websocket-implementation-analysis-report), this solution addresses 8 critical bottlenecks in the current polling architecture:
+## 🎯 Overview
 
-1. **Excessive API Load** - 90% reduction in requests
-2. **Update Latency Mismatch** - Real-time vs 60-second delays
-3. **Firebase Functions Scaling Costs** - 75% reduction in instances
-4. **Database Connection Pool Exhaustion** - Fewer connections needed
-5. **No Real-Time Trade Updates** - Instant publishing on trades
-6. **Scheduler Single-Threading** - Parallel publishing to NATS
-7. **Network Egress Costs** - 80% reduction in data transfer
-8. **Client-Side Resource Usage** - Server-push model optimization
+This monitoring stack provides:
+- **Prometheus**: Time-series metrics collection and storage
+- **Grafana**: Beautiful real-time dashboards
+- **Auto-configuration**: Pre-loaded datasources and dashboards
+- **15-second updates**: Near real-time monitoring
+- **15-day retention**: Historical data for trend analysis
 
-## 🏗️ Clean Architecture Implementation
-
-### Technology Stack
-- **TypeScript**: Full type safety and production readiness
-- **Express.js**: Lightweight, battle-tested HTTP framework
-- **WebSocket (ws)**: High-performance WebSocket library
-- **NATS**: Sub-millisecond pub/sub messaging system
-- **ESLint + Prettier**: Code quality and formatting
-- **Clean Architecture**: Domain-driven design with clear separation of concerns
-
-### Architecture Layers
-
+**Architecture:**
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Presentation Layer                           │
-│  WebSocket Handlers | HTTP Controllers | Client Interface      │
-├─────────────────────────────────────────────────────────────────┤
-│                    Application Layer                            │
-│  Use Cases | Message Handlers | Business Logic                 │
-├─────────────────────────────────────────────────────────────────┤
-│                    Domain Layer                                 │
-│  Entities | Value Objects | Domain Services                    │
-├─────────────────────────────────────────────────────────────────┤
-│                    Infrastructure Layer                         │
-│  NATS | Database | External APIs | Configuration               │
-└─────────────────────────────────────────────────────────────────┘
+WebSocket Server (go-server-2)
+    ↓ /metrics endpoint
+Prometheus (scrapes every 15s)
+    ↓ PromQL queries
+Grafana (visualizes data)
+    ↓ Dashboards
+You (view in browser)
 ```
 
-### System Architecture
-
-```
-Browser ←→ WebSocket Server ←→ NATS ←→ Price Publisher
-                ↓                ↓
-           Health API      Message Deduplication
-                ↓                ↓
-        Connection State    Source Tracking
-```
-
-## 📁 Project Structure
-
-```
-ws_poc/
-├── src/
-│   ├── domain/                  # Clean Architecture - Domain Layer
-│   │   ├── entities/           # Business entities with TypeScript types
-│   │   ├── value-objects/      # Domain value objects
-│   │   ├── repositories/       # Repository interfaces
-│   │   └── use-cases/          # Business use cases
-│   ├── application/            # Application Layer
-│   │   └── services/           # Application services
-│   ├── infrastructure/         # Infrastructure Layer
-│   │   ├── persistence/        # Data persistence implementations
-│   │   ├── websocket/          # WebSocket infrastructure
-│   │   └── nats/               # NATS messaging infrastructure
-│   ├── presentation/           # Presentation Layer
-│   │   └── controllers/        # WebSocket and HTTP controllers
-│   ├── types/
-│   │   └── odin.types.ts       # Shared TypeScript interfaces
-│   ├── config/
-│   │   └── odin.config.ts      # Configuration with type safety
-│   ├── utils/
-│   │   └── auth-token.ts       # JWT token generation utility
-│   ├── clean-server.ts         # Clean Architecture server implementation
-│   ├── odin-server.ts          # Production WebSocket server
-│   ├── odin-publisher.ts       # Enhanced publisher with deduplication
-│   ├── load-test.ts            # Comprehensive load testing framework
-│   ├── server.ts               # Original server (reference)
-│   └── publisher.ts            # Original publisher (reference)
-├── client/
-│   └── index.html              # Test client interface
-├── LOAD_TESTING.md             # Comprehensive load testing guide
-├── .eslintrc.json              # ESLint configuration
-├── .prettierrc.json            # Prettier formatting rules
-├── tsconfig.json               # TypeScript configuration
-├── docker-compose.yml          # NATS server setup
-└── README.md                   # This file
-```
+---
 
 ## 🚀 Quick Start
 
-### Prerequisites
-
-- **Docker**: For NATS server
-- **Node.js 18+**: For TypeScript execution with tsx
-- **8GB+ RAM**: Recommended for load testing
-
-### 1. Install Dependencies
+### 1. Start All Services
 
 ```bash
-npm ci
+# Start everything (NATS, WebSocket server, Prometheus, Grafana)
+docker-compose up -d
+
+# Or start just monitoring stack
+docker-compose up -d prometheus grafana
 ```
 
-### 2. Start Development Environment
+### 2. Verify Services Are Running
 
 ```bash
-# Start NATS server
-npm run docker:up
-
-# Terminal 1: Start WebSocket server (production implementation)
-npm run odin:server
-
-# Terminal 2: Start price publisher
-npm run odin:publisher
-
-# Terminal 3: Alternative servers
-npm run clean:server     # Clean Architecture implementation
-npm run dev              # Original server (reference)
+docker ps | grep -E "prometheus|grafana|ws-go-2"
 ```
 
-### 3. Test Connections
-
-```bash
-# Open test client in browser
-open client/index.html
-
-# OR run load tests
-npm run load-test:quick    # 100 connections
-npm run load-test:medium   # 1000 connections
-npm run load-test:stress   # 5000 connections
+Expected output:
+```
+odin-grafana       grafana/grafana:latest      Up    0.0.0.0:3010->3000/tcp
+odin-prometheus    prom/prometheus:latest      Up    0.0.0.0:9091->9090/tcp
+odin-ws-go-2       ws_poc-ws-go-2              Up    0.0.0.0:3004->3002/tcp
 ```
 
-### 4. Authentication & Load Testing
+### 3. Access Grafana Dashboard
 
-```bash
-# Generate JWT token for testing
-npm run auth:token
+1. Open browser: **http://localhost:3010**
+2. Login:
+   - Username: `admin`
+   - Password: `admin`
+3. Navigate to: **Dashboards → WebSocket Server - Go-2**
 
-# Run comprehensive load tests
-npm run load-test:progressive  # Full test suite (100 → 1K → 5K)
+That's it! You should see live metrics updating every 15 seconds.
 
-# See LOAD_TESTING.md for detailed testing guide
+---
+
+## 📊 What You Get
+
+### Dashboard Panels
+
+#### **Connection Metrics**
+- **Active Connections (Gauge)**: Current number of connected clients
+  - Green: < 1700
+  - Yellow: 1700-2000
+  - Red: > 2000
+- **Connections Over Time (Graph)**: Historical connection trend
+
+#### **Message Metrics**
+- **Message Rate (Graph)**: Messages sent/received per second
+- **Bandwidth (Graph)**: Bytes sent/received per second
+
+#### **Performance Metrics**
+- **CPU Usage (Graph)**: Percentage utilization
+  - Green: < 70%
+  - Yellow: 70-90%
+  - Red: > 90%
+- **Memory Usage (Graph)**: MB used vs 512MB limit
+  - Green: < 410MB
+  - Yellow: 410-460MB
+  - Red: > 460MB
+- **Goroutines (Graph)**: Active goroutine count
+
+#### **Reliability Metrics**
+- **Slow Clients**: Clients disconnected per minute (too slow to keep up)
+- **Rate Limited**: Messages dropped per minute (client exceeded rate limit)
+- **Replay Requests**: Gap recovery requests per minute
+
+#### **System Health**
+- **NATS Connection Status (Gauge)**:
+  - Green = Connected
+  - Red = Disconnected
+
+---
+
+## ⚙️ Configuration
+
+### Prometheus Configuration
+
+File: `prometheus.yml`
+
+```yaml
+global:
+  scrape_interval: 15s  # How often to scrape metrics
+
+scrape_configs:
+  - job_name: 'websocket-go-2'
+    static_configs:
+      - targets: ['ws-go-2:3002']  # WebSocket server
+    metrics_path: '/metrics'
+
+  - job_name: 'nats'
+    static_configs:
+      - targets: ['nats:8222']  # NATS server
+    metrics_path: '/metrics'
 ```
 
-### 5. Code Quality & Type Checking
+**To change scrape interval:**
+1. Edit `prometheus.yml`
+2. Change `scrape_interval: 15s` to desired value (e.g., `5s` for 5 seconds)
+3. Restart Prometheus: `docker-compose restart prometheus`
 
-```bash
-# Type checking
-npm run typecheck
+### Grafana Configuration
 
-# Linting
-npm run lint
-npm run lint:fix
+**Datasource**: `grafana/provisioning/datasources/prometheus.yml`
+- Auto-connects to Prometheus on startup
+- No manual configuration needed
 
-# Code formatting
-npm run format
-npm run format:check
+**Dashboard**: `grafana/provisioning/dashboards/websocket.json`
+- Pre-loaded WebSocket monitoring dashboard
+- Editable through Grafana UI
+
+### Data Retention
+
+**Prometheus** stores data for **15 days** by default.
+
+To change retention:
+
+1. Edit `docker-compose.yml`
+2. Find the Prometheus service
+3. Change `--storage.tsdb.retention.time=15d` to desired value
+   - Examples: `7d`, `30d`, `90d`
+4. Restart: `docker-compose restart prometheus`
+
+---
+
+## 🖥️ Accessing Dashboards
+
+### Grafana Dashboard (Primary)
+
+**URL**: http://localhost:3010
+
+**Default Credentials:**
+- Username: `admin`
+- Password: `admin`
+
+**First Login:**
+1. You'll be prompted to change the password (optional, can skip)
+2. Go to **Dashboards** (left sidebar, 4 squares icon)
+3. Click **WebSocket Server - Go-2**
+
+**Dashboard Features:**
+- **Time Range Picker** (top right): Change from "Last 1 hour" to "Last 6 hours", "Last 24 hours", etc.
+- **Refresh Rate** (top right): Auto-refresh every 15s
+- **Zoom**: Click and drag on any graph to zoom into a time range
+- **Legend**: Click series names to hide/show them
+- **Panel Menu**: Click panel title → View to see full screen
+
+### Prometheus UI (Advanced)
+
+**URL**: http://localhost:9091
+
+**Use Cases:**
+- Query metrics directly with PromQL
+- Check target health
+- Debug scraping issues
+- Test alert rules
+
+**Example Queries:**
+
+```promql
+# Current active connections
+ws_connections_active
+
+# Message rate over last 5 minutes
+rate(ws_messages_sent_total[5m])
+
+# Memory usage percentage
+(ws_memory_bytes / ws_memory_limit_bytes) * 100
+
+# Connection capacity percentage
+(ws_connections_active / ws_connections_max) * 100
 ```
 
-## 🔧 TypeScript Configuration
+---
 
-### Strict Type Safety
-- **ES2022 target**: Modern JavaScript features
-- **Strict mode**: Full type checking enabled
-- **Module resolution**: Node.js compatible
-- **Path aliases**: Clean imports with `@/*` mapping
+## 📈 Available Metrics
 
-### Development Workflow
-```bash
-# Run with hot reload
-npm run odin:dev
+### Connection Metrics
 
-# Format code automatically
-npm run format
+| Metric | Type | Description |
+|--------|------|-------------|
+| `ws_connections_total` | Counter | Total connections since start |
+| `ws_connections_active` | Gauge | Current active connections |
+| `ws_connections_max` | Gauge | Maximum allowed connections (2184) |
+| `ws_connections_failed_total` | Counter | Failed connection attempts |
 
-# Fix linting issues
-npm run lint:fix
+### Message Metrics
 
-# Check types without compilation
-npm run typecheck
-```
+| Metric | Type | Description |
+|--------|------|-------------|
+| `ws_messages_sent_total` | Counter | Total messages sent to clients |
+| `ws_messages_received_total` | Counter | Total messages received from clients |
+| `ws_bytes_sent_total` | Counter | Total bytes sent |
+| `ws_bytes_received_total` | Counter | Total bytes received |
 
-## 📊 Production Features Implementation
+### Reliability Metrics
 
-### Message Deduplication
-```typescript
-interface BaseMessage {
-  type: MessageType;
-  timestamp: number;
-  nonce: string; // Prevents duplicate processing
-}
-```
-
-### Source Tracking
-```typescript
-interface PriceUpdateMessage {
-  source: 'trade' | 'scheduler'; // Track update origin
-  // ... other fields
-}
-```
-
-### Connection Management
-```typescript
-interface ClientInfo {
-  id: string;
-  connectedAt: number;
-  seenNonces: Set<string>; // Deduplication per client
-  heartbeatInterval?: NodeJS.Timeout;
-}
-```
+| Metric | Type | Description |
+|--------|------|-------------|
+| `ws_slow_clients_disconnected_total` | Counter | Clients disconnected for being too slow |
+| `ws_rate_limited_messages_total` | Counter | Messages dropped due to rate limiting |
+| `ws_replay_requests_total` | Counter | Message replay requests served |
 
 ### Performance Metrics
-```typescript
-interface ServerMetrics {
-  messagesPublished: number;
-  messagesDelivered: number;
-  connectionCount: number;
-  duplicatesDropped: number;
-  averageLatency: number;
-  peakLatency: number;
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `ws_cpu_usage_percent` | Gauge | CPU usage percentage |
+| `ws_memory_bytes` | Gauge | Memory usage in bytes |
+| `ws_memory_limit_bytes` | Gauge | Memory limit (from cgroup) |
+| `ws_goroutines_active` | Gauge | Active goroutines |
+
+### NATS Metrics
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `ws_nats_connected` | Gauge | NATS connection status (1=up, 0=down) |
+| `ws_nats_messages_received_total` | Counter | Messages received from NATS |
+
+---
+
+## 🔧 Troubleshooting
+
+### Prometheus Not Scraping Metrics
+
+**Check Prometheus targets:**
+
+```bash
+curl -s http://localhost:9091/api/v1/targets | jq '.data.activeTargets[] | {job: .labels.job, state: .health}'
+```
+
+Expected output:
+```json
+{"job": "websocket-go-2", "state": "up"}
+{"job": "nats", "state": "up"}
+```
+
+**If target is DOWN:**
+
+1. Check WebSocket server is running:
+   ```bash
+   docker ps | grep ws-go-2
+   ```
+
+2. Check metrics endpoint is accessible:
+   ```bash
+   curl http://localhost:3004/metrics
+   ```
+
+3. Check Prometheus logs:
+   ```bash
+   docker logs odin-prometheus
+   ```
+
+### Grafana Dashboard Not Loading
+
+**Check Grafana health:**
+```bash
+curl http://localhost:3010/api/health
+```
+
+**Check datasource connection:**
+1. Open Grafana: http://localhost:3010
+2. Go to: **Configuration** (gear icon) → **Data Sources**
+3. Click **Prometheus**
+4. Scroll down → Click **Save & Test**
+5. Should see green "Data source is working"
+
+**If dashboard is missing:**
+1. Check provisioning directory exists:
+   ```bash
+   ls -la grafana/provisioning/dashboards/
+   ```
+
+2. Restart Grafana:
+   ```bash
+   docker-compose restart grafana
+   ```
+
+3. Check Grafana logs:
+   ```bash
+   docker logs odin-grafana | grep -i dashboard
+   ```
+
+### No Data Showing in Graphs
+
+**Possible causes:**
+
+1. **Time range too old**: Check time picker (top right). Set to "Last 5 minutes" or "Last 15 minutes"
+
+2. **No traffic yet**: Run a stress test to generate metrics:
+   ```bash
+   node stress-test-high-load.cjs 100 60 go2
+   ```
+
+3. **Metrics not scraped yet**: Wait 15 seconds for next scrape
+
+4. **Query Prometheus directly** to verify data exists:
+   ```bash
+   curl -s "http://localhost:9091/api/v1/query?query=ws_connections_active" | jq .
+   ```
+
+### Port Conflicts
+
+**Error**: "Bind for 0.0.0.0:9091 failed: port is already allocated"
+
+**Solution**: Change port in `docker-compose.yml`:
+
+```yaml
+# Original
+ports:
+  - "9091:9090"
+
+# Change to
+ports:
+  - "9092:9090"  # Use different external port
+```
+
+Then restart:
+```bash
+docker-compose up -d prometheus
+```
+
+---
+
+## 🎨 Customization
+
+### Adding New Panels to Dashboard
+
+1. Open Grafana: http://localhost:3010
+2. Navigate to: **Dashboards → WebSocket Server - Go-2**
+3. Click **Add panel** (top right)
+4. Select **Add a new panel**
+5. In the query box, enter metric name (e.g., `ws_goroutines_active`)
+6. Customize visualization (graph type, colors, thresholds)
+7. Click **Apply**
+8. Click **Save dashboard** (disk icon, top right)
+
+### Example: Add Connection Errors Panel
+
+**Query:**
+```promql
+rate(ws_connections_failed_total[5m])
+```
+
+**Panel Settings:**
+- Title: "Connection Failures"
+- Visualization: Time series
+- Unit: ops (operations per second)
+
+### Creating Alert Rules
+
+**Example**: Alert when connections > 2000
+
+1. Open Grafana
+2. Go to: **Alerting** (bell icon) → **Alert rules**
+3. Click **New alert rule**
+4. Set query:
+   ```promql
+   ws_connections_active > 2000
+   ```
+5. Set condition: Alert when above 2000
+6. Configure notification channel (Slack, Email, etc.)
+7. Save
+
+### Exporting Dashboard
+
+To share your customized dashboard:
+
+1. Open dashboard
+2. Click **Share** (top right)
+3. Click **Export**
+4. Choose **Export for sharing externally**
+5. Click **Save to file**
+
+This creates a JSON file you can commit to the repository.
+
+---
+
+## 📝 Running Stress Tests
+
+To generate traffic and see metrics in action:
+
+### Light Load (100 connections)
+```bash
+node stress-test-high-load.cjs 100 60 go2
+```
+
+### Medium Load (500 connections)
+```bash
+node stress-test-high-load.cjs 500 120 go2
+```
+
+### Heavy Load (2000 connections, near capacity)
+```bash
+node stress-test-high-load.cjs 2000 180 go2
+```
+
+**Watch the dashboard while running tests to see:**
+- Connection count rise
+- Message rate increase
+- Memory/CPU usage climb
+- Potential slow client disconnections
+
+---
+
+## 🔍 Monitoring Best Practices
+
+### What to Watch
+
+**Critical Alerts:**
+- Connections > 2000 (95% capacity)
+- Memory > 460MB (90% of limit)
+- CPU > 90%
+- NATS disconnected
+- High slow client disconnect rate (>10%)
+
+**Warning Alerts:**
+- Connections > 1700 (80% capacity)
+- Memory > 410MB (80% of limit)
+- CPU > 70%
+- High replay request rate (network issues)
+
+### Regular Checks
+
+**Daily:**
+- Check dashboard for anomalies
+- Review slow client disconnect rate
+- Check memory/CPU trends
+
+**Weekly:**
+- Review capacity trends
+- Plan for scaling if connections consistently > 1500
+
+**After Deployments:**
+- Monitor for 15 minutes
+- Check for error rate spikes
+- Verify memory doesn't leak
+
+---
+
+## 🚦 Health Check Endpoints
+
+### WebSocket Server
+
+**Health endpoint:**
+```bash
+curl http://localhost:3004/health | jq .
+```
+
+Returns:
+```json
+{
+  "status": "healthy" | "degraded" | "unhealthy",
+  "healthy": true,
+  "checks": {
+    "nats": {"status": "connected", "healthy": true},
+    "capacity": {"current": 0, "max": 2184, "percentage": 0, "healthy": true},
+    "memory": {"used_mb": 12.4, "limit_mb": 512, "percentage": 2.4, "healthy": true},
+    "cpu": {"percentage": 1.5, "healthy": true}
+  },
+  "warnings": [],
+  "errors": [],
+  "uptime": 123.45
 }
 ```
 
-## 🏛️ Clean Architecture Principles
-
-### 1. **Dependency Inversion**
-- Core business logic independent of frameworks
-- Infrastructure depends on domain, not vice versa
-- Testable without external dependencies
-
-### 2. **Single Responsibility**
-- Each class/module has one reason to change
-- Clear separation of WebSocket, NATS, and business logic
-- Message handlers focused on single message types
-
-### 3. **Interface Segregation**
-- Comprehensive TypeScript interfaces
-- Clients depend only on methods they use
-- Clear contracts between layers
-
-### 4. **Domain-Driven Design**
-- Rich domain models with TypeScript types
-- Business rules encapsulated in domain layer
-- Infrastructure details abstracted away
-
-## 📈 Performance Targets & Load Testing
-
-### ✅ **Validated Performance** (Load Test Results)
-- ✅ **5,000+ concurrent connections** - Successfully tested
-- ✅ **100% connection success rate** - All 100 test connections established
-- ✅ **Sub-15ms message latency** - Achieved 0.4-14.1ms average
-- ✅ **Real-time messaging** - 48 sent, 163 received (3.4x server amplification)
-- ✅ **Auto-reconnection** with exponential backoff
-- ✅ **JWT authentication** validation
-
-### 🎯 **Production Targets**
-- 🎯 **100,000+** concurrent connections (extrapolated from tests)
-- 🎯 **<5ms** message latency (validated: 0.4ms minimum)
-- 🎯 **99.9%** uptime
-- 🎯 **$1,550/month** infrastructure cost
-
-### **Load Testing Framework**
+**Metrics endpoint:**
 ```bash
-npm run load-test:quick       # 100 connections (40s test)
-npm run load-test:medium      # 1000 connections (150s test)
-npm run load-test:stress      # 5000 connections (360s test)
-npm run load-test:progressive # All scenarios with cooldown
-
-# See LOAD_TESTING.md for comprehensive testing guide
+curl http://localhost:3004/metrics
 ```
 
-### **Health Endpoints**
-- **WebSocket Health**: `GET /health`
-- **Server Stats**: `GET /stats`
-- **NATS Monitoring**: `http://localhost:8222`
+Returns Prometheus-format metrics (text).
 
-## 🧪 Testing & Quality Assurance
+---
 
-### **Comprehensive Load Testing Suite**
+## 📚 Additional Resources
+
+### Prometheus
+- [Query Language (PromQL)](https://prometheus.io/docs/prometheus/latest/querying/basics/)
+- [Recording Rules](https://prometheus.io/docs/prometheus/latest/configuration/recording_rules/)
+- [Alerting Rules](https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/)
+
+### Grafana
+- [Dashboard Best Practices](https://grafana.com/docs/grafana/latest/best-practices/best-practices-for-creating-dashboards/)
+- [Templating](https://grafana.com/docs/grafana/latest/dashboards/variables/)
+- [Alerting](https://grafana.com/docs/grafana/latest/alerting/)
+
+### Docker Compose
+- [Compose File Reference](https://docs.docker.com/compose/compose-file/)
+
+---
+
+## 🆘 Getting Help
+
+**Logs:**
+
 ```bash
-# Progressive testing (recommended)
-npm run load-test:progressive  # 100 → 1K → 5K connections
+# WebSocket server logs
+docker logs odin-ws-go-2
 
-# Individual test scenarios
-npm run load-test:quick        # 100 connections, 40s
-npm run load-test:medium       # 1000 connections, 150s
-npm run load-test:stress       # 5000 connections, 360s
+# Prometheus logs
+docker logs odin-prometheus
 
-# Authentication tokens
-npm run auth:token             # Generate JWT for testing
+# Grafana logs
+docker logs odin-grafana
+
+# All logs (follow mode)
+docker-compose logs -f
 ```
 
-### **Code Quality**
+**Restart Services:**
+
 ```bash
-# Run all quality checks
-npm run typecheck && npm run lint && npm run format:check
+# Restart everything
+docker-compose restart
 
-# Individual checks
-npm run typecheck             # TypeScript type validation
-npm run lint                  # ESLint code quality
-npm run format:check          # Prettier formatting
+# Restart specific service
+docker-compose restart prometheus
+docker-compose restart grafana
+docker-compose restart ws-go-2
 ```
 
-### **Testing Scenarios**
-1. **Load Testing**: 100-5000 concurrent connections with real-time metrics
-2. **Functional Testing**: Connection reliability, message delivery, authentication
-3. **Performance Testing**: Sub-15ms latency, throughput, memory stability
-4. **Stress Testing**: Connection limits, graceful degradation, recovery
-5. **Type Safety**: Comprehensive TypeScript coverage across all layers
+**Clean Start:**
 
-## 🔐 Security & Production Readiness
-
-### Development Features
-- ⚠️ Simple JWT validation for quick testing
-- ⚠️ Minimal rate limiting for development
-- ⚠️ Console logging for debugging
-
-### Production Considerations
-- 🔒 Strong JWT secrets and validation
-- 🔒 Rate limiting and DDoS protection
-- 🔒 Input validation with TypeScript types
-- 🔒 SSL/TLS encryption
-- 🔒 Comprehensive error handling
-- 🔒 Security headers and CORS configuration
-
-## 🔄 Migration Strategy
-
-### Phase 1: Dual-Mode Operation (30 days)
-- Run polling + WebSocket simultaneously
-- Gradual user migration (10% → 50% → 100%)
-- Fallback to polling if WebSocket fails
-
-### Phase 2: WebSocket Primary
-- WebSocket as primary data source
-- Polling as backup only
-- Monitor performance metrics
-
-### Phase 3: Polling Deprecation
-- Remove polling infrastructure
-- Full WebSocket implementation
-- Cost savings realized
-
-## 📚 API Reference
-
-### WebSocket Message Types
-```typescript
-type OdinMessage =
-  | PriceUpdateMessage
-  | TradeExecutedMessage
-  | VolumeUpdateMessage
-  | BatchUpdateMessage
-  | MarketStatsMessage
-  | HeartbeatMessage
-  | ConnectionEstablishedMessage;
-```
-
-### NATS Subject Hierarchy
-```typescript
-const subjects = {
-  tokenPrice: (tokenId: string) => `odin.token.${tokenId}.price`,
-  tokenVolume: (tokenId: string) => `odin.token.${tokenId}.volume`,
-  batchUpdate: 'odin.token.batch.update',
-  trades: (tokenId: string) => `odin.trades.${tokenId}`,
-  marketStats: 'odin.market.statistics'
-};
-```
-
-## 🚨 Troubleshooting
-
-### TypeScript Issues
 ```bash
-# Clear TypeScript cache
-rm -rf node_modules/.cache
-npm ci
+# Stop all services
+docker-compose down
 
-# Check type errors
-npm run typecheck
+# Remove volumes (deletes historical data)
+docker volume rm ws_poc_prometheus_data ws_poc_grafana_data
+
+# Start fresh
+docker-compose up -d
 ```
 
-### Development Issues
+---
+
+## 🎉 Quick Reference
+
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| Grafana Dashboard | http://localhost:3010 | admin / admin |
+| Prometheus UI | http://localhost:9091 | - |
+| WebSocket Server | ws://localhost:3004/ws | - |
+| WebSocket Metrics | http://localhost:3004/metrics | - |
+| WebSocket Health | http://localhost:3004/health | - |
+| NATS | nats://localhost:4222 | - |
+
+**Default Ports:**
+- 3010: Grafana
+- 9091: Prometheus
+- 3004: WebSocket Server
+- 4222: NATS
+
+**Key Files:**
+- `docker-compose.yml`: Service definitions
+- `prometheus.yml`: Prometheus configuration
+- `grafana/provisioning/datasources/prometheus.yml`: Grafana datasource
+- `grafana/provisioning/dashboards/websocket.json`: Dashboard definition
+
+**Quick Commands:**
 ```bash
-# Check if services are running
-docker ps | grep nats
-lsof -i :3001  # HTTP port
-lsof -i :8080  # WebSocket port
+# Start monitoring
+docker-compose up -d prometheus grafana
+
+# Stop monitoring
+docker-compose stop prometheus grafana
 
 # View logs
-tail -f logs/websocket-server.log
+docker-compose logs -f prometheus grafana
+
+# Check status
+docker ps | grep -E "prometheus|grafana"
+
+# Run stress test
+node stress-test-high-load.cjs 100 60 go2
 ```
 
-## 📊 Cost-Benefit Analysis
-
-### Current Polling Architecture Costs
-- Firebase Functions (200 instances): $1,500/month
-- Cloud SQL (scaled for connections): $500/month
-- Network Egress (15GB/min): $800/month
-- **Total: $3,000/month**
-
-### WebSocket Architecture Costs
-- Firebase Functions (50 instances): $400/month
-- Cloud SQL (smaller instance): $300/month
-- NATS Server: $150/month
-- WebSocket Server: $500/month
-- Network Egress: $200/month
-- **Total: $1,550/month (48% reduction)**
-
-### Performance Improvements
-- **Update Latency**: 2-60 seconds → <5ms (400-12000x improvement)
-- **API Requests**: 3M/minute → 300k/minute (90% reduction)
-- **Network Egress**: 15GB/minute → 3GB/minute (80% reduction)
-- **Infrastructure**: 200 instances → 50 instances (75% reduction)
-
 ---
 
-# WebSocket Implementation Analysis Report - Odin Platform
+## 📝 Notes
 
-*[The complete analysis report content follows as provided in the user's message...]*
+- Prometheus scrapes metrics every **15 seconds**
+- Grafana auto-refreshes dashboard every **15 seconds**
+- Metrics are retained for **15 days**
+- Dashboard shows data from **last 1 hour** by default
+- All configuration is automated (no manual setup required)
 
-[Rest of the analysis report would be included here as provided]
-
----
-
-## 🤝 Contributing
-
-1. Follow TypeScript best practices
-2. Maintain clean architecture principles
-3. Add comprehensive type definitions
-4. Run quality checks: `npm run typecheck && npm run lint`
-5. Test with load scenarios: `npm run test`
-
-## 📄 License
-
-ISC License - See LICENSE file for details
-
----
-
-## 🎯 **Quick Start Summary**
-
-```bash
-# 1. Install and start services
-npm ci
-npm run docker:up
-npm run odin:server      # Terminal 1
-npm run odin:publisher   # Terminal 2
-
-# 2. Generate auth token and run load test
-npm run auth:token
-npm run load-test:quick  # Validate 100 connections, <15ms latency
-
-# 3. See LOAD_TESTING.md for comprehensive testing guide
-```
-
-**🚀 Production-ready WebSocket server with 5000+ connection capacity and sub-15ms latency!**
+Enjoy your monitoring! 🚀
