@@ -1,12 +1,13 @@
 # Odin WebSocket Server
 
-Production-grade WebSocket server with NATS pub/sub, Prometheus monitoring, and Grafana visualization.
+Production-grade WebSocket server with NATS pub/sub, Prometheus metrics, Grafana visualization, and Loki log aggregation.
 
 ![Go 1.25.1](https://img.shields.io/badge/Go-1.25.1-00ADD8?logo=go)
 ![Node.js 22](https://img.shields.io/badge/Node.js-22-339933?logo=node.js)
 ![NATS 2.12](https://img.shields.io/badge/NATS-2.12-27AAE1)
 ![Prometheus 3.6](https://img.shields.io/badge/Prometheus-3.6-E6522C?logo=prometheus)
 ![Grafana 12.2](https://img.shields.io/badge/Grafana-12.2-F46800?logo=grafana)
+![Loki 3.3](https://img.shields.io/badge/Loki-3.3-F46800?logo=grafana)
 
 ## 📁 Project Structure
 
@@ -40,14 +41,18 @@ Production-grade WebSocket server with NATS pub/sub, Prometheus monitoring, and 
 # Install dependencies
 task install
 
-# Start all services (NATS, Go server, Publisher, Prometheus, Grafana)
+# Start all services (NATS, Go server, Publisher, Prometheus, Grafana, Loki, Promtail)
 task docker:up
 
 # Run stress test
 task test:medium
 
-# Open Grafana dashboard
-task monitor:grafana
+# Open monitoring dashboards
+task monitor:grafana     # Metrics dashboard
+task monitor:logs        # Logs dashboard
+
+# Control publisher
+task publisher:start RATE=10
 ```
 
 That's it! Services will be available at:
@@ -56,6 +61,7 @@ That's it! Services will be available at:
 - **Health**: http://localhost:3004/health
 - **Grafana**: http://localhost:3010 (admin/admin)
 - **Prometheus**: http://localhost:9091
+- **Loki**: http://localhost:3101
 
 ## 📋 Available Commands
 
@@ -72,15 +78,28 @@ task dev:go              # Run Go server locally
 task dev:publisher       # Run publisher locally
 task dev:nats            # Start only NATS for local dev
 
-# Testing
-task test:light          # 100 connections, 30s
-task test:medium         # 500 connections, 60s
-task test:heavy          # 2000 connections, 120s
+# Testing (with variable overrides)
+task test:light                              # 100 connections, 30s
+task test:medium                             # 500 connections, 60s
+task test:heavy                              # 2000 connections, 120s
+task test:custom CONNECTIONS=1000 DURATION=90 SERVER=go2  # Custom load
 
-# Monitoring
+# Monitoring - Metrics
 task monitor:health      # Check all health endpoints
 task monitor:grafana     # Open Grafana (localhost:3010)
 task monitor:prometheus  # Open Prometheus (localhost:9091)
+task monitor:metrics     # View raw Prometheus metrics
+task monitor:targets     # Check Prometheus scrape targets
+
+# Monitoring - Logs
+task monitor:logs        # Open Grafana logs dashboard
+task monitor:loki CONTAINER=odin-ws-go QUERY=''  # Query Loki directly
+
+# Publisher Control
+task publisher:start RATE=10          # Start publishing (msgs/sec)
+task publisher:stop                   # Stop publishing
+task publisher:configure RATE=20      # Change publish rate
+task monitor:publisher:stats          # View publisher statistics
 
 # Docker
 task docker:up           # Start all services
@@ -107,6 +126,7 @@ See [Taskfile Guide](./docs/development/TASKFILE_GUIDE.md) for complete command 
 | Publisher Stats | http://localhost:3003/stats | Publisher statistics | - |
 | Grafana | http://localhost:3010 | Monitoring dashboards | admin/admin |
 | Prometheus | http://localhost:9091 | Metrics database | - |
+| Loki | http://localhost:3101 | Log aggregation | - |
 | NATS | nats://localhost:4222 | Message broker | - |
 
 ## 📚 Documentation
@@ -138,11 +158,18 @@ task test:medium
 # Heavy load (2000 connections, 120 seconds)
 task test:heavy
 
-# Custom load
-task test:custom CONNECTIONS=1000 DURATION=90
+# Custom load with variable overrides
+task test:custom CONNECTIONS=1000 DURATION=90 SERVER=go2
+
+# Override individual test parameters
+CONNECTIONS=250 task test:light        # 250 connections, 30s
+DURATION=120 task test:medium          # 500 connections, 120s
+SERVER=go2 task test:heavy             # Use go2 server
 ```
 
-Monitor results in Grafana: http://localhost:3010
+**Monitor results in real-time:**
+- **Metrics Dashboard**: http://localhost:3010 (Grafana - admin/admin)
+- **Logs Dashboard**: `task monitor:logs` or http://localhost:3010/d/websocket-logs-v2
 
 ## 🎯 Architecture
 
@@ -155,12 +182,17 @@ Monitor results in Grafana: http://localhost:3010
                         ┌──▼──┐                   │
                         │NATS │                   │
                         │4222 │                   │
-                        └──▲──┘                   │
-                           │              ┌───────▼────┐
-                     ┌─────┴────┐         │  Grafana   │
-                     │Publisher │         │   :3010    │
-                     │  :3003   │         └────────────┘
-                     └──────────┘
+                        └──▲──┘           ┌───────▼────────┐
+                           │              │    Grafana     │
+                     ┌─────┴────┐         │     :3010      │
+                     │Publisher │         │  (Dashboards)  │
+                     │  :3003   │         └────────┬───────┘
+                     └──────────┘                  │
+                           │                       │
+                  ┌────────┴────────┐       ┌──────▼──────┐
+                  │    Promtail     │──────►│    Loki     │
+                  │ (Log Collector) │       │   :3101     │
+                  └─────────────────┘       └─────────────┘
 ```
 
 **Key Components:**
@@ -168,7 +200,9 @@ Monitor results in Grafana: http://localhost:3010
 - **NATS** - Message broker for pub/sub communication
 - **Publisher** - Simulates market data publishing for testing
 - **Prometheus** - Metrics collection and storage
-- **Grafana** - Real-time visualization and dashboards
+- **Grafana** - Real-time visualization and dashboards (metrics + logs)
+- **Loki** - Log aggregation and storage
+- **Promtail** - Log collection from Docker containers
 
 ## 🛠️ Development
 
@@ -217,7 +251,11 @@ nodemon --exec tsx publisher.ts
 
 ## 📊 Monitoring
 
-Access Grafana at http://localhost:3010 (admin/admin) to view:
+Access Grafana at http://localhost:3010 (admin/admin) for complete observability.
+
+### Metrics Dashboard (Prometheus)
+
+Real-time metrics visualization:
 
 - **Active WebSocket connections** - Real-time connection count
 - **Message throughput** - Messages/sec sent and received
@@ -235,6 +273,32 @@ Dashboard panels:
 7. Goroutines (Graph)
 8. Reliability Metrics (Graph)
 9. NATS Status (Gauge)
+
+### Logs Dashboard (Loki)
+
+Real-time log streaming with auto-refresh (5s):
+
+```bash
+# Open logs dashboard in browser
+task monitor:logs
+
+# Query logs directly from CLI
+task monitor:loki CONTAINER=odin-ws-go
+task monitor:loki CONTAINER=odin-publisher
+task monitor:loki CONTAINER=odin-nats
+```
+
+**Available Log Panels:**
+1. **Go WebSocket Server Logs** - All server logs
+2. **Publisher Logs** - NATS publisher activity
+3. **NATS Logs** - Message broker logs
+4. **Message Broadcasts** - Filtered WebSocket message logs
+5. **Price Updates** - Filtered publisher price updates
+
+**Log Filtering Examples:**
+- View only errors: Add `|~ "(?i)error"` to query
+- View broadcasts: `{container_name="odin-ws-go"} |~ "(?i)(broadcast|message)"`
+- View price updates: `{container_name="odin-publisher"} |~ "(?i)(publish|token|price)"`
 
 See [Monitoring Setup Guide](./docs/monitoring/MONITORING_SETUP.md) for configuration details.
 
@@ -336,11 +400,26 @@ ISC
 **Quick Commands:**
 
 ```bash
-task setup         # First-time setup
-task docker:up     # Start services
-task test:medium   # Run stress test
-task monitor:grafana  # Open dashboard
-task docker:down   # Stop services
+# Setup & Start
+task setup              # First-time setup
+task docker:up          # Start all services
+
+# Testing & Load
+task test:medium        # Run stress test (500 connections, 60s)
+CONNECTIONS=1000 task test:custom  # Custom load test
+
+# Monitoring
+task monitor:grafana    # Open metrics dashboard
+task monitor:logs       # Open logs dashboard
+task monitor:health     # Check all health endpoints
+
+# Publisher Control
+task publisher:start RATE=10   # Start publishing (10 msgs/sec)
+task publisher:stop            # Stop publishing
+
+# Cleanup
+task docker:down        # Stop services
+task docker:clean       # Remove all containers & volumes
 ```
 
 For help: `task --list`

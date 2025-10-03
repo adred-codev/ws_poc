@@ -57,11 +57,11 @@ tasks:
     cmds:
       - docker-compose up -d
       - echo "✅ All services started"
-      - echo "   WebSocket: ws://localhost:3004/ws"
-      - echo "   Health: http://localhost:3004/health"
-      - echo "   Publisher: http://localhost:3003/stats"
-      - echo "   Grafana: http://localhost:3010 (admin/admin)"
-      - echo "   Prometheus: http://localhost:9091"
+      - echo "   WebSocket ws://localhost:3004/ws"
+      - echo "   Health http://localhost:3004/health"
+      - echo "   Publisher http://localhost:3003/stats"
+      - echo "   Grafana http://localhost:3010 (admin/admin)"
+      - echo "   Prometheus http://localhost:9091"
 
   docker:down:
     desc: Stop and remove all containers
@@ -141,24 +141,40 @@ tasks:
 
   # === TESTING ===
   test:light:
-    desc: Run light stress test (100 connections, 30s)
+    desc: Run light stress test (100 connections, 30s, override with CONNECTIONS/DURATION/SERVER)
+    vars:
+      CONNECTIONS: '{{.CONNECTIONS | default "100"}}'
+      DURATION: '{{.DURATION | default "30"}}'
+      SERVER: '{{.SERVER | default "go2"}}'
     cmds:
-      - node {{.SCRIPTS_DIR}}/stress-test-high-load.cjs 100 30 go
+      - node {{.SCRIPTS_DIR}}/stress-test-high-load.cjs {{.CONNECTIONS}} {{.DURATION}} {{.SERVER}}
 
   test:medium:
-    desc: Run medium stress test (500 connections, 60s)
+    desc: Run medium stress test (500 connections, 60s, override with CONNECTIONS/DURATION/SERVER)
+    vars:
+      CONNECTIONS: '{{.CONNECTIONS | default "500"}}'
+      DURATION: '{{.DURATION | default "60"}}'
+      SERVER: '{{.SERVER | default "go2"}}'
     cmds:
-      - node {{.SCRIPTS_DIR}}/stress-test-high-load.cjs 500 60 go
+      - node {{.SCRIPTS_DIR}}/stress-test-high-load.cjs {{.CONNECTIONS}} {{.DURATION}} {{.SERVER}}
 
   test:heavy:
-    desc: Run heavy stress test (2000 connections, 120s)
+    desc: Run heavy stress test (2000 connections, 120s, override with CONNECTIONS/DURATION/SERVER)
+    vars:
+      CONNECTIONS: '{{.CONNECTIONS | default "2000"}}'
+      DURATION: '{{.DURATION | default "120"}}'
+      SERVER: '{{.SERVER | default "go2"}}'
     cmds:
-      - node {{.SCRIPTS_DIR}}/stress-test-high-load.cjs 2000 120 go
+      - node {{.SCRIPTS_DIR}}/stress-test-high-load.cjs {{.CONNECTIONS}} {{.DURATION}} {{.SERVER}}
 
   test:custom:
-    desc: Run custom stress test (CONNECTIONS=100 DURATION=30)
+    desc: Run custom stress test (use CONNECTIONS/DURATION/SERVER vars)
+    vars:
+      CONNECTIONS: '{{.CONNECTIONS | default "100"}}'
+      DURATION: '{{.DURATION | default "30"}}'
+      SERVER: '{{.SERVER | default "go2"}}'
     cmds:
-      - node {{.SCRIPTS_DIR}}/stress-test-high-load.cjs {{.CONNECTIONS}} {{.DURATION}} go
+      - node {{.SCRIPTS_DIR}}/stress-test-high-load.cjs {{.CONNECTIONS}} {{.DURATION}} {{.SERVER}}
 
   # === MONITORING ===
   monitor:health:
@@ -199,16 +215,36 @@ tasks:
   monitor:targets:
     desc: Check Prometheus scrape targets status
     cmds:
-      - curl -s http://localhost:9091/api/v1/targets | jq '.data.activeTargets[] | {job: .labels.job, state: .health}'
+      - "curl -s http://localhost:9091/api/v1/targets | jq '.data.activeTargets[] | {job: .labels.job, state: .health}'"
+
+  monitor:logs:
+    desc: Open Grafana logs dashboard in browser
+    cmds:
+      - open "http://localhost:3010/d/websocket-logs-v2" || xdg-open "http://localhost:3010/d/websocket-logs-v2" || echo "Open http://localhost:3010/d/websocket-logs-v2 in your browser"
+
+  monitor:loki:
+    desc: Query Loki logs directly (CONTAINER=odin-ws-go QUERY='')
+    vars:
+      CONTAINER: '{{.CONTAINER | default "odin-ws-go"}}'
+      QUERY: '{{.QUERY | default ""}}'
+    cmds:
+      - |
+        curl -s -G "http://localhost:3101/loki/api/v1/query_range" \
+          --data-urlencode 'query={container_name="{{.CONTAINER}}"}{{.QUERY}}' \
+          --data-urlencode "start=$(date -u -v-5M '+%s')000000000" \
+          --data-urlencode "end=$(date -u '+%s')000000000" \
+          | jq '.data.result[] | .values[] | .[1]' -r
 
   # === PUBLISHER CONTROL ===
   publisher:start:
-    desc: Start publishing messages
+    desc: Start publishing messages (override with RATE=10)
+    vars:
+      RATE: '{{.RATE | default "10"}}'
     cmds:
       - |
         curl -X POST http://localhost:3003/control \
           -H "Content-Type: application/json" \
-          -d '{"action":"start","messagesPerSecond":10}' | jq '.'
+          -d '{"action":"start","messagesPerSecond":{{.RATE}}}' | jq '.'
 
   publisher:stop:
     desc: Stop publishing messages
@@ -219,7 +255,9 @@ tasks:
           -d '{"action":"stop"}' | jq '.'
 
   publisher:configure:
-    desc: Configure publisher (RATE=10)
+    desc: Configure publisher (override with RATE=10)
+    vars:
+      RATE: '{{.RATE | default "10"}}'
     cmds:
       - |
         curl -X POST http://localhost:3003/control \

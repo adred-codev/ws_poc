@@ -148,6 +148,7 @@ services:
       - odin-network
     depends_on:
       - prometheus
+      - loki
     restart: unless-stopped
     deploy:
       resources:
@@ -157,6 +158,51 @@ services:
         reservations:
           cpus: "0.25"
           memory: 128M
+
+  # Loki (Log Aggregation)
+  loki:
+    image: grafana/loki:3.3.2
+    container_name: odin-loki
+    ports:
+      - "3101:3100" # Loki API
+    volumes:
+      - ./loki-config.yml:/etc/loki/loki-config.yml
+      - loki_data:/loki
+    command: -config.file=/etc/loki/loki-config.yml
+    networks:
+      - odin-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+
+  # Promtail (Log Collector)
+  promtail:
+    image: grafana/promtail:3.3.2
+    container_name: odin-promtail
+    volumes:
+      - ./promtail-config.yml:/etc/promtail/promtail-config.yml
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: -config.file=/etc/promtail/promtail-config.yml
+    networks:
+      - odin-network
+    depends_on:
+      - loki
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
 
 networks:
   odin-network:
@@ -168,3 +214,4 @@ volumes:
   nats_data:
   prometheus_data:
   grafana_data:
+  loki_data:
