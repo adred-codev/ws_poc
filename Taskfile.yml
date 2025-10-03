@@ -256,19 +256,39 @@ tasks:
         pkill -f "stress-test" || echo "No stress test processes found"
         echo "✅ Stress tests stopped"
 
-  stress:container:
-    desc: "🧪 Container-optimized stress test for Go-2 server (512MB/2CPU limits)"
+  stress:container:go:
+    desc: "🧪 Container-optimized stress test for Go-2 server (Usage: task stress:container:go CONNECTIONS=5000 DURATION=60)"
+    vars:
+      CONNECTIONS: '{{.CONNECTIONS | default "5000"}}'
+      DURATION: '{{.DURATION | default "60"}}'
     cmds:
       - echo "🧪 Running Go-2 container-optimized stress test..."
       - |
         echo "🎯 Container Test Configuration:"
-        echo "  Go Server 2: Targeting 5000 connections (512MB limit)"
-        echo "  Duration: 60 seconds"
+        echo "  Go Server 2: Targeting {{.CONNECTIONS}} connections (512MB limit)"
+        echo "  Duration: {{.DURATION}} seconds"
         echo ""
         echo "🔥 Testing Go server 2 (container optimized - port 3004)..."
-        node stress-test-high-load.cjs 5000 60 go2
+        node stress-test-high-load.cjs {{.CONNECTIONS}} {{.DURATION}} go2
       - echo ""
       - echo "✅ Container stress test completed!"
+
+  stress:container:node:
+    desc: "🧪 Container-optimized stress test for Node.js server (Usage: task stress:container:node CONNECTIONS=3500 DURATION=60)"
+    vars:
+      CONNECTIONS: '{{.CONNECTIONS | default "3500"}}'
+      DURATION: '{{.DURATION | default "60"}}'
+    cmds:
+      - echo "🧪 Running Node.js container-optimized stress test..."
+      - |
+        echo "🎯 Container Test Configuration:"
+        echo "  Node.js Server: Targeting {{.CONNECTIONS}} connections (512MB limit)"
+        echo "  Duration: {{.DURATION}} seconds"
+        echo ""
+        echo "🟢 Testing Node.js server (container optimized - port 3001)..."
+        node stress-test-high-load.cjs {{.CONNECTIONS}} {{.DURATION}} node
+      - echo ""
+      - echo "✅ Node.js container stress test completed!"
 
   test:connection-rate:
     desc: "🧪 Test Go-2 server connection success rate (target: 90%+)"

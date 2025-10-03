@@ -46,7 +46,8 @@ services:
       dockerfile: Dockerfile
     container_name: odin-ws-go-2
     ports:
-      - "3004:3002" # Map external 3004 to internal 3002
+      - "3004:3002" # WebSocket port
+      - "9092:3002" # Metrics endpoint (shares same port as WebSocket)
     command:
       ["./odin-ws-server-2", "-addr", ":3002", "-nats", "nats://nats:4222"]
     networks:
