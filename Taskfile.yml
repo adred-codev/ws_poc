@@ -37,12 +37,12 @@ tasks:
   build:docker:go:
     desc: Build Go server Docker image
     cmds:
-      - docker-compose build ws-go
+      - docker compose build ws-go
 
   build:docker:publisher:
     desc: Build publisher Docker image
     cmds:
-      - docker-compose build publisher
+      - docker compose build publisher
 
   build:all:
     desc: Build everything (local + Docker)
@@ -55,7 +55,7 @@ tasks:
   docker:up:
     desc: Start all services (detached)
     cmds:
-      - docker-compose up -d
+      - docker compose up -d
       - echo "✅ All services started"
       - echo "   WebSocket ws://localhost:3004/ws"
       - echo "   Health http://localhost:3004/health"
@@ -66,7 +66,7 @@ tasks:
   docker:down:
     desc: Stop and remove all containers
     cmds:
-      - docker-compose down
+      - docker compose down
 
   docker:restart:
     desc: Restart all services
@@ -77,47 +77,47 @@ tasks:
   docker:rebuild:
     desc: Rebuild and restart specific service (SERVICE=ws-go|publisher)
     cmds:
-      - docker-compose up -d --build {{.SERVICE}}
+      - docker compose up -d --build {{.SERVICE}}
 
   docker:logs:
     desc: Tail all service logs
     cmds:
-      - docker-compose logs -f
+      - docker compose logs -f
 
   docker:logs:go:
     desc: Tail Go server logs
     cmds:
-      - docker-compose logs -f ws-go
+      - docker compose logs -f ws-go
 
   docker:logs:publisher:
     desc: Tail publisher logs
     cmds:
-      - docker-compose logs -f publisher
+      - docker compose logs -f publisher
 
   docker:logs:nats:
     desc: Tail NATS logs
     cmds:
-      - docker-compose logs -f nats
+      - docker compose logs -f nats
 
   docker:logs:prometheus:
     desc: Tail Prometheus logs
     cmds:
-      - docker-compose logs -f prometheus
+      - docker compose logs -f prometheus
 
   docker:logs:grafana:
     desc: Tail Grafana logs
     cmds:
-      - docker-compose logs -f grafana
+      - docker compose logs -f grafana
 
   docker:ps:
     desc: Show running containers
     cmds:
-      - docker-compose ps
+      - docker compose ps
 
   docker:clean:
     desc: Remove containers, volumes, and orphans
     cmds:
-      - docker-compose down -v --remove-orphans
+      - docker compose down -v --remove-orphans
       - echo "✅ Cleaned up all Docker resources"
 
   # === DEVELOPMENT ===
@@ -136,7 +136,7 @@ tasks:
   dev:nats:
     desc: Start only NATS container for local development
     cmds:
-      - docker-compose up -d nats
+      - docker compose up -d nats
       - echo "✅ NATS started on nats://localhost:4222"
 
   # === TESTING ===
@@ -175,6 +175,43 @@ tasks:
       SERVER: '{{.SERVER | default "go2"}}'
     cmds:
       - node {{.SCRIPTS_DIR}}/stress-test-high-load.cjs {{.CONNECTIONS}} {{.DURATION}} {{.SERVER}}
+
+  test:realistic:
+    desc: Run realistic trading traffic simulation (auto-balances, override with TARGET_CONNECTIONS/DURATION)
+    vars:
+      TARGET_CONNECTIONS: '{{.TARGET_CONNECTIONS | default "1000"}}'
+      DURATION: '{{.DURATION | default "3600"}}'
+      WS_URL: '{{.WS_URL | default "ws://localhost:3004/ws"}}'
+    cmds:
+      - node {{.SCRIPTS_DIR}}/realistic-trading-simulator.cjs
+    env:
+      TARGET_CONNECTIONS: '{{.TARGET_CONNECTIONS}}'
+      DURATION: '{{.DURATION}}'
+      WS_URL: '{{.WS_URL}}'
+
+  test:realistic:short:
+    desc: Run realistic simulation for 5 minutes (300 connections)
+    cmds:
+      - task: test:realistic
+        vars:
+          TARGET_CONNECTIONS: "300"
+          DURATION: "300"
+
+  test:realistic:medium:
+    desc: Run realistic simulation for 30 minutes (1000 connections)
+    cmds:
+      - task: test:realistic
+        vars:
+          TARGET_CONNECTIONS: "1000"
+          DURATION: "1800"
+
+  test:realistic:long:
+    desc: Run realistic simulation for 2 hours (2000 connections)
+    cmds:
+      - task: test:realistic
+        vars:
+          TARGET_CONNECTIONS: "2000"
+          DURATION: "7200"
 
   # === MONITORING ===
   monitor:health:

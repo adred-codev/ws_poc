@@ -146,7 +146,9 @@ See [Taskfile Guide](./docs/development/TASKFILE_GUIDE.md) for complete command 
 
 ## 🧪 Testing
 
-Run stress tests to generate load and visualize metrics:
+### Quick Stress Tests
+
+Simple load tests for quick validation:
 
 ```bash
 # Light load (100 connections, 30 seconds)
@@ -166,6 +168,40 @@ CONNECTIONS=250 task test:light        # 250 connections, 30s
 DURATION=120 task test:medium          # 500 connections, 120s
 SERVER=go2 task test:heavy             # Use go2 server
 ```
+
+### Realistic Trading Simulation ⭐
+
+Simulates real-world crypto trading platform behavior with auto-balancing:
+
+```bash
+# Short test (5 minutes, 300 connections)
+task test:realistic:short
+
+# Medium test (30 minutes, 1000 connections)
+task test:realistic:medium
+
+# Long test (2 hours, 2000 connections)
+task test:realistic:long
+
+# Custom realistic test
+task test:realistic TARGET_CONNECTIONS=1500 DURATION=3600
+```
+
+**Features:**
+- ✅ **Auto-balancing**: Monitors server health and adjusts load automatically
+- ✅ **Realistic patterns**: Simulates 5 trader types (quick traders, day traders, bots)
+- ✅ **Gradual ramp-up**: Connections increase gradually, not instant
+- ✅ **Variable sessions**: Users stay connected for realistic durations (30s to 48h)
+- ✅ **Peak hours**: Automatically increases load during market peak hours
+- ✅ **Reconnection logic**: 70% of disconnected users reconnect
+- ✅ **Health monitoring**: Scales down if server is under stress
+
+**Trader Types Distribution:**
+- 20% Quick Traders (30s - 5min sessions)
+- 35% Active Traders (5min - 30min sessions)
+- 30% Day Traders (30min - 4h sessions)
+- 10% Long Holders (4h - 8h sessions)
+- 5% Bots/Algorithms (24h - 48h sessions)
 
 **Monitor results in real-time:**
 - **Metrics Dashboard**: http://localhost:3010 (Grafana - admin/admin)
