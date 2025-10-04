@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   # NATS Message Broker
   nats:
@@ -61,11 +59,10 @@ services:
         limits:
           cpus: "2.0"
           memory: 512M
+          pids: 1000
         reservations:
           cpus: "1.0"
           memory: 256M
-    mem_swappiness: 10
-    pids_limit: 1000
     ulimits:
       nofile:
         soft: 200000
@@ -73,8 +70,6 @@ services:
       nproc:
         soft: 32768
         hard: 32768
-    blkio_config:
-      weight: 500
 
   # NATS Publisher Service
   publisher:
