@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
+
+	"github.com/rs/zerolog"
 )
 
 // Task represents a work item for the worker pool.
@@ -42,6 +45,7 @@ type WorkerPool struct {
 	ctx          context.Context // Context for graceful shutdown
 	wg           sync.WaitGroup  // Wait group to track worker completion
 	droppedTasks int64           // Atomic counter for dropped tasks when queue full
+	logger       zerolog.Logger  // Structured logger for panic recovery
 }
 
 // NewWorkerPool creates a worker pool with the specified number of workers.
@@ -49,20 +53,23 @@ type WorkerPool struct {
 // Parameters:
 //
 //	workerCount - Number of worker goroutines (typically 2 × CPU cores)
+//	queueSize - Size of the task queue buffer
+//	logger - Structured logger for panic recovery and error logging
 //
 // Queue sizing:
-//   - Buffer capacity: workerCount × 100
-//   - Example: 16 workers → 1600 task buffer
+//   - Buffer capacity: Configurable via queueSize parameter
+//   - Example: 32 workers, 3200 queue
 //   - Reasoning: Handles burst of NATS messages during traffic spikes
 //
 // Recommended workerCount values:
 //   - Development: runtime.NumCPU()
 //   - Production: runtime.GOMAXPROCS(0) × 2
 //   - Container: Automatically set via automaxprocs
-func NewWorkerPool(workerCount int) *WorkerPool {
+func NewWorkerPool(workerCount int, queueSize int, logger zerolog.Logger) *WorkerPool {
 	return &WorkerPool{
 		workerCount: workerCount,
-		taskQueue:   make(chan Task, workerCount*100), // Buffered queue
+		taskQueue:   make(chan Task, queueSize),
+		logger:      logger,
 	}
 }
 
@@ -91,10 +98,12 @@ func (wp *WorkerPool) Start(ctx context.Context) {
 //   - Blocks waiting for task or context cancellation
 //   - Executes tasks synchronously (one at a time per worker)
 //   - Gracefully exits when context is cancelled
-//   - No panic recovery - tasks must handle their own errors
+//   - Recovers from panics with full stack trace logging to Loki
 //
-// Note: If a task panics, the worker goroutine will crash.
-// Production enhancement: Add panic recovery and logging.
+// Panic Recovery:
+//   - All panics are caught and logged with stack traces
+//   - Worker continues running after panic (doesn't crash)
+//   - Panic details sent to Loki for debugging
 func (wp *WorkerPool) worker() {
 	defer wp.wg.Done()
 
@@ -102,9 +111,27 @@ func (wp *WorkerPool) worker() {
 		select {
 		case task := <-wp.taskQueue:
 			if task != nil {
-				task()
+				// Execute task with panic recovery
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							stack := string(debug.Stack())
+							wp.logger.Error().
+								Interface("panic_value", r).
+								Str("stack_trace", stack).
+								Msg("Worker panic recovered - task failed but worker continues")
+
+							// Record panic in metrics
+							RecordError(ErrorTypeBroadcast, ErrorSeverityCritical)
+						}
+					}()
+
+					// Execute the task
+					task()
+				}()
 			}
 		case <-wp.ctx.Done():
+			wp.logger.Debug().Msg("Worker shutting down")
 			return
 		}
 	}

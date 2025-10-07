@@ -15,6 +15,7 @@ import (
 	"github.com/gobwas/ws"
 	"github.com/gobwas/ws/wsutil"
 	"github.com/nats-io/nats.go"
+	"github.com/rs/zerolog"
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/mem"
 	"github.com/shirou/gopsutil/v3/process"
@@ -32,21 +33,25 @@ const (
 )
 
 type ServerConfig struct {
-	Addr           string
-	NATSUrl        string
-	MaxConnections int
-	BufferSize     int
-	WorkerCount    int
+	Addr            string
+	NATSUrl         string
+	MaxConnections  int
+	BufferSize      int
+	WorkerCount     int
+	WorkerQueueSize int // Worker pool queue size
 
-	// Dynamic capacity thresholds
-	CPURejectThreshold float64 // Reject new connections above this CPU % (default: 80)
-	CPUPauseThreshold  float64 // Pause NATS consumption above this CPU % (default: 85)
-	CPUTargetMax       float64 // Target maximum CPU usage % (default: 70)
+	// Static resource limits (explicit configuration)
+	CPULimit    float64 // CPU cores available (from docker limit)
+	MemoryLimit int64   // Memory bytes available (from docker limit)
 
-	// Capacity limits
-	MinConnections int     // Minimum connection limit (default: 50)
-	MaxCapacity    int     // Maximum connection limit (default: 10000)
-	SafetyMargin   float64 // Safety margin multiplier (default: 0.9 = 90%)
+	// Rate limiting (prevent overload)
+	MaxNATSMessagesPerSec int // Max NATS messages consumed per second
+	MaxBroadcastsPerSec   int // Max broadcasts per second
+	MaxGoroutines         int // Hard goroutine limit
+
+	// Safety thresholds (emergency brakes)
+	CPURejectThreshold float64 // Reject new connections above this CPU % (default: 75)
+	CPUPauseThreshold  float64 // Pause NATS consumption above this CPU % (default: 80)
 
 	// JetStream configuration
 	JSStreamMaxAge    time.Duration // Max message age in stream (default: 30s)
@@ -57,13 +62,17 @@ type ServerConfig struct {
 	JSConsumerName    string        // Consumer name (default: "ws-server")
 
 	// Monitoring intervals
-	MetricsInterval  time.Duration // Metrics collection interval (default: 15s)
-	CapacityInterval time.Duration // Capacity recalculation interval (default: 30s)
+	MetricsInterval time.Duration // Metrics collection interval (default: 15s)
+
+	// Logging configuration
+	LogLevel  LogLevel  // Log level (default: info)
+	LogFormat LogFormat // Log format (default: json)
 }
 
 type Server struct {
 	config          ServerConfig
-	logger          *log.Logger
+	logger          *log.Logger    // Old logger (for backwards compat)
+	structLogger    zerolog.Logger // New structured logger for Loki
 	listener        net.Listener
 	natsConn        *nats.Conn
 	natsJS          nats.JetStreamContext
@@ -86,7 +95,7 @@ type Server struct {
 	// Monitoring
 	auditLogger      *AuditLogger
 	metricsCollector *MetricsCollector
-	capacityManager  *DynamicCapacityManager
+	resourceGuard    *ResourceGuard // Replaces DynamicCapacityManager
 
 	// Lifecycle
 	ctx          context.Context
@@ -119,15 +128,22 @@ type Stats struct {
 func NewServer(config ServerConfig, logger *log.Logger) (*Server, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Initialize structured logger for Loki
+	structLogger := NewLogger(LoggerConfig{
+		Level:  config.LogLevel,
+		Format: config.LogFormat,
+	})
+
 	s := &Server{
 		config:         config,
-		logger:         logger,
+		logger:         logger,       // Old logger (backwards compat)
+		structLogger:   structLogger, // New structured logger
 		ctx:            ctx,
 		cancel:         cancel,
 		connections:    NewConnectionPool(config.MaxConnections),
 		connectionsSem: make(chan struct{}, config.MaxConnections),
 		bufferPool:     NewBufferPool(config.BufferSize),
-		workerPool:     NewWorkerPool(config.WorkerCount),
+		workerPool:     NewWorkerPool(config.WorkerCount, config.WorkerQueueSize, structLogger),
 		rateLimiter:    NewRateLimiter(),
 		stats: &Stats{
 			StartTime: time.Now(),
@@ -139,12 +155,17 @@ func NewServer(config ServerConfig, logger *log.Logger) (*Server, error) {
 	s.auditLogger.SetAlerter(NewConsoleAlerter()) // Use console alerter for now
 	s.metricsCollector = NewMetricsCollector(s)
 
-	// Initialize dynamic capacity manager
-	capacityMgr, err := NewDynamicCapacityManager(config, logger)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create capacity manager: %w", err)
-	}
-	s.capacityManager = capacityMgr
+	// Initialize ResourceGuard with static configuration
+	s.resourceGuard = NewResourceGuard(config, structLogger, &s.stats.CurrentConnections)
+
+	structLogger.Info().
+		Str("addr", config.Addr).
+		Int("max_connections", config.MaxConnections).
+		Int("worker_count", config.WorkerCount).
+		Int("worker_queue", config.WorkerQueueSize).
+		Int("nats_rate_limit", config.MaxNATSMessagesPerSec).
+		Int("broadcast_rate_limit", config.MaxBroadcastsPerSec).
+		Msg("Server initialized with ResourceGuard")
 
 	if config.NATSUrl != "" {
 		nc, err := nats.Connect(config.NATSUrl, nats.MaxReconnects(5), nats.ReconnectWait(2*time.Second))
@@ -227,30 +248,47 @@ func (s *Server) Start() error {
 		droppedCount := int64(0)
 		ackFailCount := int64(0)
 
-		// Subscribe to JetStream with manual ack for guaranteed delivery
-		// Consumer config: durable, deliver all, manual ack
+		// Subscribe to JetStream with manual ack + rate limiting
+		// CRITICAL: Rate limiting prevents goroutine explosion and CPU overload
 		sub, err := s.natsJS.Subscribe("odin.token.>", func(msg *nats.Msg) {
 			count := atomic.AddInt64(&msgCount, 1)
 			if count%100 == 0 {
 				s.logger.Printf("📬 Received %d messages from JetStream", count)
 			}
 
-			// Check if we should apply backpressure
-			s.stats.mu.RLock()
-			currentCPU := s.stats.CPUPercent
-			s.stats.mu.RUnlock()
-
-			if s.capacityManager.ShouldPauseNATS(currentCPU) {
-				// CPU too high - NAK message for redelivery
-				// JetStream will retry after configured delay
+			// STEP 1: Rate limiting (CRITICAL - prevents overload)
+			// Check if we're allowed to process this message based on configured rate limit
+			allow, waitDuration := s.resourceGuard.AllowNATSMessage(s.ctx)
+			if !allow {
+				// Rate limit exceeded - NAK for redelivery
 				if err := msg.Nak(); err != nil {
 					RecordJetStreamError(ErrorSeverityWarning)
-					s.logger.Printf("⚠️  Failed to NAK message: %v", err)
 				}
 				dropped := atomic.AddInt64(&droppedCount, 1)
 				IncrementNATSDropped()
 				if dropped%100 == 0 {
-					s.logger.Printf("⚠️  Backpressure: NAK'd %d messages (CPU: %.1f%%), will retry", dropped, currentCPU)
+					s.structLogger.Warn().
+						Int64("dropped_count", dropped).
+						Dur("would_wait", waitDuration).
+						Int("rate_limit", s.config.MaxNATSMessagesPerSec).
+						Msg("NATS rate limit exceeded - NAK'ing messages for redelivery")
+				}
+				return
+			}
+
+			// STEP 2: CPU emergency brake
+			if s.resourceGuard.ShouldPauseNATS() {
+				// CPU critically high - NAK message for redelivery
+				if err := msg.Nak(); err != nil {
+					RecordJetStreamError(ErrorSeverityWarning)
+				}
+				dropped := atomic.AddInt64(&droppedCount, 1)
+				IncrementNATSDropped()
+				if dropped%100 == 0 {
+					s.structLogger.Warn().
+						Int64("dropped_count", dropped).
+						Float64("cpu_threshold", s.config.CPUPauseThreshold).
+						Msg("CPU emergency brake - pausing NATS consumption")
 				}
 				return
 			}
@@ -258,8 +296,7 @@ func (s *Server) Start() error {
 			// Track NATS message in Prometheus
 			IncrementNATSMessages()
 
-			// Submit the broadcast job to the worker pool
-			// We'll ack AFTER successful broadcast
+			// STEP 3: Submit to worker pool (can still drop if queue full)
 			s.workerPool.Submit(func() {
 				s.broadcast(msg.Data)
 
@@ -268,7 +305,10 @@ func (s *Server) Start() error {
 					RecordJetStreamError(ErrorSeverityWarning)
 					ackFails := atomic.AddInt64(&ackFailCount, 1)
 					if ackFails%100 == 0 {
-						s.logger.Printf("⚠️  Failed to ACK %d messages: %v", ackFails, err)
+						s.structLogger.Warn().
+							Int64("ack_failures", ackFails).
+							Err(err).
+							Msg("Failed to ACK messages")
 					}
 				}
 			})
@@ -322,8 +362,8 @@ func (s *Server) Start() error {
 	s.wg.Add(1)
 	go s.monitorMemory()
 
-	// Start dynamic capacity monitoring
-	s.capacityManager.StartMonitoring(s)
+	// Start ResourceGuard monitoring (static limits with safety checks)
+	s.resourceGuard.StartMonitoring(s.ctx, s.config.MetricsInterval)
 
 	s.auditLogger.Info("ServerStarted", "WebSocket server started successfully", map[string]interface{}{
 		"addr":           s.config.Addr,
@@ -463,19 +503,20 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Dynamic admission control - check if we can safely accept this connection
-	currentConnections := atomic.LoadInt64(&s.stats.CurrentConnections)
-	s.stats.mu.RLock()
-	currentCPU := s.stats.CPUPercent
-	s.stats.mu.RUnlock()
-
-	shouldAccept, reason, cpuPct := s.capacityManager.ShouldAcceptConnection(currentConnections, currentCPU)
+	// ResourceGuard admission control - static limits with safety checks
+	shouldAccept, reason := s.resourceGuard.ShouldAcceptConnection()
 	if !shouldAccept {
+		currentConnections := atomic.LoadInt64(&s.stats.CurrentConnections)
 		s.auditLogger.Warning("ConnectionRejected", reason, map[string]interface{}{
 			"currentConnections": currentConnections,
-			"cpuPercent":         cpuPct,
-			"maxConnections":     s.capacityManager.GetMaxConnections(),
+			"maxConnections":     s.config.MaxConnections,
+			"reason":             reason,
 		})
+		s.structLogger.Warn().
+			Int64("current_connections", currentConnections).
+			Int("max_connections", s.config.MaxConnections).
+			Str("reason", reason).
+			Msg("Connection rejected by ResourceGuard")
 		connectionsFailed.Inc()
 		http.Error(w, "Server overloaded", http.StatusServiceUnavailable)
 		return
@@ -945,12 +986,12 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	s.stats.mu.RUnlock()
 
 	currentConns := atomic.LoadInt64(&s.stats.CurrentConnections)
-	maxConns := int64(s.capacityManager.GetMaxConnections()) // Dynamic capacity
+	maxConns := int64(s.config.MaxConnections) // Static configuration
 	slowClients := atomic.LoadInt64(&s.stats.SlowClientsDisconnected)
 	totalConns := atomic.LoadInt64(&s.stats.TotalConnections)
 
-	// Get capacity manager stats
-	capacityStats := s.capacityManager.GetStats()
+	// Get ResourceGuard stats
+	resourceStats := s.resourceGuard.GetStats()
 
 	memLimitMB := 512.0 // Container memory limit
 
@@ -1035,20 +1076,21 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 				"healthy": natsHealthy,
 			},
 			"capacity": map[string]interface{}{
-				"current":         currentConns,
-				"max":             maxConns,
-				"percentage":      capacityPercent,
-				"healthy":         capacityHealthy,
-				"cpu_threshold":   capacityStats["cpuThresholdReject"],
-				"cpu_headroom":    100.0 - cpuPercent,
-				"dynamic":         true,
-				"avg_cpu_percent": capacityStats["avgCPUPercent"],
-				"total_cpu":       capacityStats["totalCPU"],
+				"current":       currentConns,
+				"max":           maxConns,
+				"percentage":    capacityPercent,
+				"healthy":       capacityHealthy,
+				"cpu_threshold": resourceStats["cpu_reject_threshold"],
+				"cpu_headroom":  100.0 - cpuPercent,
+				"static":        true, // Changed from dynamic
+				"cpu_percent":   resourceStats["cpu_percent"],
+				"goroutines":    resourceStats["goroutines_current"],
 				"limits": map[string]interface{}{
-					"min":           s.config.MinConnections,
-					"max":           s.config.MaxCapacity,
-					"configured":    s.config.MaxConnections,
-					"safety_margin": s.config.SafetyMargin,
+					"max_connections":  s.config.MaxConnections,
+					"max_goroutines":   resourceStats["goroutines_limit"],
+					"nats_rate":        resourceStats["nats_rate_limit"],
+					"broadcast_rate":   resourceStats["broadcast_rate_limit"],
+					"worker_pool_size": resourceStats["worker_pool_size"],
 				},
 			},
 			"memory": map[string]interface{}{

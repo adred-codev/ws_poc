@@ -80,37 +80,44 @@ func main() {
 	maxProcs := runtime.GOMAXPROCS(0)
 	logger.Printf("Detected CPU limit: %d cores (via automaxprocs)", maxProcs)
 
-	// Detect container memory limit and calculate safe max connections
-	memLimit, err := getMemoryLimit()
-	if err != nil {
-		logger.Printf("Warning: Could not detect memory limit: %v (using defaults)", err)
-	}
-	maxConnections := calculateMaxConnections(memLimit)
+	// Get resource limits from environment (matching docker-compose)
+	cpuLimit := getEnvFloat("WS_CPU_LIMIT", float64(maxProcs))
+	memLimit := getEnvInt64("WS_MEMORY_LIMIT", 512*1024*1024) // Default 512MB
 
-	if memLimit > 0 {
-		logger.Printf("Detected memory limit: %d MB (%.2f GB)", memLimit/(1024*1024), float64(memLimit)/(1024*1024*1024))
-		logger.Printf("Calculated max connections: %d (based on 180KB per connection + 128MB overhead)", maxConnections)
-	} else {
-		logger.Printf("No memory limit detected, using default: %d connections", maxConnections)
-	}
+	// Get or calculate max connections
+	maxConnections := getEnvInt("WS_MAX_CONNECTIONS", 500)
 
-	// Create and configure server with environment variable overrides
+	// Worker pool sizing
+	workerCount := getEnvInt("WS_WORKER_POOL_SIZE", maxProcs*2)
+	workerQueueSize := getEnvInt("WS_WORKER_QUEUE_SIZE", workerCount*100)
+
+	logger.Printf("Resource Limits:")
+	logger.Printf("  CPU Limit: %.1f cores", cpuLimit)
+	logger.Printf("  Memory Limit: %d MB", memLimit/(1024*1024))
+	logger.Printf("  Max Connections: %d", maxConnections)
+	logger.Printf("  Worker Pool: %d workers, %d queue", workerCount, workerQueueSize)
+
+	// Create and configure server with static resource limits
 	config := ServerConfig{
-		Addr:           *addr,
-		NATSUrl:        *nats,
-		MaxConnections: maxConnections,
-		BufferSize:     4096,
-		WorkerCount:    maxProcs * 2, // 2 workers per CPU core
+		Addr:            *addr,
+		NATSUrl:         *nats,
+		MaxConnections:  maxConnections,
+		BufferSize:      4096,
+		WorkerCount:     workerCount,
+		WorkerQueueSize: workerQueueSize,
 
-		// Dynamic capacity thresholds (overridable via env vars)
-		CPURejectThreshold: getEnvFloat("CPU_REJECT_THRESHOLD", 80.0),
-		CPUPauseThreshold:  getEnvFloat("CPU_PAUSE_THRESHOLD", 85.0),
-		CPUTargetMax:       getEnvFloat("CPU_TARGET_MAX", 70.0),
+		// Static resource limits (explicit from docker/env)
+		CPULimit:    cpuLimit,
+		MemoryLimit: memLimit,
 
-		// Capacity limits
-		MinConnections: getEnvInt("MIN_CONNECTIONS", 50),
-		MaxCapacity:    getEnvInt("MAX_CAPACITY", 10000),
-		SafetyMargin:   getEnvFloat("SAFETY_MARGIN", 0.9),
+		// Rate limiting (CRITICAL - prevents overload)
+		MaxNATSMessagesPerSec: getEnvInt("WS_MAX_NATS_RATE", 20),
+		MaxBroadcastsPerSec:   getEnvInt("WS_MAX_BROADCAST_RATE", 20),
+		MaxGoroutines:         getEnvInt("WS_MAX_GOROUTINES", 1000),
+
+		// Safety thresholds (emergency brakes)
+		CPURejectThreshold: getEnvFloat("WS_CPU_REJECT_THRESHOLD", 75.0),
+		CPUPauseThreshold:  getEnvFloat("WS_CPU_PAUSE_THRESHOLD", 80.0),
 
 		// JetStream configuration
 		JSStreamMaxAge:    getEnvDuration("JS_STREAM_MAX_AGE", 30*time.Second),
@@ -121,17 +128,24 @@ func main() {
 		JSConsumerName:    getEnvString("JS_CONSUMER_NAME", "ws-server"),
 
 		// Monitoring intervals
-		MetricsInterval:  getEnvDuration("METRICS_INTERVAL", 15*time.Second),
-		CapacityInterval: getEnvDuration("CAPACITY_INTERVAL", 30*time.Second),
+		MetricsInterval: getEnvDuration("METRICS_INTERVAL", 15*time.Second),
+
+		// Logging configuration
+		LogLevel:  LogLevel(getEnvString("LOG_LEVEL", "info")),
+		LogFormat: LogFormat(getEnvString("LOG_FORMAT", "json")),
 	}
 
-	logger.Printf("Configuration:")
-	logger.Printf("  CPU Reject Threshold: %.1f%%", config.CPURejectThreshold)
-	logger.Printf("  CPU Pause Threshold: %.1f%%", config.CPUPauseThreshold)
-	logger.Printf("  CPU Target Max: %.1f%%", config.CPUTargetMax)
-	logger.Printf("  Capacity Range: %d - %d connections", config.MinConnections, config.MaxCapacity)
-	logger.Printf("  JetStream Stream: %s (max age: %s)", config.JSStreamName, config.JSStreamMaxAge)
-	logger.Printf("  Monitoring: metrics=%s, capacity=%s", config.MetricsInterval, config.CapacityInterval)
+	logger.Printf("Rate Limits:")
+	logger.Printf("  NATS: %d msg/sec", config.MaxNATSMessagesPerSec)
+	logger.Printf("  Broadcasts: %d/sec", config.MaxBroadcastsPerSec)
+	logger.Printf("  Goroutines: %d max", config.MaxGoroutines)
+	logger.Printf("Safety Thresholds:")
+	logger.Printf("  CPU Reject: %.1f%%", config.CPURejectThreshold)
+	logger.Printf("  CPU Pause: %.1f%%", config.CPUPauseThreshold)
+	logger.Printf("JetStream:")
+	logger.Printf("  Stream: %s (max age: %s)", config.JSStreamName, config.JSStreamMaxAge)
+	logger.Printf("Logging:")
+	logger.Printf("  Level: %s, Format: %s", config.LogLevel, config.LogFormat)
 
 	server, err := NewServer(config, logger)
 	if err != nil {

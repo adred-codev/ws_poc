@@ -32,10 +32,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "1.0"
-          memory: 256M
+          cpus: "0.25"              # Reduced for ws-server priority
+          memory: 128M
         reservations:
-          cpus: "0.5"
+          cpus: "0.25"
           memory: 128M
 
   # Go WebSocket Server (Production)
@@ -48,6 +48,23 @@ services:
       - "3004:3002" # WebSocket + Metrics port
     command:
       ["./odin-ws-server", "-addr", ":3002", "-nats", "nats://nats:4222"]
+    environment:
+      # Static resource configuration (explicit limits)
+      - WS_CPU_LIMIT=1.5
+      - WS_MEMORY_LIMIT=805306368  # 768MB in bytes
+      - WS_MAX_CONNECTIONS=500
+      - WS_WORKER_POOL_SIZE=32
+      - WS_WORKER_QUEUE_SIZE=3200
+      # Rate limiting (prevent overload)
+      - WS_MAX_NATS_RATE=20        # Max NATS messages/sec
+      - WS_MAX_BROADCAST_RATE=20   # Max broadcasts/sec
+      - WS_MAX_GOROUTINES=1000     # Hard goroutine limit
+      # Safety thresholds
+      - WS_CPU_REJECT_THRESHOLD=75.0
+      - WS_CPU_PAUSE_THRESHOLD=80.0
+      # Logging
+      - LOG_LEVEL=info             # debug, info, warn, error
+      - LOG_FORMAT=json            # json for Loki
     networks:
       - odin-network
     depends_on:
@@ -57,12 +74,12 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "2.0"
-          memory: 512M
+          cpus: "1.5"               # 75% of e2-micro
+          memory: 768M              # 75% of RAM
           pids: 1000
         reservations:
-          cpus: "1.0"
-          memory: 256M
+          cpus: "1.5"
+          memory: 768M
     ulimits:
       nofile:
         soft: 200000
@@ -93,10 +110,10 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.5"
-          memory: 128M
+          cpus: "0.1"
+          memory: 64M
         reservations:
-          cpus: "0.25"
+          cpus: "0.1"
           memory: 64M
 
   # Prometheus (Metrics Collection)
@@ -111,7 +128,7 @@ services:
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
-      - '--storage.tsdb.retention.time=15d'
+      - '--storage.tsdb.retention.time=7d'  # Reduced retention
       - '--web.console.libraries=/etc/prometheus/console_libraries'
       - '--web.console.templates=/etc/prometheus/consoles'
     networks:
@@ -120,11 +137,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "1.0"
-          memory: 512M
+          cpus: "0.1"
+          memory: 64M
         reservations:
-          cpus: "0.5"
-          memory: 256M
+          cpus: "0.1"
+          memory: 64M
 
   # Grafana (Visualization)
   grafana:
@@ -148,11 +165,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.5"
-          memory: 256M
+          cpus: "0.05"
+          memory: 32M
         reservations:
-          cpus: "0.25"
-          memory: 128M
+          cpus: "0.05"
+          memory: 32M
 
   # Loki (Log Aggregation)
   loki:
@@ -170,11 +187,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.5"
-          memory: 256M
+          cpus: "0.05"
+          memory: 32M
         reservations:
-          cpus: "0.25"
-          memory: 128M
+          cpus: "0.05"
+          memory: 32M
 
   # Promtail (Log Collector)
   promtail:
@@ -193,11 +210,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.25"
-          memory: 128M
+          cpus: "0.05"
+          memory: 16M
         reservations:
-          cpus: "0.1"
-          memory: 64M
+          cpus: "0.05"
+          memory: 16M
 
 networks:
   odin-network:
