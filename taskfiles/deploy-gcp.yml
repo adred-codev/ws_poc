@@ -428,6 +428,111 @@ tasks:
           sudo /opt/backup-odin.sh\""
       - "echo \"✅ Backup complete\""
 
+  # === STRESS TESTING ===
+
+  test:light:
+    desc: Run light stress test against GCP deployment (100 connections, 30s)
+    cmds:
+      - |
+        IP=$(gcloud compute instances describe {{.GCP_INSTANCE}} \
+          --zone={{.GCP_ZONE}} \
+          --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
+        echo "🧪 Running light stress test against $IP..."
+        WS_URL="ws://$IP:3004/ws" task test:light
+
+  test:medium:
+    desc: Run medium stress test against GCP deployment (500 connections, 60s)
+    cmds:
+      - |
+        IP=$(gcloud compute instances describe {{.GCP_INSTANCE}} \
+          --zone={{.GCP_ZONE}} \
+          --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
+        echo "🧪 Running medium stress test against $IP..."
+        WS_URL="ws://$IP:3004/ws" task test:medium
+
+  test:heavy:
+    desc: Run heavy stress test against GCP deployment (2000 connections, 120s)
+    cmds:
+      - |
+        IP=$(gcloud compute instances describe {{.GCP_INSTANCE}} \
+          --zone={{.GCP_ZONE}} \
+          --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
+        echo "🧪 Running heavy stress test against $IP..."
+        WS_URL="ws://$IP:3004/ws" task test:heavy
+
+  test:realistic:short:
+    desc: Run realistic simulation against GCP (5 minutes, 300 connections)
+    cmds:
+      - |
+        IP=$(gcloud compute instances describe {{.GCP_INSTANCE}} \
+          --zone={{.GCP_ZONE}} \
+          --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
+        echo "🧪 Running realistic short test against $IP (300 connections, 5min)..."
+        WS_URL="ws://$IP:3004/ws" HEALTH_URL="http://$IP:3004/health" task test:realistic:short
+
+  test:realistic:medium:
+    desc: Run realistic simulation against GCP (30 minutes, 1000 connections)
+    cmds:
+      - |
+        IP=$(gcloud compute instances describe {{.GCP_INSTANCE}} \
+          --zone={{.GCP_ZONE}} \
+          --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
+        echo "🧪 Running realistic medium test against $IP (1000 connections, 30min)..."
+        WS_URL="ws://$IP:3004/ws" HEALTH_URL="http://$IP:3004/health" task test:realistic:medium
+
+  test:realistic:long:
+    desc: Run realistic simulation against GCP (2 hours, 2000 connections)
+    cmds:
+      - |
+        IP=$(gcloud compute instances describe {{.GCP_INSTANCE}} \
+          --zone={{.GCP_ZONE}} \
+          --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
+        echo "🧪 Running realistic long test against $IP (2000 connections, 2h)..."
+        WS_URL="ws://$IP:3004/ws" HEALTH_URL="http://$IP:3004/health" task test:realistic:long
+
+  test:realistic:
+    desc: Run custom realistic simulation against GCP (use TARGET_CONNECTIONS and DURATION)
+    vars:
+      TARGET_CONNECTIONS: '{{.TARGET_CONNECTIONS | default "1000"}}'
+      DURATION: '{{.DURATION | default "3600"}}'
+    cmds:
+      - |
+        IP=$(gcloud compute instances describe {{.GCP_INSTANCE}} \
+          --zone={{.GCP_ZONE}} \
+          --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
+        echo "🧪 Running realistic custom test against $IP ({{.TARGET_CONNECTIONS}} connections, {{.DURATION}}s)..."
+        WS_URL="ws://$IP:3004/ws" HEALTH_URL="http://$IP:3004/health" task test:realistic TARGET_CONNECTIONS={{.TARGET_CONNECTIONS}} DURATION={{.DURATION}}
+
+  test:benchmark:
+    desc: Run comprehensive benchmark suite against GCP deployment
+    cmds:
+      - "echo \"📊 Starting comprehensive benchmark suite...\""
+      - "echo \"\""
+      - "echo \"⚡ Starting publisher at 100 msgs/sec...\""
+      - task: publisher:start
+        vars:
+          RATE: "100"
+      - "echo \"⏳ Waiting for publisher to stabilize (10s)...\""
+      - sleep 10
+      - "echo \"\""
+      - "echo \"🧪 Phase 1: Light load (100 connections, 30s)\""
+      - task: test:light
+      - "echo \"\""
+      - "echo \"⏳ Cooldown period (30s)...\""
+      - sleep 30
+      - "echo \"\""
+      - "echo \"🧪 Phase 2: Medium load (500 connections, 60s)\""
+      - task: test:medium
+      - "echo \"\""
+      - "echo \"⏳ Cooldown period (30s)...\""
+      - sleep 30
+      - "echo \"\""
+      - "echo \"🧪 Phase 3: Heavy load (2000 connections, 120s)\""
+      - task: test:heavy
+      - "echo \"\""
+      - "echo \"✅ Benchmark complete! Check Grafana for results:\""
+      - task: ip
+
   # === COMBINED WORKFLOWS ===
 
   full-deploy:

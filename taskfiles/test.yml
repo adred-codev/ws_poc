@@ -3,7 +3,7 @@ version: '3'
 # Testing and stress testing tasks
 
 vars:
-  SCRIPTS_DIR: ../scripts
+  SCRIPTS_DIR: ./scripts
 
 tasks:
   light:
@@ -48,12 +48,14 @@ tasks:
       TARGET_CONNECTIONS: '{{.TARGET_CONNECTIONS | default "1000"}}'
       DURATION: '{{.DURATION | default "3600"}}'
       WS_URL: '{{.WS_URL | default "ws://localhost:3004/ws"}}'
+      HEALTH_URL: '{{.HEALTH_URL | default "http://localhost:3004/health"}}'
     cmds:
       - node {{.SCRIPTS_DIR}}/realistic-trading-simulator.cjs
     env:
       TARGET_CONNECTIONS: '{{.TARGET_CONNECTIONS}}'
       DURATION: '{{.DURATION}}'
       WS_URL: '{{.WS_URL}}'
+      HEALTH_URL: '{{.HEALTH_URL}}'
 
   realistic:short:
     desc: Run realistic simulation for 5 minutes (300 connections)

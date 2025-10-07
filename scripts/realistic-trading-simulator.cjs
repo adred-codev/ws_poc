@@ -283,7 +283,7 @@ class TradingConnection {
     // Parse and validate message (basic check)
     try {
       const message = JSON.parse(data.toString());
-      if (!message.type || !message.token) {
+      if (!message.type) {
         state.errors++;
       }
     } catch (error) {

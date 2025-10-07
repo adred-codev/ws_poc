@@ -235,8 +235,8 @@ func (s *Server) collectMetrics() {
 		case <-s.ctx.Done():
 			return
 		case <-ticker.C:
-			// Get CPU percentage
-			cpuPercent, err := cpu.Percent(0, false)
+			// Get CPU percentage (measure over 1 second for accuracy)
+			cpuPercent, err := cpu.Percent(1*time.Second, false)
 			if err == nil && len(cpuPercent) > 0 {
 				s.stats.mu.Lock()
 				s.stats.CPUPercent = cpuPercent[0]
