@@ -537,7 +537,7 @@ tasks:
     cmds:
       - "echo \"🧪 Running realistic test ON GCP instance ({{.TARGET_CONNECTIONS}} connections, {{.DURATION}}s)...\""
       - |
-        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && docker run -d --name stress-test --network=host -v \$(pwd)/scripts:/scripts node:22-alpine sh -c \"apk add --no-cache curl && cd /scripts && WS_URL=ws://localhost:3004/ws HEALTH_URL=http://localhost:3004/health TARGET_CONNECTIONS={{.TARGET_CONNECTIONS}} DURATION={{.DURATION}} node realistic-trading-simulator.cjs\"'"
+        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && docker run -d --name stress-test --network=host -v \$(pwd)/scripts:/scripts -w /scripts node:22-alpine sh -c \"apk add --no-cache curl && npm install ws && WS_URL=ws://localhost:3004/ws HEALTH_URL=http://localhost:3004/health TARGET_CONNECTIONS={{.TARGET_CONNECTIONS}} DURATION={{.DURATION}} node realistic-trading-simulator.cjs\"'"
       - "echo \"✅ Test started on GCP instance (running in background container)\""
       - "echo \"💡 View logs: task gcp:test:remote:logs\""
       - "echo \"💡 Monitor: task gcp:health\""
@@ -547,7 +547,7 @@ tasks:
     cmds:
       - "echo \"🧪 Running 5-minute realistic test ON GCP instance (300 connections)...\""
       - |
-        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && docker run -d --name stress-test --network=host -v \$(pwd)/scripts:/scripts node:22-alpine sh -c \"apk add --no-cache curl && cd /scripts && WS_URL=ws://localhost:3004/ws HEALTH_URL=http://localhost:3004/health TARGET_CONNECTIONS=300 DURATION=300 node realistic-trading-simulator.cjs\"'"
+        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && docker run -d --name stress-test --network=host -v \$(pwd)/scripts:/scripts -w /scripts node:22-alpine sh -c \"apk add --no-cache curl && npm install ws && WS_URL=ws://localhost:3004/ws HEALTH_URL=http://localhost:3004/health TARGET_CONNECTIONS=300 DURATION=300 node realistic-trading-simulator.cjs\"'"
       - "echo \"✅ Test started on GCP instance (running in background container)\""
       - "echo \"💡 View logs: task gcp:test:remote:logs\""
 
@@ -556,7 +556,7 @@ tasks:
     cmds:
       - "echo \"🧪 Running 30-minute realistic test ON GCP instance (1000 connections)...\""
       - |
-        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && docker run -d --name stress-test --network=host -v \$(pwd)/scripts:/scripts node:22-alpine sh -c \"apk add --no-cache curl && cd /scripts && WS_URL=ws://localhost:3004/ws HEALTH_URL=http://localhost:3004/health TARGET_CONNECTIONS=1000 DURATION=1800 node realistic-trading-simulator.cjs\"'"
+        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && docker run -d --name stress-test --network=host -v \$(pwd)/scripts:/scripts -w /scripts node:22-alpine sh -c \"apk add --no-cache curl && npm install ws && WS_URL=ws://localhost:3004/ws HEALTH_URL=http://localhost:3004/health TARGET_CONNECTIONS=1000 DURATION=1800 node realistic-trading-simulator.cjs\"'"
       - "echo \"✅ Test started on GCP instance (running in background container)\""
       - "echo \"💡 View logs: task gcp:test:remote:logs\""
 
@@ -565,7 +565,7 @@ tasks:
     cmds:
       - "echo \"🧪 Running 2-hour realistic test ON GCP instance (2000 connections)...\""
       - |
-        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && docker run -d --name stress-test --network=host -v \$(pwd)/scripts:/scripts node:22-alpine sh -c \"apk add --no-cache curl && cd /scripts && WS_URL=ws://localhost:3004/ws HEALTH_URL=http://localhost:3004/health TARGET_CONNECTIONS=2000 DURATION=7200 node realistic-trading-simulator.cjs\"'"
+        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && docker run -d --name stress-test --network=host -v \$(pwd)/scripts:/scripts -w /scripts node:22-alpine sh -c \"apk add --no-cache curl && npm install ws && WS_URL=ws://localhost:3004/ws HEALTH_URL=http://localhost:3004/health TARGET_CONNECTIONS=2000 DURATION=7200 node realistic-trading-simulator.cjs\"'"
       - "echo \"✅ Test started on GCP instance (running in background container)\""
       - "echo \"💡 View logs: task gcp:test:remote:logs\""
 
