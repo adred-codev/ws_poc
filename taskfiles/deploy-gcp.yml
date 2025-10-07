@@ -228,31 +228,20 @@ tasks:
   # === OPERATIONS ===
 
   ssh:
-    desc: SSH into GCP instance
+    desc: SSH into GCP instance (then run 'sudo su - deploy' and 'cd ws_poc')
     cmds:
       - gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}}
-
-  ssh:deploy:
-    desc: SSH into GCP instance as deploy user in project directory
-    cmds:
-      - |
-        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
-          sudo su - deploy -c 'cd ws_poc && exec bash'\""
 
   docker:ps:
     desc: Show running Docker containers on GCP instance
     cmds:
-      - |
-        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
-          sudo su - deploy -c 'cd ws_poc && docker compose ps'\""
+      - gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && docker compose ps'"
 
   docker:up:
     desc: Start all Docker services on GCP instance
     cmds:
       - "echo \"🚀 Starting Docker services on GCP instance...\""
-      - |
-        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
-          sudo su - deploy -c 'cd ws_poc && docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d'\""
+      - gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d'"
       - "echo \"⏳ Waiting for services to start...\""
       - sleep 10
       - task: health
@@ -261,18 +250,14 @@ tasks:
     desc: Stop all Docker services on GCP instance
     cmds:
       - "echo \"⏸️  Stopping Docker services on GCP instance...\""
-      - |
-        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
-          sudo su - deploy -c 'cd ws_poc && docker compose -f docker-compose.yml -f docker-compose.prod.yml down'\""
+      - gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && docker compose -f docker-compose.yml -f docker-compose.prod.yml down'"
       - "echo \"✅ Services stopped\""
 
   docker:restart:
     desc: Restart all Docker services on GCP instance
     cmds:
       - "echo \"🔄 Restarting Docker services on GCP instance...\""
-      - |
-        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
-          sudo su - deploy -c 'cd ws_poc && docker compose -f docker-compose.yml -f docker-compose.prod.yml restart'\""
+      - gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && docker compose -f docker-compose.yml -f docker-compose.prod.yml restart'"
       - "echo \"⏳ Waiting for services to start...\""
       - sleep 10
       - task: health
