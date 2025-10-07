@@ -19,48 +19,50 @@ import (
 // │                             │
 // │   🪙🪙🪙🪙🪙🪙🪙🪙🪙🪙       │  ← Current tokens (85)
 // └─────────────────────────────┘
-//      ↓ Tokens refill at fixed rate (10/sec)
-//      ↓ Each request consumes 1 token
-//      ↓ Reject if bucket empty
+//
+//	↓ Tokens refill at fixed rate (10/sec)
+//	↓ Each request consumes 1 token
+//	↓ Reject if bucket empty
 //
 // Example scenario:
-//   Bucket: 100 tokens max
-//   Refill: 10 tokens/second
-//   Client behavior:
-//   - Sends 100 requests instantly → All succeed (burst allowed)
-//   - Bucket now empty
-//   - Must wait 1 second for 10 tokens to refill
-//   - Can send 10 more requests
-//   - Sustained rate: 10 requests/second
+//
+//	Bucket: 100 tokens max
+//	Refill: 10 tokens/second
+//	Client behavior:
+//	- Sends 100 requests instantly → All succeed (burst allowed)
+//	- Bucket now empty
+//	- Must wait 1 second for 10 tokens to refill
+//	- Can send 10 more requests
+//	- Sustained rate: 10 requests/second
 //
 // Why token bucket vs alternatives:
 //
 // 1. Leaky Bucket:
-//    - Smooths traffic (no bursts)
-//    - Bad for trading: Users need bursts (rapid order entry during volatility)
+//   - Smooths traffic (no bursts)
+//   - Bad for trading: Users need bursts (rapid order entry during volatility)
 //
 // 2. Fixed Window:
-//    - Simple but has "burst at window edge" problem
-//    - Example: 100 req/min limit
-//      - Send 100 at 10:00:59 → OK
-//      - Send 100 at 10:01:00 → OK
-//      - 200 requests in 2 seconds! Not what we wanted
+//   - Simple but has "burst at window edge" problem
+//   - Example: 100 req/min limit
+//   - Send 100 at 10:00:59 → OK
+//   - Send 100 at 10:01:00 → OK
+//   - 200 requests in 2 seconds! Not what we wanted
 //
 // 3. Sliding Window:
-//    - More accurate than fixed window
-//    - Complex to implement
-//    - Higher memory usage
+//   - More accurate than fixed window
+//   - Complex to implement
+//   - Higher memory usage
 //
 // 4. Token Bucket (our choice):
-//    - Allows controlled bursts (important for trading)
-//    - Simple to implement
-//    - Low memory (8 bytes per client)
-//    - Industry standard
+//   - Allows controlled bursts (important for trading)
+//   - Simple to implement
+//   - Low memory (8 bytes per client)
+//   - Industry standard
 //
 // For trading platform:
-//   Burst: User enters 20 orders during market spike → Allowed
-//   Sustained: User sends 1000 orders/sec continuously → Rate limited
 //
+//	Burst: User enters 20 orders during market spike → Allowed
+//	Sustained: User sends 1000 orders/sec continuously → Rate limited
 type TokenBucket struct {
 	// Current number of tokens in bucket
 	// Float64 for fractional token accumulation
@@ -100,30 +102,35 @@ type TokenBucket struct {
 // NewTokenBucket creates a token bucket rate limiter
 //
 // Parameters:
-//   maxTokens  - Burst capacity (how many instant requests allowed)
-//   refillRate - Sustained rate (requests per second long-term)
+//
+//	maxTokens  - Burst capacity (how many instant requests allowed)
+//	refillRate - Sustained rate (requests per second long-term)
 //
 // Common configurations:
 //
 // Retail Trading (our default):
-//   NewTokenBucket(100, 10)
-//   - Allows: 100 order burst, then 10 orders/second sustained
-//   - Use case: User rapidly entering orders during market volatility
+//
+//	NewTokenBucket(100, 10)
+//	- Allows: 100 order burst, then 10 orders/second sustained
+//	- Use case: User rapidly entering orders during market volatility
 //
 // Institutional Trading:
-//   NewTokenBucket(1000, 100)
-//   - Allows: 1000 message burst, then 100/second sustained
-//   - Use case: Market maker updating quotes continuously
+//
+//	NewTokenBucket(1000, 100)
+//	- Allows: 1000 message burst, then 100/second sustained
+//	- Use case: Market maker updating quotes continuously
 //
 // Mobile App:
-//   NewTokenBucket(20, 5)
-//   - Allows: 20 request burst, then 5/second sustained
-//   - Use case: Prevent accidental DoS from buggy mobile client
+//
+//	NewTokenBucket(20, 5)
+//	- Allows: 20 request burst, then 5/second sustained
+//	- Use case: Prevent accidental DoS from buggy mobile client
 //
 // Admin Actions:
-//   NewTokenBucket(10, 1)
-//   - Allows: 10 request burst, then 1/second sustained
-//   - Use case: Sensitive operations (balance updates, withdrawals)
+//
+//	NewTokenBucket(10, 1)
+//	- Allows: 10 request burst, then 1/second sustained
+//	- Use case: Sensitive operations (balance updates, withdrawals)
 func NewTokenBucket(maxTokens, refillRate float64) *TokenBucket {
 	return &TokenBucket{
 		tokens:     maxTokens, // Start with full bucket
@@ -146,13 +153,14 @@ func NewTokenBucket(maxTokens, refillRate float64) *TokenBucket {
 // Performance: ~100ns per call (10M checks/second per CPU core)
 //
 // Example call flow:
-//   bucket := NewTokenBucket(100, 10)
-//   bucket.TryConsume(1) → true (99 tokens left)
-//   bucket.TryConsume(1) → true (98 tokens left)
-//   ... 98 more calls ...
-//   bucket.TryConsume(1) → false (0 tokens, RATE LIMITED)
-//   time.Sleep(1 * time.Second)
-//   bucket.TryConsume(1) → true (10 tokens refilled)
+//
+//	bucket := NewTokenBucket(100, 10)
+//	bucket.TryConsume(1) → true (99 tokens left)
+//	bucket.TryConsume(1) → true (98 tokens left)
+//	... 98 more calls ...
+//	bucket.TryConsume(1) → false (0 tokens, RATE LIMITED)
+//	time.Sleep(1 * time.Second)
+//	bucket.TryConsume(1) → true (10 tokens refilled)
 func (tb *TokenBucket) TryConsume(tokens float64) bool {
 	tb.mu.Lock()
 	defer tb.mu.Unlock()
@@ -196,9 +204,10 @@ func (tb *TokenBucket) TryConsume(tokens float64) bool {
 //   - Better performance under high concurrency
 //
 // Alternative considered: Single global bucket
-//   Pros: Simple, low memory
-//   Cons: One abusive client affects all users (unfair)
-//   Decision: Per-client is industry standard
+//
+//	Pros: Simple, low memory
+//	Cons: One abusive client affects all users (unfair)
+//	Decision: Per-client is industry standard
 type RateLimiter struct {
 	// Map of clientID → TokenBucket
 	// Automatically cleans up on disconnect (RemoveClient called from readPump defer)
@@ -223,11 +232,12 @@ func NewRateLimiter() *RateLimiter {
 // Production evolution: Multiple buckets per client (by action type)
 //
 // Rate limit values chosen based on:
-//   100 burst: Active trader during volatility enters ~50 orders/minute
-//              100 burst handles 2 minutes of rapid entry
-//   10/sec sustained: Professional trader averages ~600 orders/hour
-//                     = 10/min sustained average
-//                     Peak: 10/sec for short bursts
+//
+//	100 burst: Active trader during volatility enters ~50 orders/minute
+//	           100 burst handles 2 minutes of rapid entry
+//	10/sec sustained: Professional trader averages ~600 orders/hour
+//	                  = 10/min sustained average
+//	                  Peak: 10/sec for short bursts
 //
 // Comparison to industry:
 //   - Coinbase: 10 orders/second
@@ -244,8 +254,9 @@ func (rl *RateLimiter) CheckLimit(clientID int64) bool {
 
 // RemoveClient cleans up rate limit state on disconnect
 // Important for memory management:
-//   Without cleanup: 10,000 clients connect/disconnect per day = 10,000 buckets leak
-//   With cleanup: Memory usage stays constant
+//
+//	Without cleanup: 10,000 clients connect/disconnect per day = 10,000 buckets leak
+//	With cleanup: Memory usage stays constant
 //
 // Called from readPump() defer (guaranteed to run on disconnect)
 func (rl *RateLimiter) RemoveClient(clientID int64) {

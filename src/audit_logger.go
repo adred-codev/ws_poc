@@ -24,10 +24,10 @@ const (
 type AuditEvent struct {
 	Level     AuditLevel             `json:"level"`
 	Timestamp time.Time              `json:"timestamp"`
-	Event     string                 `json:"event"`      // Event type: "ServerAtCapacity", "SlowClientDisconnected", etc.
+	Event     string                 `json:"event"`               // Event type: "ServerAtCapacity", "SlowClientDisconnected", etc.
 	ClientID  *int64                 `json:"client_id,omitempty"` // Optional client ID
-	Message   string                 `json:"message"`    // Human-readable description
-	Metadata  map[string]interface{} `json:"metadata,omitempty"` // Additional context
+	Message   string                 `json:"message"`             // Human-readable description
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`  // Additional context
 }
 
 // AuditLogger handles structured logging for all auditable events
@@ -45,7 +45,8 @@ type AuditLogger struct {
 // Events below minLevel are not logged (for performance)
 //
 // Example:
-//   logger := NewAuditLogger(INFO)  // Logs INFO, WARNING, ERROR, CRITICAL (not DEBUG)
+//
+//	logger := NewAuditLogger(INFO)  // Logs INFO, WARNING, ERROR, CRITICAL (not DEBUG)
 func NewAuditLogger(minLevel AuditLevel) *AuditLogger {
 	return &AuditLogger{
 		logger:   log.New(os.Stdout, "", 0), // No prefix, we include timestamp in JSON
@@ -63,7 +64,8 @@ func (a *AuditLogger) SetAlerter(alerter Alerter) {
 // Events are output as JSON to stdout
 //
 // Example output:
-//   {"level":"CRITICAL","timestamp":"2025-10-03T12:00:00Z","event":"ServerAtCapacity","message":"All slots occupied","metadata":{"connections":2184}}
+//
+//	{"level":"CRITICAL","timestamp":"2025-10-03T12:00:00Z","event":"ServerAtCapacity","message":"All slots occupied","metadata":{"connections":2184}}
 func (a *AuditLogger) Log(event AuditEvent) {
 	// Set timestamp if not already set
 	if event.Timestamp.IsZero() {

@@ -15,11 +15,11 @@ import (
 // DynamicCapacityManager calculates and adjusts connection limits based on real-time resource availability
 //
 // Key principles:
-//   1. Measure actual resource usage, don't assume
-//   2. Detect container/cgroup limits (cloud-native)
-//   3. Account for co-located services dynamically
-//   4. Adjust capacity based on observed performance
-//   5. Fail-safe: Conservative limits when uncertain
+//  1. Measure actual resource usage, don't assume
+//  2. Detect container/cgroup limits (cloud-native)
+//  3. Account for co-located services dynamically
+//  4. Adjust capacity based on observed performance
+//  5. Fail-safe: Conservative limits when uncertain
 //
 // Design philosophy:
 //   - Start conservative, increase when proven safe
@@ -33,9 +33,9 @@ type DynamicCapacityManager struct {
 	config ServerConfig
 
 	// Resource measurements
-	totalCPU         int     // Total CPU cores available
-	availableMemory  int64   // Available memory in bytes (from cgroup)
-	ourPID           int32   // Our process ID for resource monitoring
+	totalCPU        int   // Total CPU cores available
+	availableMemory int64 // Available memory in bytes (from cgroup)
+	ourPID          int32 // Our process ID for resource monitoring
 
 	// Performance metrics (measured at runtime)
 	avgBroadcastTimeMs float64 // Average time to broadcast to all clients
@@ -48,8 +48,8 @@ type DynamicCapacityManager struct {
 	cpuThresholdPause  float64 // Pause NATS consumption above this CPU %
 
 	// Historical data for trend analysis
-	measurements       []measurement
-	maxMeasurements    int
+	measurements    []measurement
+	maxMeasurements int
 
 	logger *log.Logger
 }
@@ -78,13 +78,13 @@ func NewDynamicCapacityManager(config ServerConfig, logger *log.Logger) (*Dynami
 	}
 
 	dcm := &DynamicCapacityManager{
-		config:             config,
-		totalCPU:           totalCPU,
-		availableMemory:    memLimit,
-		ourPID:             pid,
-		maxMeasurements:    120, // Keep 1 hour of history
-		measurements:       make([]measurement, 0, 120),
-		logger:             logger,
+		config:          config,
+		totalCPU:        totalCPU,
+		availableMemory: memLimit,
+		ourPID:          pid,
+		maxMeasurements: 120, // Keep 1 hour of history
+		measurements:    make([]measurement, 0, 120),
+		logger:          logger,
 
 		// Use configured thresholds
 		cpuThresholdReject: config.CPURejectThreshold,

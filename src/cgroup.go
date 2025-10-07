@@ -9,8 +9,9 @@ import (
 // getMemoryLimit returns the container memory limit in bytes from cgroup filesystem.
 //
 // Purpose:
-//   Automatically detect memory constraints in containerized environments
-//   (Docker, Kubernetes, Cloud Run, ECS, etc.) to calculate safe connection limits.
+//
+//	Automatically detect memory constraints in containerized environments
+//	(Docker, Kubernetes, Cloud Run, ECS, etc.) to calculate safe connection limits.
 //
 // Supports:
 //   - cgroup v2 (modern systems, Cloud Run, newer Kubernetes)
@@ -22,8 +23,9 @@ import (
 //   - error: Returns 0 with error (file not found, parse error)
 //
 // Implementation:
-//   Tries cgroup v2 first (/sys/fs/cgroup/memory.max)
-//   Falls back to cgroup v1 (/sys/fs/cgroup/memory/memory.limit_in_bytes)
+//
+//	Tries cgroup v2 first (/sys/fs/cgroup/memory.max)
+//	Falls back to cgroup v1 (/sys/fs/cgroup/memory/memory.limit_in_bytes)
 //
 // Example output:
 //   - 512MB container: Returns 536870912 (512 * 1024 * 1024)
@@ -64,7 +66,7 @@ func getMemoryLimit() (int64, error) {
 //   - replay buffer: 100 messages × 500 bytes avg = 50KB (message gap recovery)
 //   - sequence generator: 8 bytes (atomic counter for message sequencing)
 //   - Other overhead: ~2KB (connection pools, maps, alignment padding)
-//   Total: ~180KB per connection
+//     Total: ~180KB per connection
 //
 // Calculation example (512MB container):
 //   - Container limit: 512MB
@@ -73,16 +75,19 @@ func getMemoryLimit() (int64, error) {
 //   - Max connections: 384MB / 180KB = ~2,133 connections
 //
 // Design tradeoff:
-//   Fewer connections but with message reliability guarantees:
-//     - 100% message delivery (disconnect if can't deliver)
-//     - Gap recovery without full reconnect (better UX)
-//     - Production-ready for trading platforms
+//
+//	Fewer connections but with message reliability guarantees:
+//	  - 100% message delivery (disconnect if can't deliver)
+//	  - Gap recovery without full reconnect (better UX)
+//	  - Production-ready for trading platforms
 //
 // Parameters:
-//   memoryLimitBytes - Container memory limit from cgroup (0 = unlimited)
+//
+//	memoryLimitBytes - Container memory limit from cgroup (0 = unlimited)
 //
 // Returns:
-//   Safe maximum number of concurrent WebSocket connections
+//
+//	Safe maximum number of concurrent WebSocket connections
 //
 // Safety bounds:
 //   - Minimum: 100 connections (viable service)

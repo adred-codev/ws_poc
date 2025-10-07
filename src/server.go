@@ -49,12 +49,12 @@ type ServerConfig struct {
 	SafetyMargin   float64 // Safety margin multiplier (default: 0.9 = 90%)
 
 	// JetStream configuration
-	JSStreamMaxAge     time.Duration // Max message age in stream (default: 30s)
-	JSStreamMaxMsgs    int64         // Max messages in stream (default: 100000)
-	JSStreamMaxBytes   int64         // Max bytes in stream (default: 50MB)
-	JSConsumerAckWait  time.Duration // Ack wait timeout (default: 30s)
-	JSStreamName       string        // Stream name (default: "ODIN_TOKENS")
-	JSConsumerName     string        // Consumer name (default: "ws-server")
+	JSStreamMaxAge    time.Duration // Max message age in stream (default: 30s)
+	JSStreamMaxMsgs   int64         // Max messages in stream (default: 100000)
+	JSStreamMaxBytes  int64         // Max bytes in stream (default: 50MB)
+	JSConsumerAckWait time.Duration // Ack wait timeout (default: 30s)
+	JSStreamName      string        // Stream name (default: "ODIN_TOKENS")
+	JSConsumerName    string        // Consumer name (default: "ws-server")
 
 	// Monitoring intervals
 	MetricsInterval  time.Duration // Metrics collection interval (default: 15s)
@@ -62,8 +62,8 @@ type ServerConfig struct {
 }
 
 type Server struct {
-	config   ServerConfig
-	logger   *log.Logger
+	config          ServerConfig
+	logger          *log.Logger
 	listener        net.Listener
 	natsConn        *nats.Conn
 	natsJS          nats.JetStreamContext
@@ -71,10 +71,10 @@ type Server struct {
 	natsPaused      int32 // Atomic flag: 1 = paused, 0 = active
 
 	// Connection management
-	connections     *ConnectionPool
-	clients         sync.Map // map[*Client]bool
-	clientCount     int64
-	connectionsSem  chan struct{} // Semaphore for max connections
+	connections    *ConnectionPool
+	clients        sync.Map // map[*Client]bool
+	clientCount    int64
+	connectionsSem chan struct{} // Semaphore for max connections
 
 	// Performance optimization
 	bufferPool *BufferPool
@@ -135,7 +135,7 @@ func NewServer(config ServerConfig, logger *log.Logger) (*Server, error) {
 	}
 
 	// Initialize monitoring
-	s.auditLogger = NewAuditLogger(INFO) // Log INFO and above
+	s.auditLogger = NewAuditLogger(INFO)          // Log INFO and above
 	s.auditLogger.SetAlerter(NewConsoleAlerter()) // Use console alerter for now
 	s.metricsCollector = NewMetricsCollector(s)
 
@@ -181,15 +181,15 @@ func NewServer(config ServerConfig, logger *log.Logger) (*Server, error) {
 			// Stream doesn't exist, create it
 			logger.Printf("📦 Creating JetStream stream: %s", streamName)
 			_, err = js.AddStream(&nats.StreamConfig{
-				Name:        streamName,
-				Subjects:    []string{"odin.token.>"},
-				Retention:   nats.InterestPolicy,        // Delete after all subscribers ack
-				MaxAge:      config.JSStreamMaxAge,      // Configured max age
-				Storage:     nats.MemoryStorage,         // In-memory for speed
-				Replicas:    1,                          // Single replica for now
-				Discard:     nats.DiscardOld,            // Drop oldest when full
-				MaxMsgs:     config.JSStreamMaxMsgs,     // Configured max messages
-				MaxBytes:    config.JSStreamMaxBytes,    // Configured max bytes
+				Name:      streamName,
+				Subjects:  []string{"odin.token.>"},
+				Retention: nats.InterestPolicy,     // Delete after all subscribers ack
+				MaxAge:    config.JSStreamMaxAge,   // Configured max age
+				Storage:   nats.MemoryStorage,      // In-memory for speed
+				Replicas:  1,                       // Single replica for now
+				Discard:   nats.DiscardOld,         // Drop oldest when full
+				MaxMsgs:   config.JSStreamMaxMsgs,  // Configured max messages
+				MaxBytes:  config.JSStreamMaxBytes, // Configured max bytes
 			})
 			if err != nil {
 				RecordJetStreamError(ErrorSeverityFatal)
@@ -296,10 +296,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/metrics", handleMetrics) // Prometheus metrics endpoint
 
 	server := &http.Server{
-		Handler:      mux,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		IdleTimeout:  120 * time.Second,
+		Handler:        mux,
+		ReadTimeout:    10 * time.Second,
+		WriteTimeout:   10 * time.Second,
+		IdleTimeout:    120 * time.Second,
 		MaxHeaderBytes: 1 << 20,
 	}
 
@@ -778,10 +778,11 @@ func (s *Server) broadcast(message []byte) {
 // 4. "unsubscribe" - Unsubscribe from symbols (future enhancement)
 //
 // Message format (JSON):
-// {
-//   "type": "replay",
-//   "data": {"from": 100, "to": 150}  // Request sequence 100-150
-// }
+//
+//	{
+//	  "type": "replay",
+//	  "data": {"from": 100, "to": 150}  // Request sequence 100-150
+//	}
 //
 // Industry patterns:
 // - FIX protocol: Gap fill requests are standard
@@ -1053,7 +1054,6 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-
 func (s *Server) Shutdown() error {
 	s.logger.Println("Initiating graceful shutdown...")
 
@@ -1129,4 +1129,3 @@ cleanup:
 	s.logger.Println("Graceful shutdown completed")
 	return nil
 }
-

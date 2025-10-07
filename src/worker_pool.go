@@ -33,10 +33,11 @@ type Task func()
 //   - Total: ~45KB (negligible)
 //
 // Thread safety:
-//   All methods are safe for concurrent use by multiple goroutines.
+//
+//	All methods are safe for concurrent use by multiple goroutines.
 type WorkerPool struct {
-	workerCount int          // Number of worker goroutines
-	taskQueue   chan Task    // Buffered channel of pending tasks
+	workerCount int             // Number of worker goroutines
+	taskQueue   chan Task       // Buffered channel of pending tasks
 	ctx         context.Context // Context for graceful shutdown
 	wg          sync.WaitGroup  // Wait group to track worker completion
 }
@@ -44,7 +45,8 @@ type WorkerPool struct {
 // NewWorkerPool creates a worker pool with the specified number of workers.
 //
 // Parameters:
-//   workerCount - Number of worker goroutines (typically 2 × CPU cores)
+//
+//	workerCount - Number of worker goroutines (typically 2 × CPU cores)
 //
 // Queue sizing:
 //   - Buffer capacity: workerCount × 100
@@ -120,9 +122,10 @@ func (wp *WorkerPool) worker() {
 // Thread safety: Safe for concurrent use by multiple goroutines.
 //
 // Example:
-//   pool.Submit(func() {
-//       server.broadcast(message)
-//   })
+//
+//	pool.Submit(func() {
+//	    server.broadcast(message)
+//	})
 func (wp *WorkerPool) Submit(task Task) {
 	select {
 	case wp.taskQueue <- task:
@@ -136,11 +139,11 @@ func (wp *WorkerPool) Submit(task Task) {
 // Stop gracefully shuts down the worker pool.
 //
 // Shutdown sequence:
-//   1. Closes task queue (no new tasks accepted)
-//   2. Workers finish currently executing tasks
-//   3. Workers process any remaining queued tasks
-//   4. All workers exit
-//   5. Stop returns when all workers have finished
+//  1. Closes task queue (no new tasks accepted)
+//  2. Workers finish currently executing tasks
+//  3. Workers process any remaining queued tasks
+//  4. All workers exit
+//  5. Stop returns when all workers have finished
 //
 // Blocks until all workers have completed.
 // Safe to call multiple times (subsequent calls are no-op).

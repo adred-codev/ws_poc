@@ -56,12 +56,14 @@ type ReplayBuffer struct {
 
 // NewReplayBuffer creates a buffer with specified capacity
 // Typical usage:
-//   buffer := NewReplayBuffer(1000)  // 1000 messages per client
+//
+//	buffer := NewReplayBuffer(1000)  // 1000 messages per client
 //
 // Size recommendations by use case:
-//   100   - Casual trading app (covers network hiccups)
-//   1000  - Professional trading (covers 1-2 min outage)
-//   10000 - Institutional trading (covers longer outages)
+//
+//	100   - Casual trading app (covers network hiccups)
+//	1000  - Professional trading (covers 1-2 min outage)
+//	10000 - Institutional trading (covers longer outages)
 func NewReplayBuffer(maxSize int) *ReplayBuffer {
 	return &ReplayBuffer{
 		messages: make([]*MessageEnvelope, 0, maxSize),
@@ -78,12 +80,13 @@ func NewReplayBuffer(maxSize int) *ReplayBuffer {
 // Production optimization: O(1) using ring buffer with head/tail pointers
 //
 // Example ring buffer:
-//   messages := make([]*MessageEnvelope, maxSize)
-//   head := 0  // Next write position
-//   tail := 0  // Oldest message
-//   count := 0 // Number of messages
 //
-//   To add: messages[head] = msg; head = (head + 1) % maxSize
+//	messages := make([]*MessageEnvelope, maxSize)
+//	head := 0  // Next write position
+//	tail := 0  // Oldest message
+//	count := 0 // Number of messages
+//
+//	To add: messages[head] = msg; head = (head + 1) % maxSize
 //
 // Why we use simple version:
 //   - Easier to understand and debug
@@ -112,10 +115,11 @@ func (rb *ReplayBuffer) Add(msg *MessageEnvelope) {
 // Used when client detects gap and requests specific range
 //
 // Client-side usage pattern:
-//   lastSeq = 100
-//   received = 150
-//   // Detected gap!
-//   ws.send({"type": "replay", "data": {"from": 101, "to": 149}})
+//
+//	lastSeq = 100
+//	received = 150
+//	// Detected gap!
+//	ws.send({"type": "replay", "data": {"from": 101, "to": 149}})
 //
 // Server calls this to find messages in range
 // Returns:
@@ -156,11 +160,11 @@ func (rb *ReplayBuffer) GetRange(fromSeq, toSeq int64) []*MessageEnvelope {
 // Used during reconnection when client knows last received sequence
 //
 // Reconnection flow:
-//   1. Client disconnects (network issue, server restart)
-//   2. Client reconnects immediately
-//   3. Client sends: {"type": "replay", "data": {"since": 1000}}
-//   4. Server sends all messages seq > 1000
-//   5. Client is caught up, resumes normal operation
+//  1. Client disconnects (network issue, server restart)
+//  2. Client reconnects immediately
+//  3. Client sends: {"type": "replay", "data": {"since": 1000}}
+//  4. Server sends all messages seq > 1000
+//  5. Client is caught up, resumes normal operation
 //
 // This is faster than:
 //   - Full page refresh (loses client state)
@@ -173,11 +177,12 @@ func (rb *ReplayBuffer) GetRange(fromSeq, toSeq int64) []*MessageEnvelope {
 //   - since < oldest: Returns what we have (client needs full refresh)
 //
 // Client should check:
-//   if (replay.length > 0 && replay[0].seq != lastSeq + 1) {
-//     // Gap detected - some messages evicted from buffer
-//     // Need full reconnect and resync
-//     fullReconnect()
-//   }
+//
+//	if (replay.length > 0 && replay[0].seq != lastSeq + 1) {
+//	  // Gap detected - some messages evicted from buffer
+//	  // Need full reconnect and resync
+//	  fullReconnect()
+//	}
 func (rb *ReplayBuffer) GetSince(sinceSeq int64) []*MessageEnvelope {
 	rb.mu.RLock()
 	defer rb.mu.RUnlock()

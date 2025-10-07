@@ -74,15 +74,15 @@ type Client struct {
 	// - Binance: No automatic disconnect (relies on ping timeout)
 	// - FIX protocol: 5 second timeout (more lenient)
 	lastMessageSentAt time.Time // Timestamp of last successful send
-	sendAttempts      int32      // Consecutive failed send attempts (atomic for thread-safety)
-	slowClientWarned  bool       // Flag to avoid log spam (warn once)
+	sendAttempts      int32     // Consecutive failed send attempts (atomic for thread-safety)
+	slowClientWarned  bool      // Flag to avoid log spam (warn once)
 }
 
 // ConnectionPool manages a pool of reusable client objects
 type ConnectionPool struct {
-	pool     sync.Pool
-	maxSize  int
-	current  int64
+	pool    sync.Pool
+	maxSize int
+	current int64
 }
 
 func NewConnectionPool(maxSize int) *ConnectionPool {
@@ -142,11 +142,11 @@ func (p *ConnectionPool) Put(c *Client) {
 	if c == nil {
 		return
 	}
-	
+
 	// Reset connection
 	c.conn = nil
 	c.server = nil
 	c.id = 0
-	
+
 	p.pool.Put(c)
 }

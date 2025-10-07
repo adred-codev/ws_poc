@@ -20,8 +20,8 @@ type MessagePriority int
 
 const (
 	PRIORITY_CRITICAL MessagePriority = iota // Never drop - disconnect if can't deliver
-	PRIORITY_HIGH                             // Drop only as last resort
-	PRIORITY_NORMAL                           // Drop if client slow (prevents head-of-line blocking)
+	PRIORITY_HIGH                            // Drop only as last resort
+	PRIORITY_NORMAL                          // Drop if client slow (prevents head-of-line blocking)
 )
 
 // MessageEnvelope wraps all WebSocket messages with delivery metadata
@@ -38,10 +38,11 @@ const (
 // 5. Type-based routing - client knows how to handle each message
 //
 // Example client-side gap detection:
-//   lastSeq = 100
-//   receive seq 102
-//   detect gap: 101 missing
-//   request replay: {"type": "replay", "data": {"from": 101, "to": 101}}
+//
+//	lastSeq = 100
+//	receive seq 102
+//	detect gap: 101 missing
+//	request replay: {"type": "replay", "data": {"from": 101, "to": 101}}
 type MessageEnvelope struct {
 	// Sequence number - monotonically increasing per connection
 	// Starts at 1 on connection, increments for each message sent
@@ -129,18 +130,21 @@ func (s *SequenceGenerator) Next() int64 {
 // This is called in broadcast() before sending to clients
 //
 // Parameters:
-//   data     - Raw message payload from NATS (JSON bytes)
-//   msgType  - Message type for client routing ("price:update", etc.)
-//   priority - Delivery priority (CRITICAL, HIGH, NORMAL)
-//   seqGen   - Per-client sequence generator
+//
+//	data     - Raw message payload from NATS (JSON bytes)
+//	msgType  - Message type for client routing ("price:update", etc.)
+//	priority - Delivery priority (CRITICAL, HIGH, NORMAL)
+//	seqGen   - Per-client sequence generator
 //
 // Returns:
-//   Envelope ready to serialize and send to WebSocket client
+//
+//	Envelope ready to serialize and send to WebSocket client
 //
 // Example usage:
-//   envelope, _ := WrapMessage(natsData, "price:update", PRIORITY_HIGH, client.seqGen)
-//   jsonBytes, _ := envelope.Serialize()
-//   client.send <- jsonBytes
+//
+//	envelope, _ := WrapMessage(natsData, "price:update", PRIORITY_HIGH, client.seqGen)
+//	jsonBytes, _ := envelope.Serialize()
+//	client.send <- jsonBytes
 func WrapMessage(data []byte, msgType string, priority MessagePriority, seqGen *SequenceGenerator) (*MessageEnvelope, error) {
 	return &MessageEnvelope{
 		Seq:       seqGen.Next(),
@@ -155,7 +159,8 @@ func WrapMessage(data []byte, msgType string, priority MessagePriority, seqGen *
 // This is the final step before sending over the wire
 //
 // Returns JSON in format:
-//   {"seq":1,"ts":1234567890,"type":"price:update","data":{...}}
+//
+//	{"seq":1,"ts":1234567890,"type":"price:update","data":{...}}
 //
 // Error handling:
 // - Should never fail in production (envelope fields are always valid JSON)

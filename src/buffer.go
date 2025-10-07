@@ -27,7 +27,8 @@ import (
 //   - sync.Pool may evict unused buffers during GC
 //
 // Thread safety:
-//   All methods are safe for concurrent use by multiple goroutines.
+//
+//	All methods are safe for concurrent use by multiple goroutines.
 type BufferPool struct {
 	small  sync.Pool // 4KB buffers
 	medium sync.Pool // 16KB buffers
@@ -37,7 +38,8 @@ type BufferPool struct {
 // NewBufferPool creates a buffer pool with three size tiers.
 //
 // Parameters:
-//   defaultSize - Currently unused, kept for API compatibility
+//
+//	defaultSize - Currently unused, kept for API compatibility
 //
 // Buffer tiers created:
 //   - Small:  4KB  (4096 bytes)
@@ -45,8 +47,9 @@ type BufferPool struct {
 //   - Large:  64KB (65536 bytes)
 //
 // Implementation note:
-//   Uses sync.Pool which automatically manages buffer lifecycle.
-//   The Go runtime may garbage collect unused buffers during GC cycles.
+//
+//	Uses sync.Pool which automatically manages buffer lifecycle.
+//	The Go runtime may garbage collect unused buffers during GC cycles.
 func NewBufferPool(defaultSize int) *BufferPool {
 	return &BufferPool{
 		small: sync.Pool{
@@ -87,9 +90,10 @@ func NewBufferPool(defaultSize int) *BufferPool {
 // Thread safety: Safe for concurrent use by multiple goroutines.
 //
 // Example:
-//   buf := pool.Get(2048)    // Gets 4KB buffer
-//   defer pool.Put(buf)       // Return to pool when done
-//   // Use buf for I/O operations
+//
+//	buf := pool.Get(2048)    // Gets 4KB buffer
+//	defer pool.Put(buf)       // Return to pool when done
+//	// Use buf for I/O operations
 func (bp *BufferPool) Get(size int) *[]byte {
 	var pool *sync.Pool
 
@@ -129,9 +133,10 @@ func (bp *BufferPool) Get(size int) *[]byte {
 // Thread safety: Safe for concurrent use by multiple goroutines.
 //
 // Best practice:
-//   Always use defer to ensure buffers are returned:
-//     buf := pool.Get(1024)
-//     defer pool.Put(buf)
+//
+//	Always use defer to ensure buffers are returned:
+//	  buf := pool.Get(1024)
+//	  defer pool.Put(buf)
 //
 // Note: Caller must not use buffer after calling Put.
 // The pool may hand the same buffer to another goroutine immediately.
@@ -152,6 +157,6 @@ func (bp *BufferPool) Put(buf *[]byte) {
 		bp.medium.Put(buf)
 	case size <= 65536:
 		bp.large.Put(buf)
-	// Don't pool buffers larger than 64KB
+		// Don't pool buffers larger than 64KB
 	}
 }
