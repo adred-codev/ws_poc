@@ -199,8 +199,8 @@ func (m *MetricsCollector) Start() {
 		memoryLimitBytes.Set(float64(memLimit))
 	}
 
-	// Collect metrics every 15 seconds
-	ticker := time.NewTicker(15 * time.Second)
+	// Collect metrics at configured interval
+	ticker := time.NewTicker(m.server.config.MetricsInterval)
 	go func() {
 		defer ticker.Stop()
 		for {

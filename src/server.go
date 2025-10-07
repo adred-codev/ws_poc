@@ -37,6 +37,28 @@ type ServerConfig struct {
 	MaxConnections int
 	BufferSize     int
 	WorkerCount    int
+
+	// Dynamic capacity thresholds
+	CPURejectThreshold float64 // Reject new connections above this CPU % (default: 80)
+	CPUPauseThreshold  float64 // Pause NATS consumption above this CPU % (default: 85)
+	CPUTargetMax       float64 // Target maximum CPU usage % (default: 70)
+
+	// Capacity limits
+	MinConnections int     // Minimum connection limit (default: 50)
+	MaxCapacity    int     // Maximum connection limit (default: 10000)
+	SafetyMargin   float64 // Safety margin multiplier (default: 0.9 = 90%)
+
+	// JetStream configuration
+	JSStreamMaxAge     time.Duration // Max message age in stream (default: 30s)
+	JSStreamMaxMsgs    int64         // Max messages in stream (default: 100000)
+	JSStreamMaxBytes   int64         // Max bytes in stream (default: 50MB)
+	JSConsumerAckWait  time.Duration // Ack wait timeout (default: 30s)
+	JSStreamName       string        // Stream name (default: "ODIN_TOKENS")
+	JSConsumerName     string        // Consumer name (default: "ws-server")
+
+	// Monitoring intervals
+	MetricsInterval  time.Duration // Metrics collection interval (default: 15s)
+	CapacityInterval time.Duration // Capacity recalculation interval (default: 30s)
 }
 
 type Server struct {
@@ -118,7 +140,7 @@ func NewServer(config ServerConfig, logger *log.Logger) (*Server, error) {
 	s.metricsCollector = NewMetricsCollector(s)
 
 	// Initialize dynamic capacity manager
-	capacityMgr, err := NewDynamicCapacityManager(logger)
+	capacityMgr, err := NewDynamicCapacityManager(config, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create capacity manager: %w", err)
 	}
@@ -153,7 +175,7 @@ func NewServer(config ServerConfig, logger *log.Logger) (*Server, error) {
 		s.natsJS = js
 
 		// Create or update stream for token updates
-		streamName := "ODIN_TOKENS"
+		streamName := config.JSStreamName
 		streamInfo, err := js.StreamInfo(streamName)
 		if err != nil {
 			// Stream doesn't exist, create it
@@ -161,13 +183,13 @@ func NewServer(config ServerConfig, logger *log.Logger) (*Server, error) {
 			_, err = js.AddStream(&nats.StreamConfig{
 				Name:        streamName,
 				Subjects:    []string{"odin.token.>"},
-				Retention:   nats.InterestPolicy,  // Delete after all subscribers ack
-				MaxAge:      30 * time.Second,      // Keep messages max 30 seconds
-				Storage:     nats.MemoryStorage,    // In-memory for speed
-				Replicas:    1,                     // Single replica for now
-				Discard:     nats.DiscardOld,       // Drop oldest when full
-				MaxMsgs:     100000,                // Max 100K messages in stream
-				MaxBytes:    50 * 1024 * 1024,      // Max 50MB
+				Retention:   nats.InterestPolicy,        // Delete after all subscribers ack
+				MaxAge:      config.JSStreamMaxAge,      // Configured max age
+				Storage:     nats.MemoryStorage,         // In-memory for speed
+				Replicas:    1,                          // Single replica for now
+				Discard:     nats.DiscardOld,            // Drop oldest when full
+				MaxMsgs:     config.JSStreamMaxMsgs,     // Configured max messages
+				MaxBytes:    config.JSStreamMaxBytes,    // Configured max bytes
 			})
 			if err != nil {
 				RecordJetStreamError(ErrorSeverityFatal)
@@ -250,7 +272,7 @@ func (s *Server) Start() error {
 					}
 				}
 			})
-		}, nats.Durable("ws-server"), nats.ManualAck(), nats.AckWait(30*time.Second))
+		}, nats.Durable(s.config.JSConsumerName), nats.ManualAck(), nats.AckWait(s.config.JSConsumerAckWait))
 
 		if err != nil {
 			RecordJetStreamError(ErrorSeverityCritical)

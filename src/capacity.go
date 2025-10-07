@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"os"
 	"runtime"
 	"sync"
 	"time"
 
 	"github.com/shirou/gopsutil/v3/cpu"
-	"github.com/shirou/gopsutil/v3/process"
 )
 
 // DynamicCapacityManager calculates and adjusts connection limits based on real-time resource availability
@@ -23,11 +23,14 @@ import (
 //
 // Design philosophy:
 //   - Start conservative, increase when proven safe
-//   - Monitor continuously, adjust every 30 seconds
+//   - Monitor continuously, adjust based on config
 //   - Prefer stability over maximum utilization
-//   - Never exceed 80% of available resources
+//   - Never exceed configured CPU target
 type DynamicCapacityManager struct {
 	mu sync.RWMutex
+
+	// Configuration
+	config ServerConfig
 
 	// Resource measurements
 	totalCPU         int     // Total CPU cores available
@@ -60,9 +63,9 @@ type measurement struct {
 }
 
 // NewDynamicCapacityManager creates a capacity manager that adapts to real resource availability
-func NewDynamicCapacityManager(logger *log.Logger) (*DynamicCapacityManager, error) {
+func NewDynamicCapacityManager(config ServerConfig, logger *log.Logger) (*DynamicCapacityManager, error) {
 	// Get our process ID for resource monitoring
-	pid := int32(process.GetCurrentProcessId())
+	pid := int32(os.Getpid())
 
 	// Detect CPU cores (respects cgroup limits in containers)
 	totalCPU := runtime.GOMAXPROCS(0)
@@ -75,17 +78,18 @@ func NewDynamicCapacityManager(logger *log.Logger) (*DynamicCapacityManager, err
 	}
 
 	dcm := &DynamicCapacityManager{
+		config:             config,
 		totalCPU:           totalCPU,
 		availableMemory:    memLimit,
 		ourPID:             pid,
-		maxMeasurements:    120, // Keep 1 hour of history (30s intervals)
+		maxMeasurements:    120, // Keep 1 hour of history
 		measurements:       make([]measurement, 0, 120),
 		logger:             logger,
 
-		// Conservative defaults until we measure actual performance
-		cpuThresholdReject: 80.0,
-		cpuThresholdPause:  85.0,
-		maxConnections:     100, // Start very conservative
+		// Use configured thresholds
+		cpuThresholdReject: config.CPURejectThreshold,
+		cpuThresholdPause:  config.CPUPauseThreshold,
+		maxConnections:     config.MinConnections, // Start at minimum
 	}
 
 	// Calculate initial capacity estimate
@@ -205,18 +209,15 @@ func (dcm *DynamicCapacityManager) recalculateCapacity() {
 	// Step 3: Take the minimum (most conservative)
 	newCapacity := int(math.Min(float64(cpuCapacity), float64(memCapacity)))
 
-	// Step 4: Apply safety margin (only use 90% of calculated capacity)
-	newCapacity = int(float64(newCapacity) * 0.9)
+	// Step 4: Apply configured safety margin
+	newCapacity = int(float64(newCapacity) * dcm.config.SafetyMargin)
 
-	// Step 5: Enforce reasonable bounds
-	const minCapacity = 50    // Never go below 50
-	const maxCapacity = 10000 // Never go above 10K (safety limit)
-
-	if newCapacity < minCapacity {
-		newCapacity = minCapacity
+	// Step 5: Enforce configured bounds
+	if newCapacity < dcm.config.MinConnections {
+		newCapacity = dcm.config.MinConnections
 	}
-	if newCapacity > maxCapacity {
-		newCapacity = maxCapacity
+	if newCapacity > dcm.config.MaxCapacity {
+		newCapacity = dcm.config.MaxCapacity
 	}
 
 	// Only log if capacity changed significantly (>10%)
@@ -246,8 +247,8 @@ func (dcm *DynamicCapacityManager) calculateCPUCapacity() int {
 	systemCPUPercent := systemCPU[0]
 
 	// Calculate CPU headroom: how much CPU is still available
-	// We want to stay under 70% total system CPU
-	targetMaxCPU := 70.0
+	// Use configured target maximum CPU
+	targetMaxCPU := dcm.config.CPUTargetMax
 	currentUsed := systemCPUPercent
 	availableHeadroom := targetMaxCPU - currentUsed
 
@@ -371,7 +372,7 @@ func (dcm *DynamicCapacityManager) calculateMemoryCapacity() int {
 
 // StartMonitoring begins periodic capacity recalculation
 func (dcm *DynamicCapacityManager) StartMonitoring(server *Server) {
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(dcm.config.CapacityInterval)
 
 	go func() {
 		defer ticker.Stop()
@@ -407,7 +408,7 @@ func (dcm *DynamicCapacityManager) StartMonitoring(server *Server) {
 		}
 	}()
 
-	dcm.logger.Printf("📊 Dynamic capacity monitoring started (30s intervals)")
+	dcm.logger.Printf("📊 Dynamic capacity monitoring started (%s intervals)", dcm.config.CapacityInterval)
 }
 
 // GetStats returns current capacity stats for monitoring/debugging
