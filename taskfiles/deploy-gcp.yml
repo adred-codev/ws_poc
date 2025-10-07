@@ -191,13 +191,7 @@ tasks:
     cmds:
       - "echo \"🔄 Updating deployment...\""
       - |
-        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
-          sudo su - deploy -c 'cd ws_poc && \
-          git pull origin main && \
-          docker compose -f docker-compose.yml -f docker-compose.prod.yml build && \
-          docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d && \
-          sleep 5 && \
-          curl -f http://localhost:3004/health'\""
+        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && git pull origin main && docker compose -f docker-compose.yml -f docker-compose.prod.yml build && docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d && sleep 5 && curl -f http://localhost:3004/health'"
       - "echo \"✅ Deployment updated\""
       - task: health
 

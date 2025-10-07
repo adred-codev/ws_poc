@@ -9,9 +9,11 @@ const SERVER_TYPE = process.argv[4] || 'go'; // 'go', 'go2', or 'node'
 const BATCH_SIZE = 100; // Create connections in batches
 const BATCH_DELAY = 100; // ms between batches
 
-const SERVER_URL = SERVER_TYPE === 'go2' ? GO_SERVER_2_URL :
+// Use WS_URL environment variable if provided (for remote testing), otherwise use local URLs
+const SERVER_URL = process.env.WS_URL ||
+                   (SERVER_TYPE === 'go2' ? GO_SERVER_2_URL :
                    SERVER_TYPE === 'go' ? GO_SERVER_URL :
-                   NODE_SERVER_URL;
+                   NODE_SERVER_URL);
 const PREFIX = SERVER_TYPE.toUpperCase();
 
 console.log(`🧪 [${PREFIX}] High-load stress testing with ${TARGET_CONNECTIONS} connections for ${DURATION_SECONDS} seconds`);

@@ -203,12 +203,13 @@ func (m *MetricsCollector) collect() {
 	}
 }
 
-// estimateCPU estimates CPU usage (simplified)
-// For more accurate CPU metrics, use shirou/gopsutil
+// estimateCPU gets CPU usage from server stats
 func (m *MetricsCollector) estimateCPU() float64 {
-	// Simplified version - in production, use gopsutil
-	// The actual CPU metrics are collected in server.collectMetrics()
-	return 0 // Placeholder
+	// Read CPU percentage from server stats (collected by collectMetrics goroutine)
+	m.server.stats.mu.RLock()
+	cpuPercent := m.server.stats.CPUPercent
+	m.server.stats.mu.RUnlock()
+	return cpuPercent
 }
 
 // UpdateConnectionMetrics updates connection-related metrics
