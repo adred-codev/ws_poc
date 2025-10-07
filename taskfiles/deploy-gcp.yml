@@ -537,13 +537,9 @@ tasks:
     cmds:
       - "echo \"🧪 Running realistic test ON GCP instance ({{.TARGET_CONNECTIONS}} connections, {{.DURATION}}s)...\""
       - |
-        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && nohup node scripts/realistic-trading-simulator.cjs > stress-test.log 2>&1 &'" \
-          --ssh-flag="-o SendEnv=WS_URL" \
-          --ssh-flag="-o SendEnv=HEALTH_URL" \
-          --ssh-flag="-o SendEnv=TARGET_CONNECTIONS" \
-          --ssh-flag="-o SendEnv=DURATION"
-      - "echo \"✅ Test started on GCP instance (running in background)\""
-      - "echo \"💡 View logs: task gcp:logs:tail\""
+        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && docker run -d --name stress-test --network=host -v \$(pwd)/scripts:/scripts node:22-alpine sh -c \"apk add --no-cache curl && cd /scripts && WS_URL=ws://localhost:3004/ws HEALTH_URL=http://localhost:3004/health TARGET_CONNECTIONS={{.TARGET_CONNECTIONS}} DURATION={{.DURATION}} node realistic-trading-simulator.cjs\"'"
+      - "echo \"✅ Test started on GCP instance (running in background container)\""
+      - "echo \"💡 View logs: task gcp:test:remote:logs\""
       - "echo \"💡 Monitor: task gcp:health\""
 
   test:remote:realistic:short:
@@ -551,44 +547,44 @@ tasks:
     cmds:
       - "echo \"🧪 Running 5-minute realistic test ON GCP instance (300 connections)...\""
       - |
-        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && WS_URL=ws://localhost:3004/ws HEALTH_URL=http://localhost:3004/health TARGET_CONNECTIONS=300 DURATION=300 nohup node scripts/realistic-trading-simulator.cjs > stress-test.log 2>&1 &'"
-      - "echo \"✅ Test started on GCP instance (running in background)\""
-      - "echo \"💡 View logs: gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command='tail -f /home/deploy/ws_poc/stress-test.log'\""
+        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && docker run -d --name stress-test --network=host -v \$(pwd)/scripts:/scripts node:22-alpine sh -c \"apk add --no-cache curl && cd /scripts && WS_URL=ws://localhost:3004/ws HEALTH_URL=http://localhost:3004/health TARGET_CONNECTIONS=300 DURATION=300 node realistic-trading-simulator.cjs\"'"
+      - "echo \"✅ Test started on GCP instance (running in background container)\""
+      - "echo \"💡 View logs: task gcp:test:remote:logs\""
 
   test:remote:realistic:medium:
     desc: Run realistic test ON GCP instance - 30 min (1000 connections, no network latency)
     cmds:
       - "echo \"🧪 Running 30-minute realistic test ON GCP instance (1000 connections)...\""
       - |
-        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && WS_URL=ws://localhost:3004/ws HEALTH_URL=http://localhost:3004/health TARGET_CONNECTIONS=1000 DURATION=1800 nohup node scripts/realistic-trading-simulator.cjs > stress-test.log 2>&1 &'"
-      - "echo \"✅ Test started on GCP instance (running in background)\""
-      - "echo \"💡 View logs: gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command='tail -f /home/deploy/ws_poc/stress-test.log'\""
+        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && docker run -d --name stress-test --network=host -v \$(pwd)/scripts:/scripts node:22-alpine sh -c \"apk add --no-cache curl && cd /scripts && WS_URL=ws://localhost:3004/ws HEALTH_URL=http://localhost:3004/health TARGET_CONNECTIONS=1000 DURATION=1800 node realistic-trading-simulator.cjs\"'"
+      - "echo \"✅ Test started on GCP instance (running in background container)\""
+      - "echo \"💡 View logs: task gcp:test:remote:logs\""
 
   test:remote:realistic:long:
     desc: Run realistic test ON GCP instance - 2 hours (2000 connections, no network latency)
     cmds:
       - "echo \"🧪 Running 2-hour realistic test ON GCP instance (2000 connections)...\""
       - |
-        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && WS_URL=ws://localhost:3004/ws HEALTH_URL=http://localhost:3004/health TARGET_CONNECTIONS=2000 DURATION=7200 nohup node scripts/realistic-trading-simulator.cjs > stress-test.log 2>&1 &'"
-      - "echo \"✅ Test started on GCP instance (running in background)\""
-      - "echo \"💡 View logs: gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command='tail -f /home/deploy/ws_poc/stress-test.log'\""
+        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && docker run -d --name stress-test --network=host -v \$(pwd)/scripts:/scripts node:22-alpine sh -c \"apk add --no-cache curl && cd /scripts && WS_URL=ws://localhost:3004/ws HEALTH_URL=http://localhost:3004/health TARGET_CONNECTIONS=2000 DURATION=7200 node realistic-trading-simulator.cjs\"'"
+      - "echo \"✅ Test started on GCP instance (running in background container)\""
+      - "echo \"💡 View logs: task gcp:test:remote:logs\""
 
   test:remote:logs:
     desc: View stress test logs on GCP instance (real-time)
     cmds:
       - "echo \"📄 Viewing stress test logs (Ctrl+C to exit)...\""
-      - gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'tail -f ws_poc/stress-test.log'"
+      - gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'docker logs -f stress-test'"
 
   test:remote:logs:tail:
     desc: View last 50 lines of stress test logs
     cmds:
-      - gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'tail -n 50 ws_poc/stress-test.log'"
+      - gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'docker logs --tail 50 stress-test'"
 
   test:remote:stop:
     desc: Stop any running stress test on GCP instance
     cmds:
       - "echo \"🛑 Stopping stress test on GCP instance...\""
-      - gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'pkill -f realistic-trading-simulator'"
+      - gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'docker stop stress-test && docker rm stress-test'"
       - "echo \"✅ Test stopped\""
 
   # === COMBINED WORKFLOWS ===
