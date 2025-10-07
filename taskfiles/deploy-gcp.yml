@@ -573,6 +573,17 @@ tasks:
       - "echo \"✅ Test started on GCP instance (running in background)\""
       - "echo \"💡 View logs: gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command='tail -f /home/deploy/ws_poc/stress-test.log'\""
 
+  test:remote:logs:
+    desc: View stress test logs on GCP instance (real-time)
+    cmds:
+      - "echo \"📄 Viewing stress test logs (Ctrl+C to exit)...\""
+      - gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'tail -f ws_poc/stress-test.log'"
+
+  test:remote:logs:tail:
+    desc: View last 50 lines of stress test logs
+    cmds:
+      - gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'tail -n 50 ws_poc/stress-test.log'"
+
   test:remote:stop:
     desc: Stop any running stress test on GCP instance
     cmds:
