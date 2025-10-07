@@ -5,15 +5,15 @@ version: '3'
 
 vars:
   GCP_PROJECT_ID:
-    sh: echo "${GCP_PROJECT_ID:-odin-ws-server}\""
+    sh: echo "${GCP_PROJECT_ID:-odin-ws-server}"
   GCP_REGION:
-    sh: echo "${GCP_REGION:-us-central1}\""
+    sh: echo "${GCP_REGION:-us-central1}"
   GCP_ZONE:
-    sh: echo "${GCP_ZONE:-us-central1-a}\""
+    sh: echo "${GCP_ZONE:-us-central1-a}"
   GCP_INSTANCE:
-    sh: echo "${GCP_INSTANCE:-odin-ws-server}\""
+    sh: echo "${GCP_INSTANCE:-odin-ws-server}"
   GCP_MACHINE_TYPE:
-    sh: echo "${GCP_MACHINE_TYPE:-e2-medium}\""
+    sh: echo "${GCP_MACHINE_TYPE:-e2-medium}"
 
 tasks:
   # === SETUP & PREREQUISITES ===
@@ -105,7 +105,7 @@ tasks:
         STATIC_IP=$(gcloud compute addresses describe odin-ws-static-ip \
           --region={{.GCP_REGION}} \
           --format="get(address)")
-        echo "Static IP: $STATIC_IP\""
+        echo "Static IP: $STATIC_IP"
       - |
         gcloud compute instances delete-access-config {{.GCP_INSTANCE}} \
           --access-config-name="external-nat" \
@@ -232,6 +232,51 @@ tasks:
     cmds:
       - gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}}
 
+  ssh:deploy:
+    desc: SSH into GCP instance as deploy user in project directory
+    cmds:
+      - |
+        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
+          sudo su - deploy -c 'cd ws_poc && exec bash'\""
+
+  docker:ps:
+    desc: Show running Docker containers on GCP instance
+    cmds:
+      - |
+        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
+          sudo su - deploy -c 'cd ws_poc && docker compose ps'\""
+
+  docker:up:
+    desc: Start all Docker services on GCP instance
+    cmds:
+      - "echo \"🚀 Starting Docker services on GCP instance...\""
+      - |
+        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
+          sudo su - deploy -c 'cd ws_poc && docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d'\""
+      - "echo \"⏳ Waiting for services to start...\""
+      - sleep 10
+      - task: health
+
+  docker:down:
+    desc: Stop all Docker services on GCP instance
+    cmds:
+      - "echo \"⏸️  Stopping Docker services on GCP instance...\""
+      - |
+        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
+          sudo su - deploy -c 'cd ws_poc && docker compose -f docker-compose.yml -f docker-compose.prod.yml down'\""
+      - "echo \"✅ Services stopped\""
+
+  docker:restart:
+    desc: Restart all Docker services on GCP instance
+    cmds:
+      - "echo \"🔄 Restarting Docker services on GCP instance...\""
+      - |
+        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
+          sudo su - deploy -c 'cd ws_poc && docker compose -f docker-compose.yml -f docker-compose.prod.yml restart'\""
+      - "echo \"⏳ Waiting for services to start...\""
+      - sleep 10
+      - task: health
+
   ip:
     desc: Get external IP address of instance
     cmds:
@@ -239,11 +284,11 @@ tasks:
         IP=$(gcloud compute instances describe {{.GCP_INSTANCE}} \
           --zone={{.GCP_ZONE}} \
           --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
-        echo "External IP: $IP\""
-        echo "\""
-        echo "WebSocket URL: ws://$IP:3004/ws\""
-        echo "Health URL: http://$IP:3004/health\""
-        echo "Grafana URL: http://$IP:3010\""
+        echo "External IP: $IP"
+        echo ""
+        echo "WebSocket URL: ws://$IP:3004/ws"
+        echo "Health URL: http://$IP:3004/health"
+        echo "Grafana URL: http://$IP:3010"
 
   health:
     desc: Check deployment health endpoint
@@ -252,7 +297,7 @@ tasks:
         IP=$(gcloud compute instances describe {{.GCP_INSTANCE}} \
           --zone={{.GCP_ZONE}} \
           --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
-        echo "Checking health at http://$IP:3004/health\""
+        echo "Checking health at http://$IP:3004/health"
         curl -s http://$IP:3004/health | jq '.'
 
   logs:
