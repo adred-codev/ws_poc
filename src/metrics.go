@@ -71,6 +71,11 @@ var (
 		Help: "Total number of replay requests served",
 	})
 
+	droppedBroadcasts = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "ws_dropped_broadcasts_total",
+		Help: "Total number of broadcast tasks dropped when worker pool queue full",
+	})
+
 	// System metrics
 	memoryUsageBytes = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "ws_memory_bytes",
@@ -151,6 +156,7 @@ func init() {
 	prometheus.MustRegister(slowClientsDisconnected)
 	prometheus.MustRegister(rateLimitedMessages)
 	prometheus.MustRegister(replayRequests)
+	prometheus.MustRegister(droppedBroadcasts)
 
 	prometheus.MustRegister(memoryUsageBytes)
 	prometheus.MustRegister(memoryLimitBytes)
@@ -234,6 +240,9 @@ func (m *MetricsCollector) collect() {
 
 	// Goroutine metrics
 	goroutinesActive.Set(float64(runtime.NumGoroutine()))
+
+	// Worker pool metrics
+	droppedBroadcasts.Set(float64(m.server.workerPool.GetDroppedTasks()))
 
 	// NATS status
 	if m.server.natsConn != nil && m.server.natsConn.IsConnected() {

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 )
 
 // Task represents a work item for the worker pool.
@@ -36,10 +37,11 @@ type Task func()
 //
 //	All methods are safe for concurrent use by multiple goroutines.
 type WorkerPool struct {
-	workerCount int             // Number of worker goroutines
-	taskQueue   chan Task       // Buffered channel of pending tasks
-	ctx         context.Context // Context for graceful shutdown
-	wg          sync.WaitGroup  // Wait group to track worker completion
+	workerCount  int             // Number of worker goroutines
+	taskQueue    chan Task       // Buffered channel of pending tasks
+	ctx          context.Context // Context for graceful shutdown
+	wg           sync.WaitGroup  // Wait group to track worker completion
+	droppedTasks int64           // Atomic counter for dropped tasks when queue full
 }
 
 // NewWorkerPool creates a worker pool with the specified number of workers.
@@ -112,12 +114,17 @@ func (wp *WorkerPool) worker() {
 //
 // Behavior:
 //   - If queue has space: Task is queued and Submit returns immediately
-//   - If queue is full: Task executes synchronously in caller's goroutine
+//   - If queue is full: Task is DROPPED and counter incremented
 //
-// The synchronous fallback provides backpressure:
-//   - Prevents unbounded queue growth and memory exhaustion
-//   - Caller is blocked until task completes (natural rate limiting)
-//   - Ensures task always executes (never dropped)
+// Task dropping provides backpressure:
+//   - Prevents goroutine explosion when system overloaded
+//   - Prevents unbounded memory growth
+//   - Drops work instead of crashing under load
+//   - Dropped count tracked in droppedTasks (atomic counter)
+//
+// CRITICAL: This prevents the goroutine explosion that causes CPU → 100%
+// When publisher rate × client count exceeds worker capacity, tasks are dropped
+// instead of spawning unlimited goroutines.
 //
 // Thread safety: Safe for concurrent use by multiple goroutines.
 //
@@ -131,8 +138,8 @@ func (wp *WorkerPool) Submit(task Task) {
 	case wp.taskQueue <- task:
 		// Task queued successfully
 	default:
-		// Queue is full, execute in current goroutine
-		task()
+		// Queue is full - drop task to prevent goroutine explosion
+		atomic.AddInt64(&wp.droppedTasks, 1)
 	}
 }
 
@@ -152,4 +159,17 @@ func (wp *WorkerPool) Submit(task Task) {
 func (wp *WorkerPool) Stop() {
 	close(wp.taskQueue)
 	wp.wg.Wait()
+}
+
+// GetDroppedTasks returns the total number of tasks dropped due to queue full.
+// This counter indicates backpressure - when broadcast rate exceeds worker capacity.
+//
+// High dropped task count means:
+//   - Publisher rate too high for current client count
+//   - Worker pool too small for the workload
+//   - CPU can't keep up with message fanout
+//
+// Thread safety: Safe for concurrent use (atomic read).
+func (wp *WorkerPool) GetDroppedTasks() int64 {
+	return atomic.LoadInt64(&wp.droppedTasks)
 }
