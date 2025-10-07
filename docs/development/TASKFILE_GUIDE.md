@@ -498,6 +498,25 @@ task gcp:logs:tail       # View last 100 lines
 task gcp:restart         # Restart services via systemd
 ```
 
+### Docker Management
+
+```bash
+task gcp:docker:ps       # Show running containers on GCP instance
+task gcp:docker:up       # Start all Docker services
+task gcp:docker:down     # Stop all Docker services
+task gcp:docker:restart  # Restart all Docker services
+```
+
+### Publisher Control
+
+```bash
+task gcp:publisher:start              # Start publisher (default 10 msgs/sec)
+task gcp:publisher:start RATE=20      # Start with specific rate
+task gcp:publisher:stop               # Stop publisher
+task gcp:publisher:configure RATE=15  # Change message rate
+task gcp:publisher:stats              # View publisher statistics
+```
+
 ### VM Lifecycle
 
 ```bash

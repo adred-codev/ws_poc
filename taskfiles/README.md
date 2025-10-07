@@ -110,6 +110,19 @@ task gcp:health
 # View logs
 task gcp:logs
 
+# Docker container management
+task gcp:docker:ps           # Show running containers
+task gcp:docker:up           # Start all services
+task gcp:docker:down         # Stop all services
+task gcp:docker:restart      # Restart all services
+
+# Publisher control
+task gcp:publisher:start              # Start publisher (10 msgs/sec)
+task gcp:publisher:start RATE=20      # Start with custom rate
+task gcp:publisher:stop               # Stop publisher
+task gcp:publisher:configure RATE=15  # Change rate
+task gcp:publisher:stats              # View statistics
+
 # Update deployment
 task gcp:deploy:update
 

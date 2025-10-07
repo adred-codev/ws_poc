@@ -41,9 +41,22 @@ task gcp:logs                # View application logs
 task gcp:logs:tail           # View last 100 lines
 task gcp:ssh                 # SSH into GCP instance
 
+# Docker container management
+task gcp:docker:ps           # Show running containers
+task gcp:docker:up           # Start all services
+task gcp:docker:down         # Stop all services
+task gcp:docker:restart      # Restart all services
+
 # Service management
 task gcp:restart             # Restart services via systemd
 task gcp:deploy:update       # Update to latest code
+
+# Publisher control
+task gcp:publisher:start              # Start publisher (default 10 msgs/sec)
+task gcp:publisher:start RATE=20      # Start with specific rate
+task gcp:publisher:stop               # Stop publisher
+task gcp:publisher:configure RATE=15  # Change message rate
+task gcp:publisher:stats              # View publisher statistics
 
 # VM lifecycle (cost management)
 task gcp:stop                # Stop VM (save money when not in use)
@@ -57,6 +70,8 @@ task gcp:quick-check         # Quick health and status check
 **Service URLs (replace `$EXTERNAL_IP` with your IP from `task gcp:ip`):**
 - WebSocket: `ws://$EXTERNAL_IP:3004/ws`
 - Health Check: `http://$EXTERNAL_IP:3004/health`
+- Publisher API: `http://$EXTERNAL_IP:3003/control` (use tasks for control)
+- Publisher Stats: `http://$EXTERNAL_IP:3003/stats`
 - Grafana Dashboard: `http://$EXTERNAL_IP:3010` (admin/admin)
 - Prometheus: `http://$EXTERNAL_IP:9091`
 

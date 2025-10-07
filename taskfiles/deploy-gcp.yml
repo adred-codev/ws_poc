@@ -41,7 +41,7 @@ tasks:
       - "echo \"✅ APIs enabled\""
 
   firewall:
-    desc: Create firewall rules for WebSocket and Grafana (Phase 1 - Step 2)
+    desc: Create firewall rules for WebSocket, Grafana, Publisher, and Prometheus (Phase 1 - Step 2)
     cmds:
       - "echo \"🔥 Creating firewall rules...\""
       - |
@@ -50,15 +50,29 @@ tasks:
           --source-ranges 0.0.0.0/0 \
           --target-tags websocket-server \
           --description "Allow WebSocket connections" \
-          2>/dev/null || echo "⚠️  Firewall rule 'allow-websocket' already exists\""
+          2>/dev/null || echo "⚠️  Firewall rule 'allow-websocket' already exists"
+      - |
+        gcloud compute firewall-rules create allow-publisher \
+          --allow tcp:3003 \
+          --source-ranges 0.0.0.0/0 \
+          --target-tags websocket-server \
+          --description "Allow Publisher API access" \
+          2>/dev/null || echo "⚠️  Firewall rule 'allow-publisher' already exists"
       - |
         gcloud compute firewall-rules create allow-grafana \
           --allow tcp:3010 \
           --source-ranges 0.0.0.0/0 \
           --target-tags websocket-server \
           --description "Allow Grafana access" \
-          2>/dev/null || echo "⚠️  Firewall rule 'allow-grafana' already exists\""
-      - gcloud compute firewall-rules list --filter="name~'allow-'\""
+          2>/dev/null || echo "⚠️  Firewall rule 'allow-grafana' already exists"
+      - |
+        gcloud compute firewall-rules create allow-prometheus \
+          --allow tcp:9091 \
+          --source-ranges 0.0.0.0/0 \
+          --target-tags websocket-server \
+          --description "Allow Prometheus access" \
+          2>/dev/null || echo "⚠️  Firewall rule 'allow-prometheus' already exists"
+      - gcloud compute firewall-rules list --filter="name~'allow-'"
       - "echo \"✅ Firewall rules configured\""
 
   # === INFRASTRUCTURE ===
@@ -298,10 +312,62 @@ tasks:
     desc: Restart services via systemd
     cmds:
       - "echo \"🔄 Restarting services...\""
-      - gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo systemctl restart odin-ws\""
+      - gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo systemctl restart odin-ws"
       - "echo \"⏳ Waiting for services to start...\""
       - sleep 10
       - task: health
+
+  # === PUBLISHER CONTROL ===
+
+  publisher:start:
+    desc: Start publisher on GCP instance
+    vars:
+      RATE: '{{.RATE | default "10"}}'
+    cmds:
+      - |
+        IP=$(gcloud compute instances describe {{.GCP_INSTANCE}} \
+          --zone={{.GCP_ZONE}} \
+          --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
+        echo "🚀 Starting publisher at {{.RATE}} msgs/sec..."
+        curl -X POST "http://$IP:3003/control" \
+          -H "Content-Type: application/json" \
+          -d '{"action":"start","messagesPerSecond":{{.RATE}}}' | jq '.'
+
+  publisher:stop:
+    desc: Stop publisher on GCP instance
+    cmds:
+      - |
+        IP=$(gcloud compute instances describe {{.GCP_INSTANCE}} \
+          --zone={{.GCP_ZONE}} \
+          --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
+        echo "⏸️  Stopping publisher..."
+        curl -X POST "http://$IP:3003/control" \
+          -H "Content-Type: application/json" \
+          -d '{"action":"stop"}' | jq '.'
+
+  publisher:configure:
+    desc: Configure publisher message rate on GCP instance
+    vars:
+      RATE: '{{.RATE | default "10"}}'
+    cmds:
+      - |
+        IP=$(gcloud compute instances describe {{.GCP_INSTANCE}} \
+          --zone={{.GCP_ZONE}} \
+          --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
+        echo "⚙️  Configuring publisher to {{.RATE}} msgs/sec..."
+        curl -X POST "http://$IP:3003/control" \
+          -H "Content-Type: application/json" \
+          -d '{"action":"configure","messagesPerSecond":{{.RATE}}}' | jq '.'
+
+  publisher:stats:
+    desc: View publisher statistics on GCP instance
+    cmds:
+      - |
+        IP=$(gcloud compute instances describe {{.GCP_INSTANCE}} \
+          --zone={{.GCP_ZONE}} \
+          --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
+        echo "📊 Publisher Statistics:"
+        curl -s "http://$IP:3003/stats" | jq '.'
 
   # === VM LIFECYCLE ===
 
@@ -327,11 +393,11 @@ tasks:
       - |
         gcloud compute instances describe {{.GCP_INSTANCE}} \
           --zone={{.GCP_ZONE}} \
-          --format="table(name,status,machineType,networkInterfaces[0].accessConfigs[0].natIP)\""
+          --format="table(name,status,machineType,networkInterfaces[0].accessConfigs[0].natIP)"
 
   delete:
     desc: Delete GCP VM instance (WARNING - destructive!)
-    prompt: "Are you sure you want to delete the VM instance {{.GCP_INSTANCE}}? This cannot be undone.\""
+    prompt: "Are you sure you want to delete the VM instance {{.GCP_INSTANCE}}? This cannot be undone."
     cmds:
       - gcloud compute instances delete {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}}
       - "echo \"❌ VM instance deleted\""
