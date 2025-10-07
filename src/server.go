@@ -945,9 +945,12 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	s.stats.mu.RUnlock()
 
 	currentConns := atomic.LoadInt64(&s.stats.CurrentConnections)
-	maxConns := int64(s.config.MaxConnections)
+	maxConns := int64(s.capacityManager.GetMaxConnections()) // Dynamic capacity
 	slowClients := atomic.LoadInt64(&s.stats.SlowClientsDisconnected)
 	totalConns := atomic.LoadInt64(&s.stats.TotalConnections)
+
+	// Get capacity manager stats
+	capacityStats := s.capacityManager.GetStats()
 
 	memLimitMB := 512.0 // Container memory limit
 
@@ -1032,10 +1035,21 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 				"healthy": natsHealthy,
 			},
 			"capacity": map[string]interface{}{
-				"current":    currentConns,
-				"max":        maxConns,
-				"percentage": capacityPercent,
-				"healthy":    capacityHealthy,
+				"current":         currentConns,
+				"max":             maxConns,
+				"percentage":      capacityPercent,
+				"healthy":         capacityHealthy,
+				"cpu_threshold":   capacityStats["cpuThresholdReject"],
+				"cpu_headroom":    100.0 - cpuPercent,
+				"dynamic":         true,
+				"avg_cpu_percent": capacityStats["avgCPUPercent"],
+				"total_cpu":       capacityStats["totalCPU"],
+				"limits": map[string]interface{}{
+					"min":           s.config.MinConnections,
+					"max":           s.config.MaxCapacity,
+					"configured":    s.config.MaxConnections,
+					"safety_margin": s.config.SafetyMargin,
+				},
 			},
 			"memory": map[string]interface{}{
 				"used_mb":    memoryMB,
