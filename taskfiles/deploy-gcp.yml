@@ -195,8 +195,8 @@ tasks:
         EXTERNAL_IP=$(gcloud compute instances describe {{.GCP_INSTANCE}} \
           --zone={{.GCP_ZONE}} \
           --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
-        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
-          sudo tee /etc/systemd/system/odin-ws.service > /dev/null << 'EOF'
+        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="
+        cat <<'SYSTEMD_EOF' | sudo tee /etc/systemd/system/odin-ws.service > /dev/null
         [Unit]
         Description=Odin WebSocket Server
         Requires=docker.service
@@ -211,18 +211,13 @@ tasks:
         ExecStop=/usr/bin/docker compose -f docker-compose.yml -f docker-compose.prod.yml down
         User=deploy
         Group=deploy
-        Environment=\"EXTERNAL_IP=$EXTERNAL_IP\\""
+        Environment=EXTERNAL_IP=$EXTERNAL_IP
 
         [Install]
         WantedBy=multi-user.target
-        EOF
-        \""
-      - |
-        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
-          sudo systemctl daemon-reload && \
-          sudo systemctl enable odin-ws && \
-          sudo systemctl start odin-ws && \
-          sudo systemctl status odin-ws --no-pager\""
+        SYSTEMD_EOF
+        "
+      - gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo systemctl daemon-reload && sudo systemctl enable odin-ws && sudo systemctl start odin-ws && sudo systemctl status odin-ws --no-pager"
       - "echo \"✅ Systemd service configured\""
 
   # === OPERATIONS ===
