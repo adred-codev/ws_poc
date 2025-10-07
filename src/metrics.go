@@ -102,6 +102,38 @@ var (
 		Name: "ws_nats_messages_received_total",
 		Help: "Total number of messages received from NATS",
 	})
+
+	natsMessagesDropped = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "ws_nats_messages_dropped_total",
+		Help: "Total number of NATS messages dropped due to backpressure",
+	})
+
+	// Dynamic capacity metrics
+	capacityMaxConnections = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "ws_capacity_max_connections",
+		Help: "Current dynamic maximum connections allowed",
+	})
+
+	capacityCPUThreshold = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "ws_capacity_cpu_threshold_percent",
+		Help: "CPU threshold for rejecting new connections",
+	})
+
+	capacityRejectionsCPU = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "ws_capacity_rejections_total",
+		Help: "Total connection rejections by reason",
+	}, []string{"reason"})
+
+	capacityAvailableHeadroom = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "ws_capacity_headroom_percent",
+		Help: "Available resource headroom (CPU and memory)",
+	}, []string{"resource"})
+
+	// Error tracking
+	errorsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "ws_errors_total",
+		Help: "Total errors by type and severity",
+	}, []string{"type", "severity"})
 )
 
 func init() {
@@ -127,6 +159,14 @@ func init() {
 
 	prometheus.MustRegister(natsConnected)
 	prometheus.MustRegister(natsMessagesReceived)
+	prometheus.MustRegister(natsMessagesDropped)
+
+	prometheus.MustRegister(capacityMaxConnections)
+	prometheus.MustRegister(capacityCPUThreshold)
+	prometheus.MustRegister(capacityRejectionsCPU)
+	prometheus.MustRegister(capacityAvailableHeadroom)
+
+	prometheus.MustRegister(errorsTotal)
 }
 
 // MetricsCollector handles periodic collection of system metrics
@@ -256,6 +296,75 @@ func IncrementReplayRequests() {
 // IncrementNATSMessages increments NATS message counter
 func IncrementNATSMessages() {
 	natsMessagesReceived.Inc()
+}
+
+// IncrementNATSDropped increments dropped NATS message counter
+func IncrementNATSDropped() {
+	natsMessagesDropped.Inc()
+}
+
+// UpdateCapacityMetrics updates dynamic capacity metrics
+func UpdateCapacityMetrics(maxConnections int, cpuThreshold float64) {
+	capacityMaxConnections.Set(float64(maxConnections))
+	capacityCPUThreshold.Set(cpuThreshold)
+}
+
+// IncrementCapacityRejection records a connection rejection with reason
+func IncrementCapacityRejection(reason string) {
+	capacityRejectionsCPU.WithLabelValues(reason).Inc()
+}
+
+// UpdateCapacityHeadroom updates available resource headroom
+func UpdateCapacityHeadroom(cpuHeadroom, memHeadroom float64) {
+	capacityAvailableHeadroom.WithLabelValues("cpu").Set(cpuHeadroom)
+	capacityAvailableHeadroom.WithLabelValues("memory").Set(memHeadroom)
+}
+
+// Error severity levels for metrics and logging
+const (
+	ErrorSeverityWarning  = "warning"  // Non-critical, service continues
+	ErrorSeverityCritical = "critical" // Critical but recoverable
+	ErrorSeverityFatal    = "fatal"    // Service cannot continue
+)
+
+// Error types for categorization
+const (
+	ErrorTypeNATS          = "nats"
+	ErrorTypeJetStream     = "jetstream"
+	ErrorTypeBroadcast     = "broadcast"
+	ErrorTypeSerialization = "serialization"
+	ErrorTypeConnection    = "connection"
+	ErrorTypeHealth        = "health"
+)
+
+// RecordError tracks an error in both Prometheus and returns true to signal logging needed
+func RecordError(errorType, severity string) {
+	errorsTotal.WithLabelValues(errorType, severity).Inc()
+}
+
+// RecordNATSError tracks NATS-related errors
+func RecordNATSError(severity string) {
+	errorsTotal.WithLabelValues(ErrorTypeNATS, severity).Inc()
+}
+
+// RecordJetStreamError tracks JetStream-related errors
+func RecordJetStreamError(severity string) {
+	errorsTotal.WithLabelValues(ErrorTypeJetStream, severity).Inc()
+}
+
+// RecordBroadcastError tracks broadcast-related errors
+func RecordBroadcastError(severity string) {
+	errorsTotal.WithLabelValues(ErrorTypeBroadcast, severity).Inc()
+}
+
+// RecordSerializationError tracks serialization errors
+func RecordSerializationError(severity string) {
+	errorsTotal.WithLabelValues(ErrorTypeSerialization, severity).Inc()
+}
+
+// RecordConnectionError tracks connection errors
+func RecordConnectionError(severity string) {
+	errorsTotal.WithLabelValues(ErrorTypeConnection, severity).Inc()
 }
 
 // handleMetrics serves Prometheus metrics at /metrics endpoint

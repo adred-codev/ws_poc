@@ -42,8 +42,11 @@ type ServerConfig struct {
 type Server struct {
 	config   ServerConfig
 	logger   *log.Logger
-	listener net.Listener
-	natsConn *nats.Conn
+	listener        net.Listener
+	natsConn        *nats.Conn
+	natsJS          nats.JetStreamContext
+	natsSubcription *nats.Subscription
+	natsPaused      int32 // Atomic flag: 1 = paused, 0 = active
 
 	// Connection management
 	connections     *ConnectionPool
@@ -59,8 +62,9 @@ type Server struct {
 	rateLimiter *RateLimiter
 
 	// Monitoring
-	auditLogger     *AuditLogger
+	auditLogger      *AuditLogger
 	metricsCollector *MetricsCollector
+	capacityManager  *DynamicCapacityManager
 
 	// Lifecycle
 	ctx          context.Context
@@ -113,6 +117,13 @@ func NewServer(config ServerConfig, logger *log.Logger) (*Server, error) {
 	s.auditLogger.SetAlerter(NewConsoleAlerter()) // Use console alerter for now
 	s.metricsCollector = NewMetricsCollector(s)
 
+	// Initialize dynamic capacity manager
+	capacityMgr, err := NewDynamicCapacityManager(logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create capacity manager: %w", err)
+	}
+	s.capacityManager = capacityMgr
+
 	if config.NATSUrl != "" {
 		nc, err := nats.Connect(config.NATSUrl, nats.MaxReconnects(5), nats.ReconnectWait(2*time.Second))
 		if err != nil {
@@ -128,6 +139,49 @@ func NewServer(config ServerConfig, logger *log.Logger) (*Server, error) {
 		s.auditLogger.Info("NATSConnected", "Connected to NATS successfully", map[string]interface{}{
 			"url": config.NATSUrl,
 		})
+
+		// Initialize JetStream
+		js, err := nc.JetStream()
+		if err != nil {
+			RecordJetStreamError(ErrorSeverityFatal)
+			s.auditLogger.Critical("JetStreamInitFailed", "Failed to initialize JetStream", map[string]interface{}{
+				"error": err.Error(),
+			})
+			logger.Printf("❌ FATAL: JetStream init failed: %v", err)
+			return nil, fmt.Errorf("failed to initialize jetstream: %w", err)
+		}
+		s.natsJS = js
+
+		// Create or update stream for token updates
+		streamName := "ODIN_TOKENS"
+		streamInfo, err := js.StreamInfo(streamName)
+		if err != nil {
+			// Stream doesn't exist, create it
+			logger.Printf("📦 Creating JetStream stream: %s", streamName)
+			_, err = js.AddStream(&nats.StreamConfig{
+				Name:        streamName,
+				Subjects:    []string{"odin.token.>"},
+				Retention:   nats.InterestPolicy,  // Delete after all subscribers ack
+				MaxAge:      30 * time.Second,      // Keep messages max 30 seconds
+				Storage:     nats.MemoryStorage,    // In-memory for speed
+				Replicas:    1,                     // Single replica for now
+				Discard:     nats.DiscardOld,       // Drop oldest when full
+				MaxMsgs:     100000,                // Max 100K messages in stream
+				MaxBytes:    50 * 1024 * 1024,      // Max 50MB
+			})
+			if err != nil {
+				RecordJetStreamError(ErrorSeverityFatal)
+				s.auditLogger.Critical("StreamCreationFailed", "Failed to create JetStream stream", map[string]interface{}{
+					"stream": streamName,
+					"error":  err.Error(),
+				})
+				logger.Printf("❌ FATAL: Stream creation failed: %v", err)
+				return nil, fmt.Errorf("failed to create stream: %w", err)
+			}
+			logger.Printf("✅ JetStream stream created: %s", streamName)
+		} else {
+			logger.Printf("✅ JetStream stream exists: %s (messages: %d)", streamName, streamInfo.State.Msgs)
+		}
 	}
 
 	return s, nil
@@ -146,31 +200,68 @@ func (s *Server) Start() error {
 
 	s.workerPool.Start(s.ctx)
 
-	if s.natsConn != nil {
+	if s.natsConn != nil && s.natsJS != nil {
 		msgCount := int64(0)
-		// Subscribe to all token updates using wildcard (matches Node.js server)
-		_, err := s.natsConn.Subscribe("odin.token.>", func(msg *nats.Msg) {
+		droppedCount := int64(0)
+		ackFailCount := int64(0)
+
+		// Subscribe to JetStream with manual ack for guaranteed delivery
+		// Consumer config: durable, deliver all, manual ack
+		sub, err := s.natsJS.Subscribe("odin.token.>", func(msg *nats.Msg) {
 			count := atomic.AddInt64(&msgCount, 1)
 			if count%100 == 0 {
-				s.logger.Printf("Received %d messages from NATS", count)
+				s.logger.Printf("📬 Received %d messages from JetStream", count)
+			}
+
+			// Check if we should apply backpressure
+			s.stats.mu.RLock()
+			currentCPU := s.stats.CPUPercent
+			s.stats.mu.RUnlock()
+
+			if s.capacityManager.ShouldPauseNATS(currentCPU) {
+				// CPU too high - NAK message for redelivery
+				// JetStream will retry after configured delay
+				if err := msg.Nak(); err != nil {
+					RecordJetStreamError(ErrorSeverityWarning)
+					s.logger.Printf("⚠️  Failed to NAK message: %v", err)
+				}
+				dropped := atomic.AddInt64(&droppedCount, 1)
+				IncrementNATSDropped()
+				if dropped%100 == 0 {
+					s.logger.Printf("⚠️  Backpressure: NAK'd %d messages (CPU: %.1f%%), will retry", dropped, currentCPU)
+				}
+				return
 			}
 
 			// Track NATS message in Prometheus
 			IncrementNATSMessages()
 
-			// Submit the broadcast job to the worker pool to avoid blocking the NATS callback
+			// Submit the broadcast job to the worker pool
+			// We'll ack AFTER successful broadcast
 			s.workerPool.Submit(func() {
 				s.broadcast(msg.Data)
+
+				// Acknowledge message after successful broadcast
+				if err := msg.Ack(); err != nil {
+					RecordJetStreamError(ErrorSeverityWarning)
+					ackFails := atomic.AddInt64(&ackFailCount, 1)
+					if ackFails%100 == 0 {
+						s.logger.Printf("⚠️  Failed to ACK %d messages: %v", ackFails, err)
+					}
+				}
 			})
-		})
+		}, nats.Durable("ws-server"), nats.ManualAck(), nats.AckWait(30*time.Second))
+
 		if err != nil {
-			s.auditLogger.Critical("NATSSubscriptionFailed", "Failed to subscribe to NATS topic", map[string]interface{}{
-				"topic": "odin.token.>",
-				"error": err.Error(),
+			RecordJetStreamError(ErrorSeverityCritical)
+			s.auditLogger.Critical("JetStreamSubscriptionFailed", "Failed to subscribe to JetStream", map[string]interface{}{
+				"subject": "odin.token.>",
+				"error":   err.Error(),
 			})
-			return fmt.Errorf("failed to subscribe to nats: %w", err)
+			return fmt.Errorf("failed to subscribe to jetstream: %w", err)
 		}
-		s.logger.Printf("Subscribed to NATS topic: odin.token.> (all token updates)")
+		s.natsSubcription = sub
+		s.logger.Printf("✅ Subscribed to JetStream: odin.token.> (durable, manual ack)")
 
 		// Monitor NATS connection status
 		s.wg.Add(1)
@@ -208,6 +299,9 @@ func (s *Server) Start() error {
 	// Start memory monitoring
 	s.wg.Add(1)
 	go s.monitorMemory()
+
+	// Start dynamic capacity monitoring
+	s.capacityManager.StartMonitoring(s)
 
 	s.auditLogger.Info("ServerStarted", "WebSocket server started successfully", map[string]interface{}{
 		"addr":           s.config.Addr,
@@ -344,6 +438,24 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Reject new connections during graceful shutdown
 	if atomic.LoadInt32(&s.shuttingDown) == 1 {
 		http.Error(w, "Server is shutting down", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Dynamic admission control - check if we can safely accept this connection
+	currentConnections := atomic.LoadInt64(&s.stats.CurrentConnections)
+	s.stats.mu.RLock()
+	currentCPU := s.stats.CPUPercent
+	s.stats.mu.RUnlock()
+
+	shouldAccept, reason, cpuPct := s.capacityManager.ShouldAcceptConnection(currentConnections, currentCPU)
+	if !shouldAccept {
+		s.auditLogger.Warning("ConnectionRejected", reason, map[string]interface{}{
+			"currentConnections": currentConnections,
+			"cpuPercent":         cpuPct,
+			"maxConnections":     s.capacityManager.GetMaxConnections(),
+		})
+		connectionsFailed.Inc()
+		http.Error(w, "Server overloaded", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -549,6 +661,7 @@ func (s *Server) broadcast(message []byte) {
 			// Priority: HIGH (trading data is critical but not life-or-death)
 			envelope, err := WrapMessage(message, "price:update", PRIORITY_HIGH, client.seqGen)
 			if err != nil {
+				RecordBroadcastError(ErrorSeverityWarning)
 				s.logger.Printf("❌ Failed to wrap message for client %d: %v", client.id, err)
 				return true // Continue to next client
 			}
@@ -561,14 +674,14 @@ func (s *Server) broadcast(message []byte) {
 			// Serialize envelope to JSON for WebSocket transmission
 			data, err := envelope.Serialize()
 			if err != nil {
+				RecordSerializationError(ErrorSeverityWarning)
 				s.logger.Printf("❌ Failed to serialize message for client %d: %v", client.id, err)
 				return true // Continue to next client
 			}
 
-			// Attempt to send with timeout-based slow client detection
-			// For HIGH priority messages: 100ms timeout
-			// CRITICAL messages would use 1 second timeout
-			// NORMAL messages would use non-blocking send (drop if buffer full)
+			// Attempt to send - COMPLETELY NON-BLOCKING
+			// Critical fix: Do not use time.After() which blocks the entire broadcast
+			// Instead, immediately detect full buffers and mark client as slow
 			select {
 			case client.send <- data:
 				// Success - message queued for writePump to send
@@ -576,30 +689,28 @@ func (s *Server) broadcast(message []byte) {
 				atomic.StoreInt32(&client.sendAttempts, 0)
 				client.lastMessageSentAt = time.Now()
 
-			case <-time.After(100 * time.Millisecond):
-				// Timeout - client's send buffer is full (can't keep up)
+			default:
+				// Buffer full - client can't keep up
 				// This indicates:
 				// 1. Client on slow network (mobile, bad wifi)
 				// 2. Client device overloaded (CPU pegged, memory swapping)
 				// 3. Client code has bug (not reading messages)
 				//
-				// We CANNOT drop the message (trading platform requirement)
-				// Options:
-				// A. Block until sent (bad - blocks all other clients)
-				// B. Disconnect client (what we do - fair to other clients)
-				//
+				// CRITICAL: We do NOT block here. We increment failure counter
+				// and let the cleanup goroutine handle disconnection.
+				// This keeps broadcast fast (~1-2ms) regardless of slow clients.
 				attempts := atomic.AddInt32(&client.sendAttempts, 1)
 
 				// Log warning on first failure (avoid spam)
 				if attempts == 1 && !client.slowClientWarned {
-					s.logger.Printf("⚠️  Client %d is slow (send blocked >100ms, buffer full)", client.id)
+					s.logger.Printf("⚠️  Client %d is slow (send buffer full)", client.id)
 					client.slowClientWarned = true
 				}
 
 				// Disconnect after 3 consecutive failures (industry standard)
 				// Why 3? Balance between:
-				// - Too low (1-2): False positives from network hiccups
-				// - Too high (5+): Slow client blocks resources too long
+				// - Too low (1-2): False positives from brief network hiccups
+				// - Too high (5+): Slow client wastes resources too long
 				if attempts >= 3 {
 					s.logger.Printf("❌ Disconnecting client %d (too slow: %d consecutive send failures)", client.id, attempts)
 
@@ -607,7 +718,6 @@ func (s *Server) broadcast(message []byte) {
 					s.auditLogger.Warning("SlowClientDisconnected", "Client disconnected for being too slow", map[string]interface{}{
 						"clientID":         client.id,
 						"consecutiveFails": attempts,
-						"timeout":          "100ms",
 					})
 
 					// Send WebSocket close frame with reason code

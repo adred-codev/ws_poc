@@ -80,3 +80,47 @@ tasks:
         vars:
           TARGET_CONNECTIONS: "2000"
           DURATION: "7200"
+
+  sustained:
+    desc: Run sustained load test (gradual ramp + hold, override with TARGET_CONNECTIONS/RAMP_RATE/DURATION)
+    vars:
+      TARGET_CONNECTIONS: '{{.TARGET_CONNECTIONS | default "1500"}}'
+      RAMP_RATE: '{{.RAMP_RATE | default "100"}}'
+      DURATION: '{{.DURATION | default "1800"}}'
+      WS_URL: '{{.WS_URL | default "ws://localhost:3004/ws"}}'
+      HEALTH_URL: '{{.HEALTH_URL | default "http://localhost:3004/health"}}'
+    cmds:
+      - node {{.SCRIPTS_DIR}}/sustained-load-test.cjs
+    env:
+      TARGET_CONNECTIONS: '{{.TARGET_CONNECTIONS}}'
+      RAMP_RATE: '{{.RAMP_RATE}}'
+      DURATION: '{{.DURATION}}'
+      WS_URL: '{{.WS_URL}}'
+      HEALTH_URL: '{{.HEALTH_URL}}'
+
+  sustained:short:
+    desc: Run sustained load test - 10 min (1000 connections, 100/sec ramp)
+    cmds:
+      - task: sustained
+        vars:
+          TARGET_CONNECTIONS: "1000"
+          RAMP_RATE: "100"
+          DURATION: "600"
+
+  sustained:medium:
+    desc: Run sustained load test - 30 min (1500 connections, 100/sec ramp)
+    cmds:
+      - task: sustained
+        vars:
+          TARGET_CONNECTIONS: "1500"
+          RAMP_RATE: "100"
+          DURATION: "1800"
+
+  sustained:long:
+    desc: Run sustained load test - 60 min (1500 connections, 100/sec ramp)
+    cmds:
+      - task: sustained
+        vars:
+          TARGET_CONNECTIONS: "1500"
+          RAMP_RATE: "100"
+          DURATION: "3600"

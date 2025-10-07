@@ -101,6 +101,21 @@ class TokenPricePublisher {
         reconnectTimeWait: 2000
       });
       console.log('✅ Connected to NATS server');
+
+      // Initialize JetStream for guaranteed delivery
+      const js = this.nats.jetstream();
+      const jsm = await this.nats.jetstreamManager();
+
+      // Ensure stream exists (server creates it, but publisher can verify)
+      try {
+        const streamInfo = await jsm.streams.info("ODIN_TOKENS");
+        console.log(`✅ JetStream stream exists: ODIN_TOKENS (${streamInfo.state.messages} messages)`);
+      } catch (err) {
+        // Stream doesn't exist, server will create it
+        console.log('ℹ️  JetStream stream will be created by server on first connection');
+      }
+
+      console.log('✅ JetStream initialized for reliable publishing');
     } catch (error) {
       console.error('❌ NATS connection failed:', error);
       process.exit(1);
