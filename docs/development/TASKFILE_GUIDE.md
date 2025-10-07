@@ -2,6 +2,39 @@
 
 Complete guide to using the Taskfile for streamlined development workflow.
 
+## 🏗️ Modular Structure
+
+The project uses a **modular Taskfile structure** for better organization and maintainability:
+
+```
+Taskfile.yml                 # Main orchestrator
+taskfiles/
+├── build.yml               # Build tasks
+├── docker.yml              # Docker management
+├── dev.yml                 # Development tasks
+├── test.yml                # Testing tasks
+├── monitor.yml             # Monitoring & health checks
+├── publisher.yml           # Publisher control
+├── utils.yml               # Utilities (install, format, clean)
+├── deploy-gcp.yml          # GCP deployment (360 lines of automation!)
+└── README.md               # Module documentation
+```
+
+**Benefits:**
+- ✅ Better organization (~50-80 lines per module vs 383-line monolith)
+- ✅ Clear namespacing (`build:`, `docker:`, `gcp:`, etc.)
+- ✅ Easy to find and modify tasks
+- ✅ Reduced merge conflicts
+
+**All tasks are namespaced by module:**
+```bash
+task build:go           # From taskfiles/build.yml
+task docker:up          # From taskfiles/docker.yml
+task gcp:deploy:initial # From taskfiles/deploy-gcp.yml
+```
+
+See [taskfiles/README.md](../../taskfiles/README.md) for module details.
+
 ## Prerequisites
 
 Install Task:
@@ -18,9 +51,17 @@ npm install -g @go-task/cli
 
 ## Quick Reference
 
-List all available tasks:
 ```bash
+# List top-level tasks
 task --list
+
+# List ALL tasks (including subtasks)
+task --list-all
+
+# View tasks by module
+task build:      # Shows: build:go, build:docker, etc.
+task docker:     # Shows: docker:up, docker:down, etc.
+task gcp:        # Shows: gcp:setup, gcp:deploy:initial, etc.
 ```
 
 ## Build Tasks
@@ -423,6 +464,77 @@ task dev:publisher
 # Terminal 4: Run tests
 task test:light
 ```
+
+## GCP Deployment Tasks
+
+**New!** Complete GCP deployment automation in `taskfiles/deploy-gcp.yml` (360 lines).
+
+### Infrastructure Setup
+
+```bash
+task gcp:setup           # Configure gcloud CLI and authenticate
+task gcp:enable-apis     # Enable required GCP APIs
+task gcp:firewall        # Create firewall rules
+task gcp:create-vm       # Create VM instance with Docker
+task gcp:reserve-ip      # Reserve and assign static IP
+```
+
+### Deployment
+
+```bash
+task gcp:deploy:initial  # First-time deployment (interactive)
+task gcp:deploy:update   # Update existing deployment
+task gcp:systemd         # Setup auto-start service
+```
+
+### Operations
+
+```bash
+task gcp:ssh             # SSH into GCP instance
+task gcp:ip              # Get external IP address
+task gcp:health          # Check deployment health
+task gcp:logs            # View application logs
+task gcp:logs:tail       # View last 100 lines
+task gcp:restart         # Restart services via systemd
+```
+
+### VM Lifecycle
+
+```bash
+task gcp:start           # Start VM instance
+task gcp:stop            # Stop VM (save money)
+task gcp:status          # Show VM status
+task gcp:delete          # Delete VM (WARNING - destructive!)
+```
+
+### Maintenance
+
+```bash
+task gcp:backup          # Create Prometheus/Grafana backups
+```
+
+### Combined Workflows
+
+```bash
+task gcp:full-deploy     # Complete deployment (setup → create → deploy)
+task gcp:quick-check     # Quick health and status check
+```
+
+### Environment Variable Overrides
+
+```bash
+# Custom project/region/zone
+export GCP_PROJECT_ID=my-project
+export GCP_REGION=us-west1
+export GCP_ZONE=us-west1-a
+
+# Custom machine type
+export GCP_MACHINE_TYPE=e2-standard-2
+```
+
+See [GCP Deployment Guide](../deployment/GCP_DEPLOYMENT.md) for detailed instructions and [taskfiles/README.md](../../taskfiles/README.md) for implementation details.
+
+---
 
 ## Tips
 

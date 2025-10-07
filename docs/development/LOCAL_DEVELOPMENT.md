@@ -428,6 +428,300 @@ node --prof dist/publisher.js
 node --prof-process isolate-*.log > profile.txt
 ```
 
+## Docker-Based Development
+
+For a complete local environment with monitoring, use Docker Compose:
+
+### Quick Start with Docker
+
+```bash
+# Install dependencies
+task utils:install
+
+# Or use the combined setup workflow
+task setup               # Installs + builds + starts services
+
+# Start all services (NATS, Go server, Publisher, Prometheus, Grafana, Loki, Promtail)
+task docker:up
+
+# Run stress test
+task test:medium
+
+# Open monitoring dashboards
+task monitor:grafana     # Metrics dashboard
+task monitor:logs        # Logs dashboard
+
+# Control publisher
+task publisher:start RATE=10
+```
+
+### Service URLs
+
+| Service | URL | Description | Credentials |
+|---------|-----|-------------|-------------|
+| Go WebSocket | ws://localhost:3004/ws | Production WebSocket server | - |
+| Go Health | http://localhost:3004/health | Health check endpoint | - |
+| Go Metrics | http://localhost:3004/metrics | Prometheus metrics | - |
+| Publisher API | http://localhost:3003/control | Publisher control API | - |
+| Publisher Stats | http://localhost:3003/stats | Publisher statistics | - |
+| Grafana | http://localhost:3010 | Monitoring dashboards | admin/admin |
+| Prometheus | http://localhost:9091 | Metrics database | - |
+| Loki | http://localhost:3101 | Log aggregation | - |
+| NATS | nats://localhost:4222 | Message broker | - |
+
+### Available Commands
+
+```bash
+# List all available tasks
+task --list
+
+# List all tasks (including subtasks)
+task --list-all
+
+# View tasks by category
+task build:       # Build-related tasks
+task docker:      # Docker management
+task dev:         # Development tasks
+task test:        # Testing tasks
+task monitor:     # Monitoring & health checks
+task publisher:   # Publisher control
+task utils:       # Utilities (install, format, clean)
+```
+
+### Docker Management
+
+```bash
+# Start all services
+task docker:up
+
+# Stop all services
+task docker:down
+
+# Restart all services
+task docker:restart
+
+# Rebuild and restart specific service
+task docker:rebuild SERVICE=ws-go
+task docker:rebuild SERVICE=publisher
+
+# View all logs
+task docker:logs
+
+# View specific service logs
+task docker:logs:go
+task docker:logs:publisher
+
+# Show running containers
+task docker:ps
+
+# Remove all containers, volumes, and orphans
+task docker:clean
+```
+
+## Testing
+
+### Stress Tests
+
+```bash
+# Light load (100 connections, 30 seconds)
+task test:light
+
+# Medium load (500 connections, 60 seconds)
+task test:medium
+
+# Heavy load (2000 connections, 120 seconds)
+task test:heavy
+
+# Custom load with variable overrides
+task test:custom CONNECTIONS=1000 DURATION=90 SERVER=go2
+
+# Override individual test parameters
+CONNECTIONS=250 task test:light        # 250 connections, 30s
+DURATION=120 task test:medium          # 500 connections, 120s
+SERVER=go2 task test:heavy             # Use go2 server
+```
+
+### Realistic Trading Simulation
+
+Simulates real-world crypto trading platform behavior with auto-balancing:
+
+```bash
+# Short test (5 minutes, 300 connections)
+task test:realistic:short
+
+# Medium test (30 minutes, 1000 connections)
+task test:realistic:medium
+
+# Long test (2 hours, 2000 connections)
+task test:realistic:long
+
+# Custom realistic test
+task test:realistic TARGET_CONNECTIONS=1500 DURATION=3600
+```
+
+**Features:**
+- Auto-balancing based on server health
+- Realistic trader behavior patterns (5 types)
+- Gradual connection ramp-up
+- Variable session durations (30s to 48h)
+- Peak hour simulation
+- Reconnection logic (70% reconnect rate)
+- Health-based load adjustment
+
+**Monitor results in real-time:**
+- **Metrics Dashboard**: http://localhost:3010 (Grafana - admin/admin)
+- **Logs Dashboard**: `task monitor:logs` or http://localhost:3010/d/websocket-logs-v2
+
+## Monitoring
+
+### Metrics Dashboard
+
+Access Grafana at http://localhost:3010 (admin/admin) for complete observability.
+
+**Key Metrics:**
+- Active WebSocket connections (real-time count)
+- Message throughput (messages/sec sent and received)
+- CPU and memory usage
+- Error rates (connection failures, slow clients)
+- NATS connection status
+
+**Dashboard Panels:**
+1. Active Connections (Gauge)
+2. Connections Over Time (Graph)
+3. Message Rate (Graph)
+4. Bandwidth (Graph)
+5. CPU Usage (Graph)
+6. Memory Usage (Graph)
+7. Goroutines (Graph)
+8. Reliability Metrics (Graph)
+9. NATS Status (Gauge)
+
+### Logs Dashboard
+
+Real-time log streaming with auto-refresh (5s):
+
+```bash
+# Open logs dashboard in browser
+task monitor:logs
+
+# Query logs directly from CLI
+task monitor:loki CONTAINER=odin-ws-go
+task monitor:loki CONTAINER=odin-publisher
+task monitor:loki CONTAINER=odin-nats
+```
+
+**Available Log Panels:**
+1. Go WebSocket Server Logs - All server logs
+2. Publisher Logs - NATS publisher activity
+3. NATS Logs - Message broker logs
+4. Message Broadcasts - Filtered WebSocket message logs
+5. Price Updates - Filtered publisher price updates
+
+**Log Filtering Examples:**
+- View only errors: Add `|~ "(?i)error"` to query
+- View broadcasts: `{container_name="odin-ws-go"} |~ "(?i)(broadcast|message)"`
+- View price updates: `{container_name="odin-publisher"} |~ "(?i)(publish|token|price)"`
+
+See [Monitoring Setup Guide](../monitoring/MONITORING_SETUP.md) for configuration details.
+
+### Monitoring Commands
+
+```bash
+# Check all health endpoints
+task monitor:health
+
+# Check only Go server health
+task monitor:health:go
+
+# View raw Prometheus metrics
+task monitor:metrics
+
+# Open Grafana dashboard
+task monitor:grafana
+
+# Open Prometheus UI
+task monitor:prometheus
+
+# Check Prometheus scrape targets
+task monitor:targets
+
+# View publisher statistics
+task monitor:publisher:stats
+```
+
+## Publisher Control
+
+```bash
+# Start publishing messages
+task publisher:start
+
+# Start with specific rate (msgs/sec)
+task publisher:start RATE=10
+
+# Stop publishing messages
+task publisher:stop
+
+# Configure publisher message rate
+task publisher:configure RATE=20
+
+# View publisher statistics
+task monitor:publisher:stats
+```
+
+## Common Workflows
+
+### First Time Setup
+```bash
+task setup
+```
+
+### Daily Development
+```bash
+# Start services
+task docker:up
+
+# Make changes to code...
+
+# Rebuild and restart specific service
+task docker:rebuild SERVICE=ws-go
+
+# View logs
+task docker:logs:go
+```
+
+### Testing Changes
+```bash
+# Build and start
+task docker:up
+
+# Run tests
+task test:medium
+
+# Check metrics
+task monitor:grafana
+```
+
+### Clean Restart
+```bash
+task docker:clean
+task docker:up
+```
+
+### Local Development (No Docker - Services Only)
+```bash
+# Terminal 1: NATS only
+task dev:nats
+
+# Terminal 2: Go server
+task dev:go
+
+# Terminal 3: Publisher
+task dev:publisher
+
+# Terminal 4: Run tests
+task test:light
+```
+
 ## Tips
 
 1. **Use Task Commands**: Prefer `task` commands over manual commands for consistency
@@ -443,3 +737,9 @@ node --prof-process isolate-*.log > profile.txt
 6. **Test Frequently**: Run stress tests frequently during development
 
 7. **Monitor Resources**: Keep an eye on CPU and memory usage during development
+
+8. **Use Grafana**: Monitor metrics in real-time at http://localhost:3010
+
+9. **Check Health**: Use `task monitor:health` to verify all services are healthy
+
+10. **Realistic Testing**: Use `task test:realistic` for production-like load patterns

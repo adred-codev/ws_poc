@@ -1,367 +1,62 @@
 version: '3'
 
-vars:
-  GO_SERVER_DIR: ./src
-  PUBLISHER_DIR: ./publisher
-  SCRIPTS_DIR: ./scripts
+# Main Taskfile - Orchestrates all sub-taskfiles
+# Run 'task --list' to see all available tasks
+
+includes:
+  build:
+    taskfile: ./taskfiles/build.yml
+    dir: .
+  docker:
+    taskfile: ./taskfiles/docker.yml
+    dir: .
+  dev:
+    taskfile: ./taskfiles/dev.yml
+    dir: .
+  test:
+    taskfile: ./taskfiles/test.yml
+    dir: .
+  monitor:
+    taskfile: ./taskfiles/monitor.yml
+    dir: .
+  publisher:
+    taskfile: ./taskfiles/publisher.yml
+    dir: .
+  utils:
+    taskfile: ./taskfiles/utils.yml
+    dir: .
+  gcp:
+    taskfile: ./taskfiles/deploy-gcp.yml
+    dir: .
+
+# === COMBINED WORKFLOWS ===
+# Common task combinations for quick access
 
 tasks:
-  # === BUILD TASKS ===
-  build:go:
-    desc: Build Go server binary locally
-    dir: "{{.GO_SERVER_DIR}}"
+  default:
+    desc: Show available task categories
     cmds:
-      - go build -o server .
-    sources:
-      - "*.go"
-      - go.mod
-      - go.sum
+      - echo "📋 Available task categories:"
+      - echo ""
+      - echo "  build:*      - Build Go server and TypeScript publisher"
+      - echo "  docker:*     - Docker container management"
+      - echo "  dev:*        - Local development tasks"
+      - echo "  test:*       - Stress testing and load testing"
+      - echo "  monitor:*    - Health checks and monitoring"
+      - echo "  publisher:*  - Publisher control (start/stop/configure)"
+      - echo "  utils:*      - Install, format, clean utilities"
+      - echo "  gcp:*        - GCP deployment and management"
+      - echo ""
+      - echo "  setup        - Complete local setup (install → build → start)"
+      - echo "  quick-start  - Quick start for testing (docker:up → test:light)"
+      - echo "  full-test    - Full test workflow (docker:up → test:medium → stats)"
+      - echo ""
+      - echo "Run 'task --list-all' to see all available tasks"
 
-  build:publisher:
-    desc: Compile TypeScript publisher
-    dir: "{{.PUBLISHER_DIR}}"
-    cmds:
-      - npm run build
-    sources:
-      - "*.ts"
-      - "config/**/*.ts"
-      - "types/**/*.ts"
-      - tsconfig.json
-
-  build:docker:
-    desc: Build all Docker images
-    cmds:
-      - task: build:docker:go
-      - task: build:docker:publisher
-
-  build:docker:go:
-    desc: Build Go server Docker image
-    cmds:
-      - docker compose build ws-go
-
-  build:docker:publisher:
-    desc: Build publisher Docker image
-    cmds:
-      - docker compose build publisher
-
-  build:all:
-    desc: Build everything (local + Docker)
-    cmds:
-      - task: build:go
-      - task: build:publisher
-      - task: build:docker
-
-  # === DOCKER MANAGEMENT ===
-  docker:up:
-    desc: Start all services (detached)
-    cmds:
-      - docker compose up -d
-      - echo "✅ All services started"
-      - echo "   WebSocket ws://localhost:3004/ws"
-      - echo "   Health http://localhost:3004/health"
-      - echo "   Publisher http://localhost:3003/stats"
-      - echo "   Grafana http://localhost:3010 (admin/admin)"
-      - echo "   Prometheus http://localhost:9091"
-
-  docker:down:
-    desc: Stop and remove all containers
-    cmds:
-      - docker compose down
-
-  docker:restart:
-    desc: Restart all services
-    cmds:
-      - task: docker:down
-      - task: docker:up
-
-  docker:rebuild:
-    desc: Rebuild and restart specific service (SERVICE=ws-go|publisher)
-    cmds:
-      - docker compose up -d --build {{.SERVICE}}
-
-  docker:logs:
-    desc: Tail all service logs
-    cmds:
-      - docker compose logs -f
-
-  docker:logs:go:
-    desc: Tail Go server logs
-    cmds:
-      - docker compose logs -f ws-go
-
-  docker:logs:publisher:
-    desc: Tail publisher logs
-    cmds:
-      - docker compose logs -f publisher
-
-  docker:logs:nats:
-    desc: Tail NATS logs
-    cmds:
-      - docker compose logs -f nats
-
-  docker:logs:prometheus:
-    desc: Tail Prometheus logs
-    cmds:
-      - docker compose logs -f prometheus
-
-  docker:logs:grafana:
-    desc: Tail Grafana logs
-    cmds:
-      - docker compose logs -f grafana
-
-  docker:ps:
-    desc: Show running containers
-    cmds:
-      - docker compose ps
-
-  docker:clean:
-    desc: Remove containers, volumes, and orphans
-    cmds:
-      - docker compose down -v --remove-orphans
-      - echo "✅ Cleaned up all Docker resources"
-
-  # === DEVELOPMENT ===
-  dev:go:
-    desc: Run Go server locally (outside Docker)
-    dir: "{{.GO_SERVER_DIR}}"
-    cmds:
-      - go run . -addr=:3002 -nats=nats://localhost:4222
-
-  dev:publisher:
-    desc: Run publisher locally
-    dir: "{{.PUBLISHER_DIR}}"
-    cmds:
-      - npm run dev
-
-  dev:nats:
-    desc: Start only NATS container for local development
-    cmds:
-      - docker compose up -d nats
-      - echo "✅ NATS started on nats://localhost:4222"
-
-  # === TESTING ===
-  test:light:
-    desc: Run light stress test (100 connections, 30s, override with CONNECTIONS/DURATION/SERVER)
-    vars:
-      CONNECTIONS: '{{.CONNECTIONS | default "100"}}'
-      DURATION: '{{.DURATION | default "30"}}'
-      SERVER: '{{.SERVER | default "go2"}}'
-    cmds:
-      - node {{.SCRIPTS_DIR}}/stress-test-high-load.cjs {{.CONNECTIONS}} {{.DURATION}} {{.SERVER}}
-
-  test:medium:
-    desc: Run medium stress test (500 connections, 60s, override with CONNECTIONS/DURATION/SERVER)
-    vars:
-      CONNECTIONS: '{{.CONNECTIONS | default "500"}}'
-      DURATION: '{{.DURATION | default "60"}}'
-      SERVER: '{{.SERVER | default "go2"}}'
-    cmds:
-      - node {{.SCRIPTS_DIR}}/stress-test-high-load.cjs {{.CONNECTIONS}} {{.DURATION}} {{.SERVER}}
-
-  test:heavy:
-    desc: Run heavy stress test (2000 connections, 120s, override with CONNECTIONS/DURATION/SERVER)
-    vars:
-      CONNECTIONS: '{{.CONNECTIONS | default "2000"}}'
-      DURATION: '{{.DURATION | default "120"}}'
-      SERVER: '{{.SERVER | default "go2"}}'
-    cmds:
-      - node {{.SCRIPTS_DIR}}/stress-test-high-load.cjs {{.CONNECTIONS}} {{.DURATION}} {{.SERVER}}
-
-  test:custom:
-    desc: Run custom stress test (use CONNECTIONS/DURATION/SERVER vars)
-    vars:
-      CONNECTIONS: '{{.CONNECTIONS | default "100"}}'
-      DURATION: '{{.DURATION | default "30"}}'
-      SERVER: '{{.SERVER | default "go2"}}'
-    cmds:
-      - node {{.SCRIPTS_DIR}}/stress-test-high-load.cjs {{.CONNECTIONS}} {{.DURATION}} {{.SERVER}}
-
-  test:realistic:
-    desc: Run realistic trading traffic simulation (auto-balances, override with TARGET_CONNECTIONS/DURATION)
-    vars:
-      TARGET_CONNECTIONS: '{{.TARGET_CONNECTIONS | default "1000"}}'
-      DURATION: '{{.DURATION | default "3600"}}'
-      WS_URL: '{{.WS_URL | default "ws://localhost:3004/ws"}}'
-    cmds:
-      - node {{.SCRIPTS_DIR}}/realistic-trading-simulator.cjs
-    env:
-      TARGET_CONNECTIONS: '{{.TARGET_CONNECTIONS}}'
-      DURATION: '{{.DURATION}}'
-      WS_URL: '{{.WS_URL}}'
-
-  test:realistic:short:
-    desc: Run realistic simulation for 5 minutes (300 connections)
-    cmds:
-      - task: test:realistic
-        vars:
-          TARGET_CONNECTIONS: "300"
-          DURATION: "300"
-
-  test:realistic:medium:
-    desc: Run realistic simulation for 30 minutes (1000 connections)
-    cmds:
-      - task: test:realistic
-        vars:
-          TARGET_CONNECTIONS: "1000"
-          DURATION: "1800"
-
-  test:realistic:long:
-    desc: Run realistic simulation for 2 hours (2000 connections)
-    cmds:
-      - task: test:realistic
-        vars:
-          TARGET_CONNECTIONS: "2000"
-          DURATION: "7200"
-
-  # === MONITORING ===
-  monitor:health:
-    desc: Check all health endpoints
-    cmds:
-      - echo "🔍 Checking health endpoints..."
-      - echo "\n📊 Go Server:"
-      - curl -s http://localhost:3004/health | jq '.' || echo "❌ Go server not responding"
-      - echo "\n📡 Publisher:"
-      - curl -s http://localhost:3003/health | jq '.' || echo "❌ Publisher not responding"
-      - echo "\n✅ Health check complete"
-
-  monitor:health:go:
-    desc: Check Go server health
-    cmds:
-      - curl -s http://localhost:3004/health | jq '.'
-
-  monitor:metrics:
-    desc: View Go server Prometheus metrics
-    cmds:
-      - curl -s http://localhost:3004/metrics
-
-  monitor:publisher:stats:
-    desc: View publisher statistics
-    cmds:
-      - curl -s http://localhost:3003/stats | jq '.'
-
-  monitor:grafana:
-    desc: Open Grafana dashboard in browser
-    cmds:
-      - open http://localhost:3010 || xdg-open http://localhost:3010 || echo "Open http://localhost:3010 in your browser"
-
-  monitor:prometheus:
-    desc: Open Prometheus UI in browser
-    cmds:
-      - open http://localhost:9091 || xdg-open http://localhost:9091 || echo "Open http://localhost:9091 in your browser"
-
-  monitor:targets:
-    desc: Check Prometheus scrape targets status
-    cmds:
-      - "curl -s http://localhost:9091/api/v1/targets | jq '.data.activeTargets[] | {job: .labels.job, state: .health}'"
-
-  monitor:logs:
-    desc: Open Grafana logs dashboard in browser
-    cmds:
-      - open "http://localhost:3010/d/websocket-logs-v2" || xdg-open "http://localhost:3010/d/websocket-logs-v2" || echo "Open http://localhost:3010/d/websocket-logs-v2 in your browser"
-
-  monitor:loki:
-    desc: Query Loki logs directly (CONTAINER=odin-ws-go QUERY='')
-    vars:
-      CONTAINER: '{{.CONTAINER | default "odin-ws-go"}}'
-      QUERY: '{{.QUERY | default ""}}'
-    cmds:
-      - |
-        curl -s -G "http://localhost:3101/loki/api/v1/query_range" \
-          --data-urlencode 'query={container_name="{{.CONTAINER}}"}{{.QUERY}}' \
-          --data-urlencode "start=$(date -u -v-5M '+%s')000000000" \
-          --data-urlencode "end=$(date -u '+%s')000000000" \
-          | jq '.data.result[] | .values[] | .[1]' -r
-
-  # === PUBLISHER CONTROL ===
-  publisher:start:
-    desc: Start publishing messages (override with RATE=10)
-    vars:
-      RATE: '{{.RATE | default "10"}}'
-    cmds:
-      - |
-        curl -X POST http://localhost:3003/control \
-          -H "Content-Type: application/json" \
-          -d '{"action":"start","messagesPerSecond":{{.RATE}}}' | jq '.'
-
-  publisher:stop:
-    desc: Stop publishing messages
-    cmds:
-      - |
-        curl -X POST http://localhost:3003/control \
-          -H "Content-Type: application/json" \
-          -d '{"action":"stop"}' | jq '.'
-
-  publisher:configure:
-    desc: Configure publisher (override with RATE=10)
-    vars:
-      RATE: '{{.RATE | default "10"}}'
-    cmds:
-      - |
-        curl -X POST http://localhost:3003/control \
-          -H "Content-Type: application/json" \
-          -d '{"action":"configure","messagesPerSecond":{{.RATE}}}' | jq '.'
-
-  # === UTILITIES ===
-  install:
-    desc: Install all dependencies
-    cmds:
-      - task: install:go
-      - task: install:publisher
-
-  install:go:
-    desc: Install Go dependencies
-    dir: "{{.GO_SERVER_DIR}}"
-    cmds:
-      - go mod download
-
-  install:publisher:
-    desc: Install publisher Node.js dependencies
-    dir: "{{.PUBLISHER_DIR}}"
-    cmds:
-      - npm install
-
-  format:
-    desc: Format all code
-    cmds:
-      - task: format:go
-      - task: format:ts
-
-  format:go:
-    desc: Format Go code
-    dir: "{{.GO_SERVER_DIR}}"
-    cmds:
-      - gofmt -w .
-
-  format:ts:
-    desc: Format TypeScript code
-    dir: "{{.PUBLISHER_DIR}}"
-    cmds:
-      - npm run format || echo "⚠️  Prettier not configured"
-
-  clean:
-    desc: Clean all build artifacts
-    cmds:
-      - task: clean:go
-      - task: clean:publisher
-
-  clean:go:
-    desc: Clean Go build artifacts
-    dir: "{{.GO_SERVER_DIR}}"
-    cmds:
-      - rm -f server
-      - go clean
-
-  clean:publisher:
-    desc: Clean publisher build artifacts
-    dir: "{{.PUBLISHER_DIR}}"
-    cmds:
-      - npm run clean || rm -rf dist
-
-  # === COMBINED WORKFLOWS ===
   setup:
     desc: Complete setup (install → build → start)
     cmds:
-      - task: install
+      - task: utils:install
       - task: build:docker
       - task: docker:up
 

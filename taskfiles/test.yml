@@ -1,0 +1,80 @@
+version: '3'
+
+# Testing and stress testing tasks
+
+vars:
+  SCRIPTS_DIR: ../scripts
+
+tasks:
+  light:
+    desc: Run light stress test (100 connections, 30s, override with CONNECTIONS/DURATION/SERVER)
+    vars:
+      CONNECTIONS: '{{.CONNECTIONS | default "100"}}'
+      DURATION: '{{.DURATION | default "30"}}'
+      SERVER: '{{.SERVER | default "go2"}}'
+    cmds:
+      - node {{.SCRIPTS_DIR}}/stress-test-high-load.cjs {{.CONNECTIONS}} {{.DURATION}} {{.SERVER}}
+
+  medium:
+    desc: Run medium stress test (500 connections, 60s, override with CONNECTIONS/DURATION/SERVER)
+    vars:
+      CONNECTIONS: '{{.CONNECTIONS | default "500"}}'
+      DURATION: '{{.DURATION | default "60"}}'
+      SERVER: '{{.SERVER | default "go2"}}'
+    cmds:
+      - node {{.SCRIPTS_DIR}}/stress-test-high-load.cjs {{.CONNECTIONS}} {{.DURATION}} {{.SERVER}}
+
+  heavy:
+    desc: Run heavy stress test (2000 connections, 120s, override with CONNECTIONS/DURATION/SERVER)
+    vars:
+      CONNECTIONS: '{{.CONNECTIONS | default "2000"}}'
+      DURATION: '{{.DURATION | default "120"}}'
+      SERVER: '{{.SERVER | default "go2"}}'
+    cmds:
+      - node {{.SCRIPTS_DIR}}/stress-test-high-load.cjs {{.CONNECTIONS}} {{.DURATION}} {{.SERVER}}
+
+  custom:
+    desc: Run custom stress test (use CONNECTIONS/DURATION/SERVER vars)
+    vars:
+      CONNECTIONS: '{{.CONNECTIONS | default "100"}}'
+      DURATION: '{{.DURATION | default "30"}}'
+      SERVER: '{{.SERVER | default "go2"}}'
+    cmds:
+      - node {{.SCRIPTS_DIR}}/stress-test-high-load.cjs {{.CONNECTIONS}} {{.DURATION}} {{.SERVER}}
+
+  realistic:
+    desc: Run realistic trading traffic simulation (auto-balances, override with TARGET_CONNECTIONS/DURATION)
+    vars:
+      TARGET_CONNECTIONS: '{{.TARGET_CONNECTIONS | default "1000"}}'
+      DURATION: '{{.DURATION | default "3600"}}'
+      WS_URL: '{{.WS_URL | default "ws://localhost:3004/ws"}}'
+    cmds:
+      - node {{.SCRIPTS_DIR}}/realistic-trading-simulator.cjs
+    env:
+      TARGET_CONNECTIONS: '{{.TARGET_CONNECTIONS}}'
+      DURATION: '{{.DURATION}}'
+      WS_URL: '{{.WS_URL}}'
+
+  realistic:short:
+    desc: Run realistic simulation for 5 minutes (300 connections)
+    cmds:
+      - task: realistic
+        vars:
+          TARGET_CONNECTIONS: "300"
+          DURATION: "300"
+
+  realistic:medium:
+    desc: Run realistic simulation for 30 minutes (1000 connections)
+    cmds:
+      - task: realistic
+        vars:
+          TARGET_CONNECTIONS: "1000"
+          DURATION: "1800"
+
+  realistic:long:
+    desc: Run realistic simulation for 2 hours (2000 connections)
+    cmds:
+      - task: realistic
+        vars:
+          TARGET_CONNECTIONS: "2000"
+          DURATION: "7200"

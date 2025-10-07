@@ -4,15 +4,75 @@ Deploy to single GCE VM using Docker Compose. Start simple, scale later.
 
 ---
 
+## 🚀 TL;DR - Automated Deployment
+
+The deployment process is now **fully automated** via Taskfile commands:
+
+```bash
+# Complete deployment workflow
+task gcp:full-deploy
+
+# Or step-by-step:
+task gcp:setup           # Configure GCP CLI
+task gcp:enable-apis     # Enable required APIs
+task gcp:firewall        # Create firewall rules
+task gcp:create-vm       # Create VM instance
+task gcp:reserve-ip      # Reserve static IP (optional)
+task gcp:deploy:initial  # First-time deployment (interactive)
+task gcp:systemd         # Setup auto-start service
+```
+
+**See [taskfiles/README.md](../../taskfiles/README.md) for all GCP tasks.**
+
+---
+
+## 🛠️ Production Operations Quick Reference
+
+Common commands for managing your production deployment:
+
+```bash
+# Check deployment status and health
+task gcp:status              # Show VM status
+task gcp:health              # Check application health
+task gcp:ip                  # Get external IP address
+
+# View logs and debugging
+task gcp:logs                # View application logs
+task gcp:logs:tail           # View last 100 lines
+task gcp:ssh                 # SSH into GCP instance
+
+# Service management
+task gcp:restart             # Restart services via systemd
+task gcp:deploy:update       # Update to latest code
+
+# VM lifecycle (cost management)
+task gcp:stop                # Stop VM (save money when not in use)
+task gcp:start               # Start stopped VM
+
+# Maintenance
+task gcp:backup              # Create Prometheus/Grafana backups
+task gcp:quick-check         # Quick health and status check
+```
+
+**Service URLs (replace `$EXTERNAL_IP` with your IP from `task gcp:ip`):**
+- WebSocket: `ws://$EXTERNAL_IP:3004/ws`
+- Health Check: `http://$EXTERNAL_IP:3004/health`
+- Grafana Dashboard: `http://$EXTERNAL_IP:3010` (admin/admin)
+- Prometheus: `http://$EXTERNAL_IP:9091`
+
+---
+
 ## Quick Start
 
-**Phase 1 (Now):** Single VM, IP address only, no SSL
+**Phase 1 (Now):** Single VM, IP address only, no SSL (Automated via tasks)
 **Phase 2 (Later):** Add domain + SSL
 **Phase 3 (Future):** Add load balancer for scaling
 
 ---
 
 ## Phase 1: Deploy to Single VM
+
+> **Note:** All commands below are available as automated tasks. See the TL;DR section above.
 
 ### Prerequisites
 
@@ -35,8 +95,13 @@ gcloud config set compute/region $REGION
 gcloud config set compute/zone $ZONE
 ```
 
+**OR** use automated task: `task gcp:setup`
+
 ### Step 1: Enable APIs
 
+**Automated:** `task gcp:enable-apis`
+
+**Manual:**
 ```bash
 # Enable required APIs
 gcloud services enable compute.googleapis.com
@@ -47,8 +112,13 @@ gcloud services enable compute.googleapis.com
 gcloud services list --enabled
 ```
 
+**OR** use automated task: `task gcp:enable-apis`
+
 ### Step 2: Create Firewall Rules
 
+**Automated:** `task gcp:firewall`
+
+**Manual:**
 ```bash
 # Allow SSH (default - already exists)
 gcloud compute firewall-rules list | grep default-allow-ssh
@@ -71,8 +141,13 @@ gcloud compute firewall-rules create allow-grafana \
 gcloud compute firewall-rules list --filter="name~'allow-'"
 ```
 
+**OR** use automated task: `task gcp:firewall`
+
 ### Step 3: Create VM Instance
 
+**Automated:** `task gcp:create-vm`
+
+**Manual:**
 ```bash
 # Create VM 
 # Note $ZONE has to be defined
@@ -113,8 +188,13 @@ echo "WebSocket URL: ws://$EXTERNAL_IP:3004/ws"
 echo "Grafana URL: http://$EXTERNAL_IP:3010"
 ```
 
+**OR** use automated task: `task gcp:create-vm`
+
 ### Step 4: Reserve Static IP (Optional but Recommended)
 
+**Automated:** `task gcp:reserve-ip`
+
+**Manual:**
 ```bash
 # Create static IP
 # Note $REGION has to be defined
@@ -143,8 +223,13 @@ export EXTERNAL_IP=$STATIC_IP
 echo "Static IP assigned: $EXTERNAL_IP"
 ```
 
+**OR** use automated task: `task gcp:reserve-ip`
+
 ### Step 5: SSH and Setup Application
 
+**Automated:** `task gcp:deploy:initial` (follow interactive prompts)
+
+**Manual:**
 ```bash
 # SSH into instance
 gcloud compute ssh odin-ws-server --zone=$ZONE
@@ -241,8 +326,11 @@ services:
 EOF
 ```
 
+**Note:** For automated deployment, follow instructions from `task gcp:deploy:initial`
+
 ### Step 6: Build and Start Services
 
+**From VM after initial setup:**
 ```bash
 # Build Docker images
 task build:docker
@@ -273,6 +361,9 @@ curl http://localhost:3004/health | jq '.'
 
 ### Step 7: Create Systemd Service (Auto-start on Reboot)
 
+**Automated:** `task gcp:systemd`
+
+**Manual:**
 ```bash
 # Exit from deploy user
 exit
@@ -314,6 +405,9 @@ exit
 
 ### Step 8: Verify Deployment from Local Machine
 
+**Automated:** `task gcp:health`
+
+**Manual:**
 ```bash
 # Test health endpoint
 curl http://$EXTERNAL_IP:3004/health | jq '.'
@@ -676,80 +770,60 @@ gcloud compute backend-services add-backend odin-ws-backend \
 
 ## Taskfile Integration
 
-Add GCP tasks to `Taskfile.yml`:
+**✅ Already implemented!** All GCP tasks are available in `taskfiles/deploy-gcp.yml`.
 
-```yaml
-# Add to existing Taskfile.yml
+### Available GCP Tasks
 
-vars:
-  GCP_PROJECT_ID: odin-ws-server
-  GCP_ZONE: us-central1-a
-  GCP_INSTANCE: odin-ws-server
+```bash
+# Infrastructure
+task gcp:setup           # Configure gcloud CLI
+task gcp:enable-apis     # Enable GCP APIs
+task gcp:firewall        # Create firewall rules
+task gcp:create-vm       # Create VM instance
+task gcp:reserve-ip      # Reserve static IP
 
-tasks:
-  gcp:ssh:
-    desc: SSH into GCP instance
-    cmds:
-      - gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}}
+# Deployment
+task gcp:deploy:initial  # First-time deployment
+task gcp:deploy:update   # Update existing deployment
+task gcp:systemd         # Setup systemd auto-start
 
-  gcp:deploy:
-    desc: Deploy latest code to GCP
-    cmds:
-      - |
-        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
-          sudo su - deploy -c 'cd ws_poc && \
-          git pull origin main && \
-          docker compose -f docker-compose.yml -f docker-compose.prod.yml build && \
-          docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d && \
-          sleep 5 && \
-          curl -f http://localhost:3004/health'"
+# Operations
+task gcp:ssh             # SSH into instance
+task gcp:ip              # Get external IP
+task gcp:health          # Check deployment health
+task gcp:logs            # View application logs
+task gcp:logs:tail       # View last 100 lines
+task gcp:restart         # Restart services
 
-  gcp:logs:
-    desc: View GCP instance logs
-    cmds:
-      - |
-        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
-          sudo su - deploy -c 'cd ws_poc && docker compose logs -f'"
+# VM Lifecycle
+task gcp:start           # Start VM
+task gcp:stop            # Stop VM (save money)
+task gcp:status          # Show VM status
+task gcp:delete          # Delete VM (WARNING!)
 
-  gcp:health:
-    desc: Check GCP deployment health
-    cmds:
-      - |
-        IP=$(gcloud compute instances describe {{.GCP_INSTANCE}} \
-          --zone={{.GCP_ZONE}} \
-          --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
-        curl -s http://$IP:3004/health | jq '.'
+# Maintenance
+task gcp:backup          # Create backups
 
-  gcp:ip:
-    desc: Get GCP instance IP
-    cmds:
-      - |
-        gcloud compute instances describe {{.GCP_INSTANCE}} \
-          --zone={{.GCP_ZONE}} \
-          --format="get(networkInterfaces[0].accessConfigs[0].natIP)"
-
-  gcp:restart:
-    desc: Restart services on GCP
-    cmds:
-      - |
-        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
-          sudo systemctl restart odin-ws"
-
-  gcp:stop:
-    desc: Stop GCP VM instance
-    cmds:
-      - gcloud compute instances stop {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}}
-
-  gcp:start:
-    desc: Start GCP VM instance
-    cmds:
-      - gcloud compute instances start {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}}
-
-  gcp:delete:
-    desc: Delete GCP VM instance (WARNING - destructive)
-    cmds:
-      - gcloud compute instances delete {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}}
+# Combined Workflows
+task gcp:full-deploy     # Complete deployment workflow
+task gcp:quick-check     # Quick health and status check
 ```
+
+### Environment Variable Overrides
+
+```bash
+# Custom project/region/zone
+export GCP_PROJECT_ID=my-project
+export GCP_REGION=us-west1
+export GCP_ZONE=us-west1-a
+task gcp:create-vm
+
+# Custom machine type
+export GCP_MACHINE_TYPE=e2-standard-2
+task gcp:create-vm
+```
+
+See full implementation in `taskfiles/deploy-gcp.yml`.
 
 ---
 

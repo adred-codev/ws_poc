@@ -1,0 +1,360 @@
+version: '3'
+
+# Google Cloud Platform deployment tasks
+# Based on docs/deployment/GCP_DEPLOYMENT.md
+
+vars:
+  GCP_PROJECT_ID:
+    sh: echo "${GCP_PROJECT_ID:-odin-ws-server}\""
+  GCP_REGION:
+    sh: echo "${GCP_REGION:-us-central1}\""
+  GCP_ZONE:
+    sh: echo "${GCP_ZONE:-us-central1-a}\""
+  GCP_INSTANCE:
+    sh: echo "${GCP_INSTANCE:-odin-ws-server}\""
+  GCP_MACHINE_TYPE:
+    sh: echo "${GCP_MACHINE_TYPE:-e2-medium}\""
+
+tasks:
+  # === SETUP & PREREQUISITES ===
+
+  setup:
+    desc: Configure gcloud CLI and authenticate (Phase 1 - Step 0)
+    cmds:
+      - "echo \"🔧 Setting up GCP environment...\""
+      - gcloud --version
+      - gcloud auth login
+      - gcloud config set project {{.GCP_PROJECT_ID}}
+      - gcloud config set compute/region {{.GCP_REGION}}
+      - gcloud config set compute/zone {{.GCP_ZONE}}
+      - "echo \"✅ GCP configuration complete\""
+      - "echo \"   Project - {{.GCP_PROJECT_ID}}\""
+      - "echo \"   Region - {{.GCP_REGION}}\""
+      - "echo \"   Zone - {{.GCP_ZONE}}\""
+
+  enable-apis:
+    desc: Enable required GCP APIs (Phase 1 - Step 1)
+    cmds:
+      - "echo \"🔌 Enabling GCP APIs...\""
+      - gcloud services enable compute.googleapis.com
+      - gcloud services list --enabled | grep compute
+      - "echo \"✅ APIs enabled\""
+
+  firewall:
+    desc: Create firewall rules for WebSocket and Grafana (Phase 1 - Step 2)
+    cmds:
+      - "echo \"🔥 Creating firewall rules...\""
+      - |
+        gcloud compute firewall-rules create allow-websocket \
+          --allow tcp:3004 \
+          --source-ranges 0.0.0.0/0 \
+          --target-tags websocket-server \
+          --description "Allow WebSocket connections" \
+          2>/dev/null || echo "⚠️  Firewall rule 'allow-websocket' already exists\""
+      - |
+        gcloud compute firewall-rules create allow-grafana \
+          --allow tcp:3010 \
+          --source-ranges 0.0.0.0/0 \
+          --target-tags websocket-server \
+          --description "Allow Grafana access" \
+          2>/dev/null || echo "⚠️  Firewall rule 'allow-grafana' already exists\""
+      - gcloud compute firewall-rules list --filter="name~'allow-'\""
+      - "echo \"✅ Firewall rules configured\""
+
+  # === INFRASTRUCTURE ===
+
+  create-vm:
+    desc: Create GCP VM instance with Docker (Phase 1 - Step 3)
+    cmds:
+      - "echo \"🖥️  Creating VM instance...\""
+      - |
+        gcloud compute instances create {{.GCP_INSTANCE}} \
+          --zone={{.GCP_ZONE}} \
+          --machine-type={{.GCP_MACHINE_TYPE}} \
+          --image-family=ubuntu-2404-lts-amd64 \
+          --image-project=ubuntu-os-cloud \
+          --boot-disk-size=30GB \
+          --boot-disk-type=pd-balanced \
+          --tags=websocket-server \
+          --metadata=startup-script='#!/bin/bash
+            apt-get update
+            apt-get install -y apt-transport-https ca-certificates curl software-properties-common
+            curl -fsSL https://get.docker.com -o get-docker.sh
+            sh get-docker.sh
+            apt-get install -y docker-compose-plugin git
+            curl -sL https://taskfile.dev/install.sh | sh -s -- -d -b /usr/local/bin
+            useradd -m -s /bin/bash -G docker deploy
+            echo "Startup completed" > /var/log/startup-complete.log'
+      - "echo \"⏳ Waiting for instance to start (2 minutes)...\""
+      - sleep 120
+      - task: ip
+      - "echo \"\""
+      - "echo \"✅ VM created successfully\""
+      - "echo \"💡 Next steps:\""
+      - "echo \"   1. Reserve static IP: task gcp:reserve-ip\""
+      - "echo \"   2. Setup application: task gcp:deploy:initial\""
+
+  reserve-ip:
+    desc: Reserve static IP and assign to instance (Phase 1 - Step 4)
+    cmds:
+      - "echo \"📍 Reserving static IP...\""
+      - |
+        gcloud compute addresses create odin-ws-static-ip --region={{.GCP_REGION}} \
+          2>/dev/null || echo "⚠️  Static IP already exists\""
+      - |
+        STATIC_IP=$(gcloud compute addresses describe odin-ws-static-ip \
+          --region={{.GCP_REGION}} \
+          --format="get(address)")
+        echo "Static IP: $STATIC_IP\""
+      - |
+        gcloud compute instances delete-access-config {{.GCP_INSTANCE}} \
+          --access-config-name="external-nat" \
+          --zone={{.GCP_ZONE}} || true
+      - |
+        STATIC_IP=$(gcloud compute addresses describe odin-ws-static-ip \
+          --region={{.GCP_REGION}} \
+          --format="get(address)")
+        gcloud compute instances add-access-config {{.GCP_INSTANCE}} \
+          --access-config-name="external-nat" \
+          --address=$STATIC_IP \
+          --zone={{.GCP_ZONE}}
+      - task: ip
+      - "echo \"✅ Static IP assigned\""
+
+  # === DEPLOYMENT ===
+
+  deploy:initial:
+    desc: First-time deployment - setup application on VM (Phase 1 - Steps 5-7)
+    cmds:
+      - "echo \"🚀 Starting initial deployment...\""
+      - "echo \"\""
+      - "echo \"📋 This will:\""
+      - "echo \"   1. Clone repository on VM\""
+      - "echo \"   2. Create production environment files\""
+      - "echo \"   3. Build and start Docker services\""
+      - "echo \"   4. Setup systemd auto-start service\""
+      - "echo \"\""
+      - "echo \"⚠️  You will need to SSH manually to complete this step\""
+      - "echo \"\""
+      - task: ip
+      - "echo \"\""
+      - "echo \"Run these commands on the VM:\""
+      - "echo \"\""
+      - "echo \"# SSH into instance\""
+      - "echo \"gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}}\""
+      - "echo \"\""
+      - "echo \"# Switch to deploy user and clone repo\""
+      - "echo \"sudo su - deploy\""
+      - "echo \"git clone https://github.com/yourorg/ws_poc.git\""
+      - "echo \"cd ws_poc\""
+      - "echo \"\""
+      - "echo \"# Create production environment (update CHANGE_THIS_STRONG_PASSWORD!)\""
+      - "echo \"cat > .env.production << 'EOF'\""
+      - "echo \"NATS_URL=nats://nats:4222\""
+      - "echo \"TOKENS=BTC,ETH,SOL,DOGE,ODIN\""
+      - "echo \"PORT=3003\""
+      - "echo \"NODE_ENV=production\""
+      - "echo \"GF_SECURITY_ADMIN_PASSWORD=CHANGE_THIS_STRONG_PASSWORD\""
+      - "echo \"EOF\""
+      - "echo \"\""
+      - "echo \"chmod 600 .env.production\""
+      - "echo \"\""
+      - "echo \"# Build and start services\""
+      - "echo \"task build:docker\""
+      - "echo \"docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d\""
+      - "echo \"\""
+      - "echo \"# Verify services are running\""
+      - "echo \"docker compose ps\""
+      - "echo \"curl http://localhost:3004/health | jq '.'\""
+      - "echo \"\""
+      - "echo \"# Exit and setup systemd service\""
+      - "echo \"exit\""
+      - "echo \"\""
+      - "echo \"💡 After manual setup, run: task gcp:systemd\""
+
+  deploy:update:
+    desc: Update existing deployment with latest code
+    cmds:
+      - "echo \"🔄 Updating deployment...\""
+      - |
+        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
+          sudo su - deploy -c 'cd ws_poc && \
+          git pull origin main && \
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml build && \
+          docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d && \
+          sleep 5 && \
+          curl -f http://localhost:3004/health'\""
+      - "echo \"✅ Deployment updated\""
+      - task: health
+
+  systemd:
+    desc: Setup systemd service for auto-start on reboot (Phase 1 - Step 7)
+    cmds:
+      - "echo \"⚙️  Setting up systemd service...\""
+      - |
+        EXTERNAL_IP=$(gcloud compute instances describe {{.GCP_INSTANCE}} \
+          --zone={{.GCP_ZONE}} \
+          --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
+        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
+          sudo tee /etc/systemd/system/odin-ws.service > /dev/null << 'EOF'
+        [Unit]
+        Description=Odin WebSocket Server
+        Requires=docker.service
+        After=docker.service network-online.target
+        Wants=network-online.target
+
+        [Service]
+        Type=oneshot
+        RemainAfterExit=yes
+        WorkingDirectory=/home/deploy/ws_poc
+        ExecStart=/usr/bin/docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+        ExecStop=/usr/bin/docker compose -f docker-compose.yml -f docker-compose.prod.yml down
+        User=deploy
+        Group=deploy
+        Environment=\"EXTERNAL_IP=$EXTERNAL_IP\\""
+
+        [Install]
+        WantedBy=multi-user.target
+        EOF
+        \""
+      - |
+        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
+          sudo systemctl daemon-reload && \
+          sudo systemctl enable odin-ws && \
+          sudo systemctl start odin-ws && \
+          sudo systemctl status odin-ws --no-pager\""
+      - "echo \"✅ Systemd service configured\""
+
+  # === OPERATIONS ===
+
+  ssh:
+    desc: SSH into GCP instance
+    cmds:
+      - gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}}
+
+  ip:
+    desc: Get external IP address of instance
+    cmds:
+      - |
+        IP=$(gcloud compute instances describe {{.GCP_INSTANCE}} \
+          --zone={{.GCP_ZONE}} \
+          --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
+        echo "External IP: $IP\""
+        echo "\""
+        echo "WebSocket URL: ws://$IP:3004/ws\""
+        echo "Health URL: http://$IP:3004/health\""
+        echo "Grafana URL: http://$IP:3010\""
+
+  health:
+    desc: Check deployment health endpoint
+    cmds:
+      - |
+        IP=$(gcloud compute instances describe {{.GCP_INSTANCE}} \
+          --zone={{.GCP_ZONE}} \
+          --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
+        echo "Checking health at http://$IP:3004/health\""
+        curl -s http://$IP:3004/health | jq '.'
+
+  logs:
+    desc: View application logs on GCP instance
+    cmds:
+      - |
+        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
+          sudo su - deploy -c 'cd ws_poc && docker compose logs -f'\""
+
+  logs:tail:
+    desc: View last 100 lines of application logs
+    cmds:
+      - |
+        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
+          sudo su - deploy -c 'cd ws_poc && docker compose logs --tail=100'\""
+
+  restart:
+    desc: Restart services via systemd
+    cmds:
+      - "echo \"🔄 Restarting services...\""
+      - gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo systemctl restart odin-ws\""
+      - "echo \"⏳ Waiting for services to start...\""
+      - sleep 10
+      - task: health
+
+  # === VM LIFECYCLE ===
+
+  start:
+    desc: Start GCP VM instance
+    cmds:
+      - "echo \"▶️  Starting VM instance...\""
+      - gcloud compute instances start {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}}
+      - "echo \"⏳ Waiting for startup (30 seconds)...\""
+      - sleep 30
+      - task: ip
+
+  stop:
+    desc: Stop GCP VM instance (saves money)
+    cmds:
+      - "echo \"⏸️  Stopping VM instance...\""
+      - gcloud compute instances stop {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}}
+      - "echo \"✅ VM stopped (not billed for compute, only storage)\""
+
+  status:
+    desc: Show VM instance status
+    cmds:
+      - |
+        gcloud compute instances describe {{.GCP_INSTANCE}} \
+          --zone={{.GCP_ZONE}} \
+          --format="table(name,status,machineType,networkInterfaces[0].accessConfigs[0].natIP)\""
+
+  delete:
+    desc: Delete GCP VM instance (WARNING - destructive!)
+    prompt: "Are you sure you want to delete the VM instance {{.GCP_INSTANCE}}? This cannot be undone.\""
+    cmds:
+      - gcloud compute instances delete {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}}
+      - "echo \"❌ VM instance deleted\""
+
+  # === MAINTENANCE ===
+
+  backup:
+    desc: Create backup of Prometheus and Grafana data
+    cmds:
+      - "echo \"💾 Creating backups...\""
+      - |
+        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
+          sudo mkdir -p /backups && \
+          sudo tee /opt/backup-odin.sh > /dev/null << 'EOF'
+        #!/bin/bash
+        BACKUP_DIR=/backups
+        DATE=\$(date +%Y%m%d-%H%M%S)
+        mkdir -p \$BACKUP_DIR
+        docker run --rm -v ws_poc_prometheus_data:/data -v \$BACKUP_DIR:/backup alpine tar czf /backup/prometheus-\$DATE.tar.gz /data
+        docker run --rm -v ws_poc_grafana_data:/data -v \$BACKUP_DIR:/backup alpine tar czf /backup/grafana-\$DATE.tar.gz /data
+        find \$BACKUP_DIR -name \"*.tar.gz\" -mtime +7 -delete
+        echo \"Backup completed: \$DATE\\""
+        EOF
+        \""
+      - |
+        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
+          sudo chmod +x /opt/backup-odin.sh && \
+          sudo /opt/backup-odin.sh\""
+      - "echo \"✅ Backup complete\""
+
+  # === COMBINED WORKFLOWS ===
+
+  full-deploy:
+    desc: Complete deployment workflow (setup → create → deploy)
+    cmds:
+      - task: setup
+      - task: enable-apis
+      - task: firewall
+      - task: create-vm
+      - "echo \"\""
+      - "echo \"✅ Infrastructure ready!\""
+      - "echo \"💡 Next: Follow instructions from 'task gcp:deploy:initial'\""
+
+  quick-check:
+    desc: Quick health and status check
+    cmds:
+      - task: status
+      - "echo \"\""
+      - task: ip
+      - "echo \"\""
+      - task: health
