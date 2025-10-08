@@ -123,6 +123,7 @@ class LoadTestConnection {
           this.connected = true;
           this.connectTime = Date.now();
           state.activeConnections.set(this.id, this);
+          this.startHeartbeat(); // Start sending heartbeats to prevent timeout
           resolve(true);
         });
 
@@ -136,6 +137,13 @@ class LoadTestConnection {
 
         this.ws.on('close', () => {
           this.onClose();
+        });
+
+        // Handle ping/pong to prevent timeout
+        this.ws.on('ping', () => {
+          if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            this.ws.pong();
+          }
         });
 
         // Connection timeout (5 seconds)
@@ -176,9 +184,28 @@ class LoadTestConnection {
   onClose() {
     this.connected = false;
     state.activeConnections.delete(this.id);
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+    }
+  }
+
+  startHeartbeat() {
+    // Send heartbeat every 30 seconds to prevent server read timeout (60s)
+    this.heartbeatInterval = setInterval(() => {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        try {
+          this.ws.send(JSON.stringify({ type: 'heartbeat' }));
+        } catch (error) {
+          // Ignore send errors
+        }
+      }
+    }, 30000); // 30 seconds (half of server's 60s timeout)
   }
 
   close() {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+    }
     if (this.ws && this.connected) {
       this.ws.close(1000, 'Test completed');
     }
