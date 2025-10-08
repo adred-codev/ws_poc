@@ -171,10 +171,10 @@ services:
       resources:
         limits:
           cpus: "0.1"
-          memory: 128M          # Increased from 32M (was OOM killed at 92MB)
+          memory: 256M          # Increased from 128M (memory starvation at 98.77%)
         reservations:
           cpus: "0.1"
-          memory: 128M
+          memory: 256M
 
   # Loki (Log Aggregation)
   loki:
