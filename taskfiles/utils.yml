@@ -32,7 +32,7 @@ tasks:
       - task: format:ts
 
   format:go:
-    desc: Format Go code
+    desc: Format all Go files in src/ directory with gofmt
     dir: "{{.GO_SERVER_DIR}}"
     cmds:
       - gofmt -w .
@@ -53,7 +53,7 @@ tasks:
     desc: Clean Go build artifacts
     dir: "{{.GO_SERVER_DIR}}"
     cmds:
-      - rm -f server
+      - rm -f server odin-ws-server
       - go clean
 
   clean:publisher:

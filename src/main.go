@@ -76,11 +76,13 @@ func main() {
 	}
 
 	// automaxprocs automatically sets GOMAXPROCS based on container CPU limits
-	// Get the detected CPU count for worker pool sizing
+	// IMPORTANT: automaxprocs rounds DOWN (e.g., 1.5 cores → GOMAXPROCS=1)
+	// This is correct for Go scheduler, but we use actual CPU limit for worker sizing
 	maxProcs := runtime.GOMAXPROCS(0)
-	logger.Printf("Detected CPU limit: %d cores (via automaxprocs)", maxProcs)
+	logger.Printf("GOMAXPROCS: %d (via automaxprocs - rounds down to integer)", maxProcs)
 
 	// Get resource limits from environment (matching docker-compose)
+	// Use float CPU limit (not rounded GOMAXPROCS) for accurate worker pool sizing
 	cpuLimit := getEnvFloat("WS_CPU_LIMIT", float64(maxProcs))
 	memLimit := getEnvInt64("WS_MEMORY_LIMIT", 512*1024*1024) // Default 512MB
 
@@ -88,7 +90,11 @@ func main() {
 	maxConnections := getEnvInt("WS_MAX_CONNECTIONS", 500)
 
 	// Worker pool sizing
-	workerCount := getEnvInt("WS_WORKER_POOL_SIZE", maxProcs*2)
+	// CRITICAL: Use cpuLimit (1.5) not maxProcs (1) for worker sizing
+	// This ensures we utilize all available CPU cores
+	// Example: 1.5 cores → 3 workers (1.5 * 2 = 3)
+	defaultWorkerCount := int(cpuLimit * 2)
+	workerCount := getEnvInt("WS_WORKER_POOL_SIZE", defaultWorkerCount)
 	workerQueueSize := getEnvInt("WS_WORKER_QUEUE_SIZE", workerCount*100)
 
 	logger.Printf("Resource Limits:")

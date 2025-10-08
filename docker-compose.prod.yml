@@ -2,12 +2,71 @@ version: "3.8"
 
 # Production overrides for docker-compose.yml
 # Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# ============================================================================
+# E2-MICRO RESOURCE CONSTRAINTS (GCP)
+# ============================================================================
+# Total Available: 2 vCPU, 1GB RAM
+#
+# Current Allocation (inherited from docker-compose.yml):
+#   ws-go:      1.5 CPU (75%)    768M (75%)  - WebSocket server (priority)
+#   nats:       0.25 CPU (12%)   128M (13%)  - Message broker
+#   publisher:  0.1 CPU (5%)     64M (6%)    - Test publisher
+#   prometheus: 0.1 CPU (5%)     64M (6%)    - Metrics (7d retention)
+#   grafana:    0.05 CPU (2.5%)  32M (3%)    - Dashboards
+#   loki:       0.05 CPU (2.5%)  32M (3%)    - Logs
+#   promtail:   0.05 CPU (2.5%)  16M (2%)    - Log collector
+#   -----------
+#   TOTAL:      2.1 CPU (105%)   1104M (108%) ⚠️  SLIGHTLY OVER LIMIT
+#
+# Notes:
+#   - Total is 5% over CPU and 8% over memory - acceptable with burstable resources
+#   - ws-go has priority and will get resources first
+#   - Monitoring services will be throttled if ws-go needs resources
+#   - Prometheus retention limited to 7d (vs 30d) due to memory constraints
+#   - Cannot increase resources without upgrading to e2-small (2 vCPU, 2GB RAM)
+#
+# ============================================================================
+# PRODUCTION OVERRIDES
+# ============================================================================
+# This file only overrides:
+#   - Restart policies (restart: always)
+#   - Log rotation (10M max size, 3 files)
+#   - External port exposure
+#   - Grafana admin password from environment
+#
+# Resource limits are inherited from docker-compose.yml and NOT changed here
+# to maintain consistency between dev and production environments.
+# ============================================================================
 
 services:
   ws-go:
     restart: always
     ports:
-      - "3004:3002"  # Expose to external (port 3004 externally, 3002 internally)
+      - "3004:3002" # Expose to external (port 3004 externally, 3002 internally)
+    environment:
+      # Production environment overrides (inherits from docker-compose.yml)
+      # Uncomment and modify if production needs different values:
+
+      # Resource configuration
+      # - WS_CPU_LIMIT=1.5
+      # - WS_MEMORY_LIMIT=805306368
+      # - WS_MAX_CONNECTIONS=500
+      # - WS_WORKER_POOL_SIZE=32
+      # - WS_WORKER_QUEUE_SIZE=3200
+
+      # Rate limiting
+      # - WS_MAX_NATS_RATE=20
+      # - WS_MAX_BROADCAST_RATE=20
+      # - WS_MAX_GOROUTINES=1000
+
+      # Safety thresholds
+      # - WS_CPU_REJECT_THRESHOLD=75.0
+      # - WS_CPU_PAUSE_THRESHOLD=80.0
+
+      # Logging (may want 'warn' or 'error' in production to reduce volume)
+      - LOG_LEVEL=info # Options: debug, info, warn, error
+      - LOG_FORMAT=json # json for Loki
     logging:
       driver: "json-file"
       options:
@@ -33,9 +92,9 @@ services:
   prometheus:
     restart: always
     command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
-      - '--storage.tsdb.retention.time=30d'  # Keep metrics for 30 days
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=7d" # Same as dev (e2-micro constraint)
     logging:
       driver: "json-file"
       options:
@@ -45,7 +104,7 @@ services:
   grafana:
     restart: always
     ports:
-      - "3010:3000"  # Expose to external
+      - "3010:3000" # Expose to external
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD:-admin}
       - GF_SERVER_ROOT_URL=http://${EXTERNAL_IP:-localhost}:3010

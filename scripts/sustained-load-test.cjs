@@ -16,6 +16,38 @@ const http = require('http');
 // ============================================================================
 // CONFIGURATION
 // ============================================================================
+//
+// IMPORTANT: Test configuration should match WebSocket server configuration!
+//
+// The server's resource limits are configured in docker-compose.yml:
+//   - WS_MAX_CONNECTIONS: 500 (hard connection limit)
+//   - WS_MAX_NATS_RATE: 20 messages/sec (rate limit)
+//   - WS_CPU_REJECT_THRESHOLD: 75% (emergency brake)
+//
+// TEST MODES:
+//
+// 1. CAPACITY TEST (recommended default):
+//    - Set TARGET_CONNECTIONS = server's WS_MAX_CONNECTIONS (500)
+//    - Set RAMP_RATE to gradual value (50-100 conn/sec)
+//    - Expected: All connections succeed, server stable, no rejections
+//    - Purpose: Verify server handles maximum configured load
+//    - Example: TARGET_CONNECTIONS=500 RAMP_RATE=50 npm run test:sustained
+//
+// 2. STRESS/OVERLOAD TEST (intentional overload):
+//    - Set TARGET_CONNECTIONS > server's WS_MAX_CONNECTIONS (e.g., 1500-2000)
+//    - Set RAMP_RATE higher (100-200 conn/sec)
+//    - Expected: Rejections once limit hit, server stays stable, no crash
+//    - Purpose: Verify server correctly rejects excess load without crashing
+//    - Example: TARGET_CONNECTIONS=1500 RAMP_RATE=100 npm run test:sustained
+//
+// 3. BURST/SPIKE TEST (rapid connection attempts):
+//    - Set TARGET_CONNECTIONS to server limit (500)
+//    - Set RAMP_RATE very high (500-1000 conn/sec)
+//    - Expected: Some rejections during burst, server recovers, final count = limit
+//    - Purpose: Verify server handles traffic spikes gracefully
+//    - Example: TARGET_CONNECTIONS=500 RAMP_RATE=500 npm run test:sustained
+//
+// ============================================================================
 
 const CONFIG = {
   // Server settings
@@ -23,12 +55,18 @@ const CONFIG = {
   HEALTH_URL: process.env.HEALTH_URL || 'http://localhost:3004/health',
 
   // Target connections
-  TARGET_CONNECTIONS: parseInt(process.env.TARGET_CONNECTIONS) || 1500,
+  // DEFAULT: Matches server's WS_MAX_CONNECTIONS for capacity testing
+  // Override with TARGET_CONNECTIONS env var for stress testing
+  TARGET_CONNECTIONS: parseInt(process.env.TARGET_CONNECTIONS) || 500,
 
   // Ramp-up settings (gradual increase)
-  RAMP_RATE: parseInt(process.env.RAMP_RATE) || 100, // connections per second
+  // DEFAULT: Moderate ramp for smooth capacity testing
+  // Override with RAMP_RATE env var for burst/stress testing
+  RAMP_RATE: parseInt(process.env.RAMP_RATE) || 50, // connections per second
 
   // Sustain duration (after reaching target)
+  // DEFAULT: 30 minutes to verify long-term stability
+  // Override with DURATION env var (in seconds) for shorter tests
   SUSTAIN_DURATION_MS: parseInt(process.env.DURATION) * 1000 || 1800000, // Default 30 min
 
   // Reporting interval
@@ -293,8 +331,28 @@ async function runTest() {
   console.log('\n' + '='.repeat(80));
   console.log('🧪 SUSTAINED LOAD TEST');
   console.log('='.repeat(80));
+
+  // Determine test mode based on configuration
+  const serverMaxConnections = 500; // From WS_MAX_CONNECTIONS in docker-compose.yml
+  let testMode = 'CAPACITY TEST';
+  let testModeEmoji = '📊';
+  let testModeDescription = 'Testing at server capacity limit';
+
+  if (CONFIG.TARGET_CONNECTIONS > serverMaxConnections) {
+    testMode = 'STRESS/OVERLOAD TEST';
+    testModeEmoji = '⚠️';
+    testModeDescription = `Intentional overload (${CONFIG.TARGET_CONNECTIONS} > ${serverMaxConnections} limit)`;
+  } else if (CONFIG.RAMP_RATE >= 500) {
+    testMode = 'BURST/SPIKE TEST';
+    testModeEmoji = '⚡';
+    testModeDescription = `Rapid connection burst (${CONFIG.RAMP_RATE} conn/sec)`;
+  }
+
+  console.log(`\n${testModeEmoji} TEST MODE: ${testMode}`);
+  console.log(`   ${testModeDescription}`);
   console.log(`\n📋 Configuration:`);
   console.log(`   Target:       ${CONFIG.TARGET_CONNECTIONS} connections`);
+  console.log(`   Server Limit: ${serverMaxConnections} connections (WS_MAX_CONNECTIONS)`);
   console.log(`   Ramp Rate:    ${CONFIG.RAMP_RATE} conn/sec`);
   console.log(`   Sustain:      ${CONFIG.SUSTAIN_DURATION_MS / 1000}s (${Math.floor(CONFIG.SUSTAIN_DURATION_MS / 60000)} minutes)`);
   console.log(`   Server:       ${CONFIG.WS_URL}`);

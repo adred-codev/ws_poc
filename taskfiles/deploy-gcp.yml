@@ -497,35 +497,81 @@ tasks:
         echo "🧪 Running realistic custom test against $IP ({{.TARGET_CONNECTIONS}} connections, {{.DURATION}}s)..."
         WS_URL="ws://$IP:3004/ws" HEALTH_URL="http://$IP:3004/health" task test:realistic TARGET_CONNECTIONS={{.TARGET_CONNECTIONS}} DURATION={{.DURATION}}
 
+  # === CAPACITY TESTS - Match server limits ===
+
+  test:sustained:capacity:
+    desc: "CAPACITY TEST - Match server limit (500 connections, 50/sec, 30 min)"
+    cmds:
+      - |
+        IP=$(gcloud compute instances describe {{.GCP_INSTANCE}} \
+          --zone={{.GCP_ZONE}} \
+          --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
+        echo "📊 Running CAPACITY test against $IP (500 connections, 30 min)..."
+        WS_URL="ws://$IP:3004/ws" HEALTH_URL="http://$IP:3004/health" task test:sustained:capacity
+
+  test:sustained:capacity:short:
+    desc: "CAPACITY TEST - Short (500 connections, 50/sec, 5 min)"
+    cmds:
+      - |
+        IP=$(gcloud compute instances describe {{.GCP_INSTANCE}} \
+          --zone={{.GCP_ZONE}} \
+          --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
+        echo "📊 Running CAPACITY test against $IP (500 connections, 5 min)..."
+        WS_URL="ws://$IP:3004/ws" HEALTH_URL="http://$IP:3004/health" task test:sustained:capacity:short
+
+  # === STRESS TESTS - Intentional overload ===
+
+  test:sustained:stress:
+    desc: "STRESS TEST - 2x overload (1000 connections, 100/sec, 30 min)"
+    cmds:
+      - |
+        IP=$(gcloud compute instances describe {{.GCP_INSTANCE}} \
+          --zone={{.GCP_ZONE}} \
+          --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
+        echo "⚠️  Running STRESS test against $IP (1000 connections, 30 min)..."
+        WS_URL="ws://$IP:3004/ws" HEALTH_URL="http://$IP:3004/health" task test:sustained:stress
+
+  test:sustained:stress:heavy:
+    desc: "STRESS TEST - 3x overload (1500 connections, 100/sec, 30 min)"
+    cmds:
+      - |
+        IP=$(gcloud compute instances describe {{.GCP_INSTANCE}} \
+          --zone={{.GCP_ZONE}} \
+          --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
+        echo "⚠️  Running STRESS test against $IP (1500 connections, 30 min)..."
+        WS_URL="ws://$IP:3004/ws" HEALTH_URL="http://$IP:3004/health" task test:sustained:stress:heavy
+
+  # === LEGACY (backwards compatibility) ===
+
   test:sustained:short:
-    desc: Run sustained load test against GCP - 10 min (1000 connections, gradual ramp)
+    desc: "[LEGACY] Use test:sustained:stress instead - 10 min"
     cmds:
       - |
         IP=$(gcloud compute instances describe {{.GCP_INSTANCE}} \
           --zone={{.GCP_ZONE}} \
           --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
         echo "🧪 Running sustained load test against $IP (10 min)..."
-        WS_URL="ws://$IP:3004/ws" HEALTH_URL="http://$IP:3004/health" task test:sustained:short
+        WS_URL="ws://$IP:3004/ws" HEALTH_URL="http://$IP:3004/health" task test:sustained:stress DURATION=600
 
   test:sustained:medium:
-    desc: Run sustained load test against GCP - 30 min (1500 connections, gradual ramp)
+    desc: "[LEGACY] Use test:sustained:stress:heavy instead - 30 min"
     cmds:
       - |
         IP=$(gcloud compute instances describe {{.GCP_INSTANCE}} \
           --zone={{.GCP_ZONE}} \
           --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
         echo "🧪 Running sustained load test against $IP (30 min)..."
-        WS_URL="ws://$IP:3004/ws" HEALTH_URL="http://$IP:3004/health" task test:sustained:medium
+        WS_URL="ws://$IP:3004/ws" HEALTH_URL="http://$IP:3004/health" task test:sustained:stress:heavy
 
   test:sustained:long:
-    desc: Run sustained load test against GCP - 60 min (1500 connections, gradual ramp)
+    desc: "[LEGACY] Use test:sustained:stress:heavy instead - 60 min"
     cmds:
       - |
         IP=$(gcloud compute instances describe {{.GCP_INSTANCE}} \
           --zone={{.GCP_ZONE}} \
           --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
         echo "🧪 Running sustained load test against $IP (60 min)..."
-        WS_URL="ws://$IP:3004/ws" HEALTH_URL="http://$IP:3004/health" task test:sustained:long
+        WS_URL="ws://$IP:3004/ws" HEALTH_URL="http://$IP:3004/health" task test:sustained:stress:heavy DURATION=3600
 
   test:benchmark:
     desc: Run comprehensive benchmark suite against GCP deployment
@@ -622,8 +668,8 @@ tasks:
   test:remote:sustained:
     desc: Run sustained load test ON GCP instance (use TARGET_CONNECTIONS/RAMP_RATE/DURATION)
     vars:
-      TARGET_CONNECTIONS: '{{.TARGET_CONNECTIONS | default "1500"}}'
-      RAMP_RATE: '{{.RAMP_RATE | default "100"}}'
+      TARGET_CONNECTIONS: '{{.TARGET_CONNECTIONS | default "500"}}'
+      RAMP_RATE: '{{.RAMP_RATE | default "50"}}'
       DURATION: '{{.DURATION | default "1800"}}'
     cmds:
       - "echo \"🧪 Running sustained load test ON GCP instance ({{.TARGET_CONNECTIONS}} connections, {{.RAMP_RATE}}/sec ramp, {{.DURATION}}s sustain)...\""
@@ -632,8 +678,50 @@ tasks:
       - "echo \"✅ Sustained test started on GCP instance (running in background container)\""
       - "echo \"💡 View logs: task gcp:test:remote:logs\""
 
+  # === CAPACITY TESTS (remote) - Match server limits ===
+
+  test:remote:sustained:capacity:
+    desc: "CAPACITY TEST ON GCP - Match server limit (500 connections, 50/sec, 30 min)"
+    cmds:
+      - "echo \"📊 Running CAPACITY test ON GCP instance (500 connections, 30 min)...\""
+      - |
+        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && docker run -d --name stress-test --network=host -v \$(pwd)/scripts:/scripts -w /scripts node:22-alpine sh -c \"apk add --no-cache curl && npm install ws && WS_URL=ws://localhost:3004/ws HEALTH_URL=http://localhost:3004/health TARGET_CONNECTIONS=500 RAMP_RATE=50 DURATION=1800 node sustained-load-test.cjs\"'"
+      - "echo \"✅ Test started on GCP instance (running in background container)\""
+      - "echo \"💡 View logs: task gcp:test:remote:logs\""
+
+  test:remote:sustained:capacity:short:
+    desc: "CAPACITY TEST ON GCP - Short (500 connections, 50/sec, 5 min)"
+    cmds:
+      - "echo \"📊 Running CAPACITY test ON GCP instance (500 connections, 5 min)...\""
+      - |
+        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && docker run -d --name stress-test --network=host -v \$(pwd)/scripts:/scripts -w /scripts node:22-alpine sh -c \"apk add --no-cache curl && npm install ws && WS_URL=ws://localhost:3004/ws HEALTH_URL=http://localhost:3004/health TARGET_CONNECTIONS=500 RAMP_RATE=50 DURATION=300 node sustained-load-test.cjs\"'"
+      - "echo \"✅ Test started on GCP instance (running in background container)\""
+      - "echo \"💡 View logs: task gcp:test:remote:logs\""
+
+  # === STRESS TESTS (remote) - Intentional overload ===
+
+  test:remote:sustained:stress:
+    desc: "STRESS TEST ON GCP - 2x overload (1000 connections, 100/sec, 30 min)"
+    cmds:
+      - "echo \"⚠️  Running STRESS test ON GCP instance (1000 connections, 30 min)...\""
+      - |
+        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && docker run -d --name stress-test --network=host -v \$(pwd)/scripts:/scripts -w /scripts node:22-alpine sh -c \"apk add --no-cache curl && npm install ws && WS_URL=ws://localhost:3004/ws HEALTH_URL=http://localhost:3004/health TARGET_CONNECTIONS=1000 RAMP_RATE=100 DURATION=1800 node sustained-load-test.cjs\"'"
+      - "echo \"✅ Test started on GCP instance (running in background container)\""
+      - "echo \"💡 View logs: task gcp:test:remote:logs\""
+
+  test:remote:sustained:stress:heavy:
+    desc: "STRESS TEST ON GCP - 3x overload (1500 connections, 100/sec, 30 min)"
+    cmds:
+      - "echo \"⚠️  Running STRESS test ON GCP instance (1500 connections, 30 min)...\""
+      - |
+        gcloud compute ssh {{.GCP_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && docker run -d --name stress-test --network=host -v \$(pwd)/scripts:/scripts -w /scripts node:22-alpine sh -c \"apk add --no-cache curl && npm install ws && WS_URL=ws://localhost:3004/ws HEALTH_URL=http://localhost:3004/health TARGET_CONNECTIONS=1500 RAMP_RATE=100 DURATION=1800 node sustained-load-test.cjs\"'"
+      - "echo \"✅ Test started on GCP instance (running in background container)\""
+      - "echo \"💡 View logs: task gcp:test:remote:logs\""
+
+  # === LEGACY TESTS (remote) - Backwards compatibility ===
+
   test:remote:sustained:short:
-    desc: Run sustained load test ON GCP - 10 min (1000 connections, 100/sec ramp)
+    desc: "[LEGACY] Use test:remote:sustained:stress instead - 10 min"
     cmds:
       - "echo \"🧪 Running 10-minute sustained load test ON GCP instance (1000 connections)...\""
       - |
@@ -642,7 +730,7 @@ tasks:
       - "echo \"💡 View logs: task gcp:test:remote:logs\""
 
   test:remote:sustained:medium:
-    desc: Run sustained load test ON GCP - 30 min (1500 connections, 100/sec ramp)
+    desc: "[LEGACY] Use test:remote:sustained:stress:heavy instead - 30 min"
     cmds:
       - "echo \"🧪 Running 30-minute sustained load test ON GCP instance (1500 connections)...\""
       - |
@@ -651,7 +739,7 @@ tasks:
       - "echo \"💡 View logs: task gcp:test:remote:logs\""
 
   test:remote:sustained:long:
-    desc: Run sustained load test ON GCP - 60 min (1500 connections, 100/sec ramp)
+    desc: "[LEGACY] Use test:remote:sustained:stress:heavy instead - 60 min"
     cmds:
       - "echo \"🧪 Running 60-minute sustained load test ON GCP instance (1500 connections)...\""
       - |
