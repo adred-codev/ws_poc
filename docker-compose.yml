@@ -63,7 +63,14 @@ services:
       # Rate limiting (prevent overload)
       - WS_MAX_NATS_RATE=20        # Max NATS messages/sec
       - WS_MAX_BROADCAST_RATE=20   # Max broadcasts/sec
-      - WS_MAX_GOROUTINES=1000     # Hard goroutine limit
+      # Goroutine limit calculation:
+      #   Formula: (MAX_CONNECTIONS × 2) + STATIC + OVERHEAD
+      #   Per connection: 2 goroutines (readPump + writePump)
+      #   Static: ~45 (workers=32, monitors=5, runtime=8)
+      #   Calculation: (500 × 2) + 45 + 20% = 1,254 → 1200
+      #   Memory cost: 1,200 × 8KB = 9.6MB (0.5% of 2GB RAM)
+      #   CPU cost: Only active goroutines use CPU (most idle on I/O)
+      - WS_MAX_GOROUTINES=1200     # Must sync with WS_MAX_CONNECTIONS
       # Safety thresholds
       - WS_CPU_REJECT_THRESHOLD=75.0
       - WS_CPU_PAUSE_THRESHOLD=80.0
