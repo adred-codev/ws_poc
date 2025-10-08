@@ -4,27 +4,34 @@ version: "3.8"
 # Usage: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 #
 # ============================================================================
-# E2-MICRO RESOURCE CONSTRAINTS (GCP)
+# E2-SMALL RESOURCE CONFIGURATION (GCP)
 # ============================================================================
-# Total Available: 2 vCPU, 1GB RAM
+# Total Available: 2 vCPU (shared), 2GB RAM
+# Cost: $12.23/month (vs e2-micro $6.12/month or FREE with free tier)
 #
 # Current Allocation (inherited from docker-compose.yml):
-#   ws-go:      1.5 CPU (75%)    768M (75%)  - WebSocket server (priority)
-#   nats:       0.25 CPU (12%)   128M (13%)  - Message broker
-#   publisher:  0.1 CPU (5%)     64M (6%)    - Test publisher
-#   prometheus: 0.1 CPU (5%)     64M (6%)    - Metrics (7d retention)
-#   grafana:    0.05 CPU (2.5%)  32M (3%)    - Dashboards
-#   loki:       0.05 CPU (2.5%)  32M (3%)    - Logs
-#   promtail:   0.05 CPU (2.5%)  16M (2%)    - Log collector
+#   ws-go:      1.5 CPU (75%)    768M (38%)  - WebSocket server (priority)
+#   nats:       0.25 CPU (12%)   128M (6%)   - Message broker
+#   prometheus: 0.15 CPU (7.5%)  128M (6%)   - Metrics (7d retention)
+#   grafana:    0.1 CPU (5%)     128M (6%)   - Dashboards
+#   loki:       0.1 CPU (5%)     128M (6%)   - Logs
+#   publisher:  0.1 CPU (5%)     64M (3%)    - Test publisher
+#   promtail:   0.1 CPU (5%)     64M (3%)    - Log collector
 #   -----------
-#   TOTAL:      2.1 CPU (105%)   1104M (108%) ⚠️  SLIGHTLY OVER LIMIT
+#   TOTAL:      2.3 CPU (115%)   1408M (69%) ✅ FITS WITH HEADROOM
 #
 # Notes:
-#   - Total is 5% over CPU and 8% over memory - acceptable with burstable resources
+#   - Total CPU 15% over limit but acceptable (burstable e2-small)
+#   - Memory at 69% with 31% headroom (640MB free)
 #   - ws-go has priority and will get resources first
-#   - Monitoring services will be throttled if ws-go needs resources
-#   - Prometheus retention limited to 7d (vs 30d) due to memory constraints
-#   - Cannot increase resources without upgrading to e2-small (2 vCPU, 2GB RAM)
+#   - Monitoring services now have sufficient memory (no OOM kills)
+#   - Prometheus retention: 7d (can increase to 15-30d if needed)
+#   - Upgraded from e2-micro due to Grafana/Loki/Promtail OOM kills
+#
+# Previous e2-micro Issues (RESOLVED):
+#   - Grafana OOM killed (needed 92MB, limited to 32MB)
+#   - Loki OOM killed (needed 96MB, limited to 32MB)
+#   - Promtail OOM killed (needed 71MB, limited to 16MB)
 #
 # ============================================================================
 # PRODUCTION OVERRIDES

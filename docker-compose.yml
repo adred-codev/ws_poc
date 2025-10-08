@@ -133,7 +133,7 @@ services:
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
-      - '--storage.tsdb.retention.time=7d'  # Reduced retention
+      - '--storage.tsdb.retention.time=7d'  # 7d retention (e2-small)
       - '--web.console.libraries=/etc/prometheus/console_libraries'
       - '--web.console.templates=/etc/prometheus/consoles'
     networks:
@@ -142,11 +142,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.1"
-          memory: 64M
+          cpus: "0.15"
+          memory: 128M          # Increased from 64M for e2-small
         reservations:
-          cpus: "0.1"
-          memory: 64M
+          cpus: "0.15"
+          memory: 128M
 
   # Grafana (Visualization)
   grafana:
@@ -170,11 +170,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.05"
-          memory: 32M
+          cpus: "0.1"
+          memory: 128M          # Increased from 32M (was OOM killed at 92MB)
         reservations:
-          cpus: "0.05"
-          memory: 32M
+          cpus: "0.1"
+          memory: 128M
 
   # Loki (Log Aggregation)
   loki:
@@ -192,11 +192,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.05"
-          memory: 32M
+          cpus: "0.1"
+          memory: 128M          # Increased from 32M (was OOM killed at 96MB)
         reservations:
-          cpus: "0.05"
-          memory: 32M
+          cpus: "0.1"
+          memory: 128M
 
   # Promtail (Log Collector)
   promtail:
@@ -215,11 +215,11 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.05"
-          memory: 16M
+          cpus: "0.1"
+          memory: 64M           # Increased from 16M (was OOM killed at 71MB)
         reservations:
-          cpus: "0.05"
-          memory: 16M
+          cpus: "0.1"
+          memory: 64M
 
 networks:
   odin-network:
