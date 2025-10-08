@@ -52,25 +52,26 @@ services:
       # Static resource configuration (explicit limits)
       - WS_CPU_LIMIT=1.5           # Must match deploy.resources.limits.cpus below
       - WS_MEMORY_LIMIT=805306368  # 768MB in bytes
-      - WS_MAX_CONNECTIONS=500
+      - WS_MAX_CONNECTIONS=2000
       # Worker pool sizing:
-      #   Default: cpuLimit*2 = 1.5*2 = 3 workers (CPU-bound workload)
-      #   Override: 32 workers (10x default for I/O-bound broadcast fanout)
+      #   Formula: max(32, connections/16)
+      #   Calculation: max(32, 2000/16) = 128 workers
       #   Reason: Workers spend most time blocked on network writes, not CPU
+      #   Load per worker: (2000 conns × 20 broadcasts/sec) / 128 = 313 items/sec
       #   Tradeoff: More workers = better broadcast throughput, more context switching
-      - WS_WORKER_POOL_SIZE=32
-      - WS_WORKER_QUEUE_SIZE=3200  # 100x worker count
-      # Rate limiting (prevent overload)
-      - WS_MAX_NATS_RATE=20        # Max NATS messages/sec
-      - WS_MAX_BROADCAST_RATE=20   # Max broadcasts/sec
+      - WS_WORKER_POOL_SIZE=128
+      - WS_WORKER_QUEUE_SIZE=12800  # 100x worker count
+      # Rate limiting (prevent overload) - FIXED VALUES
+      - WS_MAX_NATS_RATE=20        # Max NATS messages/sec (fixed, does not scale)
+      - WS_MAX_BROADCAST_RATE=20   # Max broadcasts/sec (fixed, does not scale)
       # Goroutine limit calculation:
-      #   Formula: (MAX_CONNECTIONS × 2) + STATIC + OVERHEAD
+      #   Formula: ((MAX_CONNECTIONS × 2) + STATIC + OVERHEAD) × 1.2
       #   Per connection: 2 goroutines (readPump + writePump)
-      #   Static: ~45 (workers=32, monitors=5, runtime=8)
-      #   Calculation: (500 × 2) + 45 + 20% = 1,254 → 1200
-      #   Memory cost: 1,200 × 8KB = 9.6MB (0.5% of 2GB RAM)
+      #   Static: workers(128) + monitors(5) + runtime(8) = 141
+      #   Calculation: ((2000 × 2) + 141) × 1.2 = 4,969 → 5000
+      #   Memory cost: 5,000 × 8KB = 40MB (5.2% of 768MB RAM)
       #   CPU cost: Only active goroutines use CPU (most idle on I/O)
-      - WS_MAX_GOROUTINES=1200     # Must sync with WS_MAX_CONNECTIONS
+      - WS_MAX_GOROUTINES=5000     # Must sync with WS_MAX_CONNECTIONS
       # Safety thresholds
       - WS_CPU_REJECT_THRESHOLD=75.0
       - WS_CPU_PAUSE_THRESHOLD=80.0
