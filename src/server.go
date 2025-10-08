@@ -993,14 +993,18 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	// Get ResourceGuard stats
 	resourceStats := s.resourceGuard.GetStats()
 
-	memLimitMB := 512.0 // Container memory limit
+	// Use actual configured limits
+	memLimitMB := float64(s.config.MemoryLimit) / 1024.0 / 1024.0 // Convert bytes to MB
+	goroutinesCurrent := resourceStats["goroutines_current"].(int)
+	goroutinesLimit := s.config.MaxGoroutines
 
 	// Calculate health status
+	// Logic: if resource > configured limit, set unhealthy
 	isHealthy := true
 	warnings := []string{}
 	errors := []string{}
 
-	// Check NATS
+	// Check NATS (critical dependency)
 	natsStatus := "disconnected"
 	natsHealthy := false
 	if s.natsConn != nil && s.natsConn.IsConnected() {
@@ -1009,41 +1013,68 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	} else {
 		isHealthy = false
 		errors = append(errors, "NATS connection lost")
+		s.structLogger.Error().Msg("Health check failed: NATS connection lost")
 	}
 
-	// Check capacity
-	capacityPercent := float64(currentConns) / float64(maxConns) * 100
-	capacityHealthy := true
-	if capacityPercent > 95 {
+	// Check CPU (against configured reject threshold)
+	cpuHealthy := true
+	if cpuPercent > s.config.CPURejectThreshold {
 		isHealthy = false
-		capacityHealthy = false
-		errors = append(errors, "Server at capacity (>95%)")
-	} else if capacityPercent > 80 {
-		capacityHealthy = false
-		warnings = append(warnings, "Server capacity high (>80%)")
+		cpuHealthy = false
+		errors = append(errors, fmt.Sprintf("CPU exceeds reject threshold (%.1f%% > %.1f%%)", cpuPercent, s.config.CPURejectThreshold))
+		s.structLogger.Error().
+			Float64("cpu_percent", cpuPercent).
+			Float64("cpu_threshold", s.config.CPURejectThreshold).
+			Msg("Health check failed: CPU exceeds threshold")
 	}
 
-	// Check memory
+	// Check memory (against configured limit)
 	memPercent := (memoryMB / memLimitMB) * 100
 	memHealthy := true
-	if memPercent > 90 {
+	if memoryMB > memLimitMB {
 		isHealthy = false
 		memHealthy = false
-		errors = append(errors, "Memory usage critical (>90%)")
-	} else if memPercent > 80 {
-		memHealthy = false
-		warnings = append(warnings, "Memory usage high (>80%)")
+		errors = append(errors, fmt.Sprintf("Memory exceeds limit (%.1fMB > %.1fMB)", memoryMB, memLimitMB))
+		s.structLogger.Error().
+			Float64("used_mb", memoryMB).
+			Float64("limit_mb", memLimitMB).
+			Msg("Health check failed: Memory exceeds limit")
 	}
 
-	// Check CPU
-	cpuHealthy := true
-	if cpuPercent > 90 {
+	// Check goroutines (against configured limit)
+	goroutinesPercent := float64(goroutinesCurrent) / float64(goroutinesLimit) * 100
+	goroutinesHealthy := true
+	if goroutinesCurrent > goroutinesLimit {
 		isHealthy = false
-		cpuHealthy = false
-		errors = append(errors, "CPU usage critical (>90%)")
-	} else if cpuPercent > 70 {
-		cpuHealthy = false
-		warnings = append(warnings, "CPU usage high (>70%)")
+		goroutinesHealthy = false
+		errors = append(errors, fmt.Sprintf("Goroutines exceed limit (%d > %d)", goroutinesCurrent, goroutinesLimit))
+		s.structLogger.Error().
+			Int("current", goroutinesCurrent).
+			Int("limit", goroutinesLimit).
+			Msg("Health check failed: Goroutines exceed limit")
+	}
+
+	// Check capacity (NOT a failure condition - server operates within design limits at 100%)
+	capacityPercent := float64(currentConns) / float64(maxConns) * 100
+	capacityHealthy := true
+	if capacityPercent > 100 {
+		// If it comes here, it means the server is over loaded and the limit check is failing
+		capacityHealthy = false
+		errors = append(errors, fmt.Sprintf("Server at over capacity (%d/%d)", currentConns, maxConns))
+		s.structLogger.Error().
+			Int64("current", currentConns).
+			Int64("max", maxConns).
+			Msg("Health check failed: Server at over capacity")
+	} else if capacityPercent == 100 {
+		capacityHealthy = true
+		warnings = append(warnings, fmt.Sprintf("Server at full capacity (%d/%d)", currentConns, maxConns))
+		s.structLogger.Warn().
+			Int64("current", currentConns).
+			Int64("max", maxConns).
+			Msg("Server at full capacity - consider scaling")
+	} else if capacityPercent > 90 && capacityPercent < 100 {
+		capacityHealthy = true
+		warnings = append(warnings, fmt.Sprintf("Server near capacity (%.1f%%)", capacityPercent))
 	}
 
 	// Check slow client rate
@@ -1076,22 +1107,16 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 				"healthy": natsHealthy,
 			},
 			"capacity": map[string]interface{}{
-				"current":       currentConns,
-				"max":           maxConns,
-				"percentage":    capacityPercent,
-				"healthy":       capacityHealthy,
-				"cpu_threshold": resourceStats["cpu_reject_threshold"],
-				"cpu_headroom":  100.0 - cpuPercent,
-				"static":        true, // Changed from dynamic
-				"cpu_percent":   resourceStats["cpu_percent"],
-				"goroutines":    resourceStats["goroutines_current"],
-				"limits": map[string]interface{}{
-					"max_connections":  s.config.MaxConnections,
-					"max_goroutines":   resourceStats["goroutines_limit"],
-					"nats_rate":        resourceStats["nats_rate_limit"],
-					"broadcast_rate":   resourceStats["broadcast_rate_limit"],
-					"worker_pool_size": resourceStats["worker_pool_size"],
-				},
+				"current":    currentConns,
+				"max":        maxConns,
+				"percentage": capacityPercent,
+				"healthy":    capacityHealthy,
+			},
+			"goroutines": map[string]interface{}{
+				"current":    goroutinesCurrent,
+				"limit":      goroutinesLimit,
+				"percentage": goroutinesPercent,
+				"healthy":    goroutinesHealthy,
 			},
 			"memory": map[string]interface{}{
 				"used_mb":    memoryMB,
@@ -1101,7 +1126,17 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 			},
 			"cpu": map[string]interface{}{
 				"percentage": cpuPercent,
+				"threshold":  s.config.CPURejectThreshold,
 				"healthy":    cpuHealthy,
+			},
+			"limits": map[string]interface{}{
+				"max_connections":  s.config.MaxConnections,
+				"max_goroutines":   s.config.MaxGoroutines,
+				"cpu_threshold":    s.config.CPURejectThreshold,
+				"memory_limit_mb":  memLimitMB,
+				"nats_rate":        resourceStats["nats_rate_limit"],
+				"broadcast_rate":   resourceStats["broadcast_rate_limit"],
+				"worker_pool_size": resourceStats["worker_pool_size"],
 			},
 		},
 		"warnings": warnings,
