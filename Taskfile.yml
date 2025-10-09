@@ -28,6 +28,9 @@ includes:
   gcp:
     taskfile: ./taskfiles/deploy-gcp.yml
     dir: .
+  gcp2:
+    taskfile: ./taskfiles/isolated-setup.yml
+    dir: .
 
 # === COMBINED WORKFLOWS ===
 # Common task combinations for quick access

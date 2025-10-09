@@ -1,0 +1,32 @@
+# Prometheus Configuration - Isolated Setup
+# Scrapes metrics from remote ws-go instance via internal network
+#
+# This file is templated. Before deployment, substitute:
+#   ${WS_GO_INTERNAL_IP} - Internal IP of ws-go instance
+#
+# Example:
+#   export WS_GO_INTERNAL_IP=10.128.0.3
+#   envsubst < prometheus.yml > prometheus.deployed.yml
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # WebSocket server (remote instance)
+  - job_name: "ws-go"
+    static_configs:
+      - targets: ["${WS_GO_INTERNAL_IP}:3002"]
+        labels:
+          instance: "odin-ws-go"
+          service: "websocket"
+
+  # NATS (local)
+  - job_name: "nats"
+    static_configs:
+      - targets: ["nats:8222"]
+
+  # Prometheus self-monitoring
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]

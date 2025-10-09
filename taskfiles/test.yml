@@ -84,8 +84,8 @@ tasks:
   sustained:
     desc: Run sustained load test (gradual ramp + hold, override with TARGET_CONNECTIONS/RAMP_RATE/DURATION)
     vars:
-      TARGET_CONNECTIONS: '{{.TARGET_CONNECTIONS | default "500"}}'
-      RAMP_RATE: '{{.RAMP_RATE | default "50"}}'
+      TARGET_CONNECTIONS: '{{.TARGET_CONNECTIONS | default "2000"}}'
+      RAMP_RATE: '{{.RAMP_RATE | default "100"}}'
       DURATION: '{{.DURATION | default "1800"}}'
       WS_URL: '{{.WS_URL | default "ws://localhost:3004/ws"}}'
       HEALTH_URL: '{{.HEALTH_URL | default "http://localhost:3004/health"}}'
@@ -99,67 +99,67 @@ tasks:
       HEALTH_URL: '{{.HEALTH_URL}}'
 
   # ============================================================================
-  # CAPACITY TESTS - Match server's WS_MAX_CONNECTIONS (500)
+  # CAPACITY TESTS - Match server's WS_MAX_CONNECTIONS (2000)
   # Expected: All connections succeed, server stable, no rejections
   # ============================================================================
 
   sustained:capacity:
-    desc: "CAPACITY TEST - Match server limit (500 connections, 50/sec ramp, 30 min)"
-    cmds:
-      - task: sustained
-        vars:
-          TARGET_CONNECTIONS: "500"
-          RAMP_RATE: "50"
-          DURATION: "1800"
-
-  sustained:capacity:short:
-    desc: "CAPACITY TEST - Short (500 connections, 50/sec ramp, 5 min)"
-    cmds:
-      - task: sustained
-        vars:
-          TARGET_CONNECTIONS: "500"
-          RAMP_RATE: "50"
-          DURATION: "300"
-
-  sustained:capacity:burst:
-    desc: "BURST TEST - Rapid ramp to capacity (500 connections, 500/sec ramp, 10 min)"
-    cmds:
-      - task: sustained
-        vars:
-          TARGET_CONNECTIONS: "500"
-          RAMP_RATE: "500"
-          DURATION: "600"
-
-  # ============================================================================
-  # STRESS/OVERLOAD TESTS - Exceed server's WS_MAX_CONNECTIONS (500)
-  # Expected: Rejections after limit, server stays stable, no crash
-  # ============================================================================
-
-  sustained:stress:
-    desc: "STRESS TEST - 2x overload (1000 connections, 100/sec ramp, 30 min)"
-    cmds:
-      - task: sustained
-        vars:
-          TARGET_CONNECTIONS: "1000"
-          RAMP_RATE: "100"
-          DURATION: "1800"
-
-  sustained:stress:heavy:
-    desc: "STRESS TEST - 3x overload (1500 connections, 100/sec ramp, 30 min)"
-    cmds:
-      - task: sustained
-        vars:
-          TARGET_CONNECTIONS: "1500"
-          RAMP_RATE: "100"
-          DURATION: "1800"
-
-  sustained:stress:extreme:
-    desc: "STRESS TEST - 4x overload (2000 connections, 200/sec ramp, 60 min)"
+    desc: "CAPACITY TEST - Match server limit (2000 connections, 100/sec ramp, 30 min)"
     cmds:
       - task: sustained
         vars:
           TARGET_CONNECTIONS: "2000"
+          RAMP_RATE: "100"
+          DURATION: "1800"
+
+  sustained:capacity:short:
+    desc: "CAPACITY TEST - Short (2000 connections, 100/sec ramp, 5 min)"
+    cmds:
+      - task: sustained
+        vars:
+          TARGET_CONNECTIONS: "2000"
+          RAMP_RATE: "100"
+          DURATION: "300"
+
+  sustained:capacity:burst:
+    desc: "BURST TEST - Rapid ramp to capacity (2000 connections, 1000/sec ramp, 10 min)"
+    cmds:
+      - task: sustained
+        vars:
+          TARGET_CONNECTIONS: "2000"
+          RAMP_RATE: "1000"
+          DURATION: "600"
+
+  # ============================================================================
+  # STRESS/OVERLOAD TESTS - Exceed server's WS_MAX_CONNECTIONS (2000)
+  # Expected: Rejections after limit, server stays stable, no crash
+  # ============================================================================
+
+  sustained:stress:
+    desc: "STRESS TEST - 1.5x overload (3000 connections, 200/sec ramp, 30 min)"
+    cmds:
+      - task: sustained
+        vars:
+          TARGET_CONNECTIONS: "3000"
           RAMP_RATE: "200"
+          DURATION: "1800"
+
+  sustained:stress:heavy:
+    desc: "STRESS TEST - 2x overload (4000 connections, 200/sec ramp, 30 min)"
+    cmds:
+      - task: sustained
+        vars:
+          TARGET_CONNECTIONS: "4000"
+          RAMP_RATE: "200"
+          DURATION: "1800"
+
+  sustained:stress:extreme:
+    desc: "STRESS TEST - 2.5x overload (5000 connections, 300/sec ramp, 60 min)"
+    cmds:
+      - task: sustained
+        vars:
+          TARGET_CONNECTIONS: "5000"
+          RAMP_RATE: "300"
           DURATION: "3600"
 
   # ============================================================================
@@ -167,22 +167,16 @@ tasks:
   # ============================================================================
 
   sustained:short:
-    desc: "[LEGACY] Use sustained:stress instead - 10 min (1000 connections)"
+    desc: "[LEGACY] Use sustained:capacity:short instead - 5 min (2000 connections)"
     cmds:
-      - task: sustained:stress
-        vars:
-          DURATION: "600"
+      - task: sustained:capacity:short
 
   sustained:medium:
-    desc: "[LEGACY] Use sustained:stress:heavy instead - 30 min (1500 connections)"
+    desc: "[LEGACY] Use sustained:capacity instead - 30 min (2000 connections)"
     cmds:
-      - task: sustained:stress:heavy
-        vars:
-          DURATION: "1800"
+      - task: sustained:capacity
 
   sustained:long:
-    desc: "[LEGACY] Use sustained:stress:heavy instead - 60 min (1500 connections)"
+    desc: "[LEGACY] Use sustained:stress instead - 30 min (3000 connections overload)"
     cmds:
-      - task: sustained:stress:heavy
-        vars:
-          DURATION: "3600"
+      - task: sustained:stress

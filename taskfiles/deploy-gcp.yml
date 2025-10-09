@@ -500,78 +500,78 @@ tasks:
   # === CAPACITY TESTS - Match server limits ===
 
   test:sustained:capacity:
-    desc: "CAPACITY TEST - Match server limit (500 connections, 50/sec, 30 min)"
+    desc: "CAPACITY TEST - Match server limit (2000 connections, 100/sec, 30 min)"
     cmds:
       - |
         IP=$(gcloud compute instances describe {{.GCP_INSTANCE}} \
           --zone={{.GCP_ZONE}} \
           --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
-        echo "📊 Running CAPACITY test against $IP (500 connections, 30 min)..."
+        echo "📊 Running CAPACITY test against $IP (2000 connections, 30 min)..."
         WS_URL="ws://$IP:3004/ws" HEALTH_URL="http://$IP:3004/health" task test:sustained:capacity
 
   test:sustained:capacity:short:
-    desc: "CAPACITY TEST - Short (500 connections, 50/sec, 5 min)"
+    desc: "CAPACITY TEST - Short (2000 connections, 100/sec, 5 min)"
     cmds:
       - |
         IP=$(gcloud compute instances describe {{.GCP_INSTANCE}} \
           --zone={{.GCP_ZONE}} \
           --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
-        echo "📊 Running CAPACITY test against $IP (500 connections, 5 min)..."
+        echo "📊 Running CAPACITY test against $IP (2000 connections, 5 min)..."
         WS_URL="ws://$IP:3004/ws" HEALTH_URL="http://$IP:3004/health" task test:sustained:capacity:short
 
   # === STRESS TESTS - Intentional overload ===
 
   test:sustained:stress:
-    desc: "STRESS TEST - 2x overload (1000 connections, 100/sec, 30 min)"
+    desc: "STRESS TEST - 1.5x overload (3000 connections, 200/sec, 30 min)"
     cmds:
       - |
         IP=$(gcloud compute instances describe {{.GCP_INSTANCE}} \
           --zone={{.GCP_ZONE}} \
           --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
-        echo "⚠️  Running STRESS test against $IP (1000 connections, 30 min)..."
+        echo "⚠️  Running STRESS test against $IP (3000 connections, 30 min)..."
         WS_URL="ws://$IP:3004/ws" HEALTH_URL="http://$IP:3004/health" task test:sustained:stress
 
   test:sustained:stress:heavy:
-    desc: "STRESS TEST - 3x overload (1500 connections, 100/sec, 30 min)"
+    desc: "STRESS TEST - 2x overload (4000 connections, 200/sec, 30 min)"
     cmds:
       - |
         IP=$(gcloud compute instances describe {{.GCP_INSTANCE}} \
           --zone={{.GCP_ZONE}} \
           --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
-        echo "⚠️  Running STRESS test against $IP (1500 connections, 30 min)..."
+        echo "⚠️  Running STRESS test against $IP (4000 connections, 30 min)..."
         WS_URL="ws://$IP:3004/ws" HEALTH_URL="http://$IP:3004/health" task test:sustained:stress:heavy
 
   # === LEGACY (backwards compatibility) ===
 
   test:sustained:short:
-    desc: "[LEGACY] Use test:sustained:stress instead - 10 min"
+    desc: "[LEGACY] Use test:sustained:capacity:short instead - 5 min (2000 connections)"
     cmds:
       - |
         IP=$(gcloud compute instances describe {{.GCP_INSTANCE}} \
           --zone={{.GCP_ZONE}} \
           --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
-        echo "🧪 Running sustained load test against $IP (10 min)..."
-        WS_URL="ws://$IP:3004/ws" HEALTH_URL="http://$IP:3004/health" task test:sustained:stress DURATION=600
+        echo "🧪 Running sustained load test against $IP (5 min)..."
+        WS_URL="ws://$IP:3004/ws" HEALTH_URL="http://$IP:3004/health" task test:sustained:capacity:short
 
   test:sustained:medium:
-    desc: "[LEGACY] Use test:sustained:stress:heavy instead - 30 min"
+    desc: "[LEGACY] Use test:sustained:capacity instead - 30 min (2000 connections)"
     cmds:
       - |
         IP=$(gcloud compute instances describe {{.GCP_INSTANCE}} \
           --zone={{.GCP_ZONE}} \
           --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
         echo "🧪 Running sustained load test against $IP (30 min)..."
-        WS_URL="ws://$IP:3004/ws" HEALTH_URL="http://$IP:3004/health" task test:sustained:stress:heavy
+        WS_URL="ws://$IP:3004/ws" HEALTH_URL="http://$IP:3004/health" task test:sustained:capacity
 
   test:sustained:long:
-    desc: "[LEGACY] Use test:sustained:stress:heavy instead - 60 min"
+    desc: "[LEGACY] Use test:sustained:stress instead - 30 min (3000 connections overload)"
     cmds:
       - |
         IP=$(gcloud compute instances describe {{.GCP_INSTANCE}} \
           --zone={{.GCP_ZONE}} \
           --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
-        echo "🧪 Running sustained load test against $IP (60 min)..."
-        WS_URL="ws://$IP:3004/ws" HEALTH_URL="http://$IP:3004/health" task test:sustained:stress:heavy DURATION=3600
+        echo "🧪 Running sustained load test against $IP (30 min overload)..."
+        WS_URL="ws://$IP:3004/ws" HEALTH_URL="http://$IP:3004/health" task test:sustained:stress
 
   test:benchmark:
     desc: Run comprehensive benchmark suite against GCP deployment
