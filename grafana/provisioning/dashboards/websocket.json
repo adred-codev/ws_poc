@@ -35,15 +35,16 @@
               },
               {
                 "color": "yellow",
-                "value": 1700
+                "value": 14400
               },
               {
                 "color": "red",
-                "value": 2000
+                "value": 16200
               }
             ]
           },
-          "unit": "short"
+          "unit": "short",
+          "max": 18000
         }
       },
       "gridPos": {
@@ -725,7 +726,10 @@
   "refresh": "15s",
   "schemaVersion": 27,
   "style": "dark",
-  "tags": ["websocket", "monitoring"],
+  "tags": [
+    "websocket",
+    "monitoring"
+  ],
   "templating": {
     "list": []
   },

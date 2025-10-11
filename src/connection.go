@@ -16,30 +16,30 @@ import (
 // 3. Slow client detection - Automatically disconnect laggy clients
 // 4. Rate limiting - Prevent client from DoS-ing server
 //
-// Memory per client: ~520KB
+// Memory per client: ~1.1MB
 // - Base struct: ~200 bytes
-// - send channel: 256 slots × 500 bytes avg = 128KB
-// - replay buffer: 1000 msgs × 500 bytes avg = 500KB (largest)
+// - send channel: 2048 slots × 500 bytes avg = 1MB (largest - increased for scale)
+// - replay buffer: 100 msgs × 500 bytes avg = 50KB
 // - sequence generator: 8 bytes
 // - Other fields: ~100 bytes
 //
-// For 7,864 clients (our memory-based limit):
-// Total: 7,864 × 520KB = ~4GB
-// Container has: 512MB
-// Math doesn't add up! 🚨
+// Memory scaling:
+// - 500 clients: 500 × 1.1MB = ~550MB (fits comfortably in 3.5GB container)
+// - 1000 clients: 1000 × 1.1MB = ~1.1GB (safe)
+// - 2000 clients: 2000 × 1.1MB = ~2.2GB (approaching limit)
+// - 3000 clients: 3000 × 1.1MB = ~3.3GB (near 3.5GB limit)
 //
-// Solution: Reduce replay buffer OR reduce max connections
-// Option A: buffer=100 (10KB per client) → 7,864 × 138KB = 1.08GB ✓
-// Option B: maxConns=3500 (512MB÷520KB) → 3,500 × 520KB = 1.8GB ✓
+// Buffer sizing rationale:
+// - 256 buffer = 12.8 sec @ 20 broadcasts/sec (too small, caused cascade disconnects)
+// - 2048 buffer = 102 sec @ 20 broadcasts/sec (provides ample recovery time)
 //
-// For production: Start with Option A (smaller buffer)
-// Can increase buffer size if memory allows after monitoring
+// Trade-off: Higher memory usage but prevents slow client disconnections at scale
 type Client struct {
 	// Basic WebSocket fields
 	id     int64       // Unique client identifier
 	conn   net.Conn    // Underlying TCP connection
 	server *Server     // Reference to parent server
-	send   chan []byte // Buffered channel for outgoing messages (256 deep)
+	send   chan []byte // Buffered channel for outgoing messages (2048 deep)
 	mu     sync.RWMutex
 
 	// Message reliability fields
@@ -91,7 +91,14 @@ func NewConnectionPool(maxSize int) *ConnectionPool {
 		pool: sync.Pool{
 			New: func() interface{} {
 				return &Client{
-					send: make(chan []byte, 256),
+					// Buffer size increased from 256 to 2048 for high-scale scenarios
+					// Why 2048:
+					// - At 20 broadcasts/sec, provides 102 seconds of buffer (vs 12.8s with 256)
+					// - Prevents cascade disconnections when clients temporarily slow
+					// - Memory cost: 1MB per client (2048 × 500 bytes avg message)
+					// - At 1000 clients: 1GB total buffer memory (acceptable)
+					// - At 500 clients: 500MB total buffer memory (very safe)
+					send: make(chan []byte, 2048),
 				}
 			},
 		},

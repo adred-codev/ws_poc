@@ -626,6 +626,343 @@ scale_down:
 
 ---
 
+## Future Enhancements
+
+### Adaptive Throttling for Slow Clients
+
+**Problem**: Current implementation disconnects slow clients after 3 consecutive send failures. While effective, this can be disruptive for clients experiencing temporary network issues or device constraints.
+
+**Solution**: Implement adaptive per-client throttling instead of immediate disconnection.
+
+#### Implementation Overview
+
+**Core Concept**: When a client becomes slow, reduce their message rate instead of disconnecting them.
+
+```go
+type Client struct {
+    // ... existing fields ...
+
+    // Adaptive throttling fields
+    throttleRate     float64 // 0.0-1.0 (percentage of messages to send)
+    throttleLevel    int32   // 0=none, 1=light, 2=medium, 3=heavy
+    lastThrottleTime time.Time
+}
+
+// Throttle levels
+const (
+    ThrottleNone   = 0  // 100% of messages
+    ThrottleLight  = 1  // 75% of messages
+    ThrottleMedium = 2  // 50% of messages
+    ThrottleHeavy  = 3  // 25% of messages
+)
+```
+
+#### Throttling Logic
+
+```go
+func (s *Server) broadcast(message []byte) {
+    s.clients.Range(func(key, value interface{}) bool {
+        client := key.(*Client)
+
+        // Get current throttle level
+        throttleLevel := atomic.LoadInt32(&client.throttleLevel)
+
+        // Determine if we should send this message
+        shouldSend := true
+        if throttleLevel > ThrottleNone {
+            // Use message sequence number for deterministic throttling
+            // This ensures consistent message delivery patterns
+            msgSeq := client.seqGen.Next()
+
+            switch throttleLevel {
+            case ThrottleLight:
+                shouldSend = msgSeq % 4 != 0 // Send 75%
+            case ThrottleMedium:
+                shouldSend = msgSeq % 2 == 0 // Send 50%
+            case ThrottleHeavy:
+                shouldSend = msgSeq % 4 == 0 // Send 25%
+            }
+        }
+
+        if !shouldSend {
+            // Skip this message but don't disconnect
+            IncrementThrottledMessages()
+            return true
+        }
+
+        // Attempt send with existing logic
+        select {
+        case client.send <- message:
+            // Success - check if we can reduce throttling
+            atomic.StoreInt32(&client.sendAttempts, 0)
+            s.maybeReduceThrottle(client)
+
+        default:
+            // Buffer full - increase throttling instead of disconnecting
+            attempts := atomic.AddInt32(&client.sendAttempts, 1)
+
+            if attempts >= 3 {
+                s.increaseThrottle(client)
+                atomic.StoreInt32(&client.sendAttempts, 0) // Reset counter
+            }
+        }
+
+        return true
+    })
+}
+
+func (s *Server) increaseThrottle(client *Client) {
+    level := atomic.LoadInt32(&client.throttleLevel)
+
+    if level < ThrottleHeavy {
+        newLevel := level + 1
+        atomic.StoreInt32(&client.throttleLevel, newLevel)
+        client.lastThrottleTime = time.Now()
+
+        s.auditLogger.Warning("ClientThrottled", "Increased throttle level for slow client", map[string]interface{}{
+            "clientID":      client.id,
+            "throttleLevel": newLevel,
+            "ratePercent":   s.getThrottleRate(newLevel),
+        })
+
+        // Send notification to client
+        s.sendThrottleNotification(client, newLevel)
+    } else {
+        // Already at maximum throttle - disconnect as last resort
+        s.auditLogger.Warning("SlowClientDisconnected", "Client too slow even at maximum throttle", map[string]interface{}{
+            "clientID":      client.id,
+            "throttleLevel": level,
+        })
+
+        conn := client.conn
+        if conn != nil {
+            closeMsg := ws.NewCloseFrameBody(ws.StatusPolicyViolation, "Client too slow even at reduced rate")
+            ws.WriteFrame(conn, ws.NewCloseFrame(closeMsg))
+            conn.Close()
+        }
+
+        IncrementSlowClientDisconnects()
+    }
+}
+
+func (s *Server) maybeReduceThrottle(client *Client) {
+    level := atomic.LoadInt32(&client.throttleLevel)
+
+    if level == ThrottleNone {
+        return // Already at full rate
+    }
+
+    // Reduce throttle after 30 seconds of successful sends
+    if time.Since(client.lastThrottleTime) > 30*time.Second {
+        newLevel := level - 1
+        atomic.StoreInt32(&client.throttleLevel, newLevel)
+        client.lastThrottleTime = time.Now()
+
+        s.auditLogger.Info("ClientThrottleReduced", "Reduced throttle level for recovering client", map[string]interface{}{
+            "clientID":      client.id,
+            "throttleLevel": newLevel,
+            "ratePercent":   s.getThrottleRate(newLevel),
+        })
+
+        // Send notification to client
+        s.sendThrottleNotification(client, newLevel)
+    }
+}
+
+func (s *Server) sendThrottleNotification(client *Client, level int32) {
+    notification := map[string]interface{}{
+        "type":          "throttle_update",
+        "level":         level,
+        "rate_percent":  s.getThrottleRate(level),
+        "message":       s.getThrottleMessage(level),
+    }
+
+    if data, err := json.Marshal(notification); err == nil {
+        select {
+        case client.send <- data:
+            // Notification sent
+        default:
+            // Can't send notification, client buffer full
+        }
+    }
+}
+
+func (s *Server) getThrottleRate(level int32) float64 {
+    switch level {
+    case ThrottleLight:  return 75.0
+    case ThrottleMedium: return 50.0
+    case ThrottleHeavy:  return 25.0
+    default:             return 100.0
+    }
+}
+
+func (s *Server) getThrottleMessage(level int32) string {
+    switch level {
+    case ThrottleLight:
+        return "Your connection is slightly slow. Receiving 75% of updates."
+    case ThrottleMedium:
+        return "Your connection is slow. Receiving 50% of updates. Consider refreshing."
+    case ThrottleHeavy:
+        return "Your connection is very slow. Receiving 25% of updates. Please reconnect."
+    default:
+        return "Connection quality restored. Receiving all updates."
+    }
+}
+```
+
+#### Client-Side Handling
+
+```typescript
+// In frontend WebSocket client
+ws.onmessage = (event) => {
+  const msg = JSON.parse(event.data);
+
+  if (msg.type === 'throttle_update') {
+    // Show UI notification
+    showNotification({
+      type: msg.level > 1 ? 'warning' : 'info',
+      message: msg.message,
+      ratePercent: msg.rate_percent
+    });
+
+    // Log for debugging
+    console.log(`Throttle level: ${msg.level} (${msg.rate_percent}% rate)`);
+
+    // Maybe suggest reconnection
+    if (msg.level >= 3) {
+      showReconnectSuggestion();
+    }
+  }
+};
+```
+
+#### Benefits
+
+1. **Better User Experience**
+   - Clients stay connected during temporary issues
+   - Gradual degradation instead of hard disconnect
+   - Clear feedback to users about connection quality
+
+2. **Resource Efficiency**
+   - Reduces reconnection storms
+   - Slow clients use less bandwidth automatically
+   - Fast clients unaffected
+
+3. **Fairness**
+   - Prevents slow clients from wasting server resources
+   - Fast clients get 100% of messages
+   - Automatic recovery when client speed improves
+
+4. **Observability**
+   - New Prometheus metrics: `ws_throttled_clients_by_level`
+   - Track throttle transitions
+   - Identify clients with persistent issues
+
+#### Monitoring Metrics
+
+```go
+// Add to metrics.go
+var (
+    throttledClientsLight = promauto.NewGauge(prometheus.GaugeOpts{
+        Name: "ws_throttled_clients_light",
+        Help: "Number of clients at light throttle (75% rate)",
+    })
+
+    throttledClientsMedium = promauto.NewGauge(prometheus.GaugeOpts{
+        Name: "ws_throttled_clients_medium",
+        Help: "Number of clients at medium throttle (50% rate)",
+    })
+
+    throttledClientsHeavy = promauto.NewGauge(prometheus.GaugeOpts{
+        Name: "ws_throttled_clients_heavy",
+        Help: "Number of clients at heavy throttle (25% rate)",
+    })
+
+    throttleTransitions = promauto.NewCounterVec(prometheus.CounterOpts{
+        Name: "ws_throttle_transitions_total",
+        Help: "Number of throttle level transitions",
+    }, []string{"from_level", "to_level"})
+)
+```
+
+#### Implementation Effort
+
+| Task | Effort | Priority |
+|------|--------|----------|
+| Core throttling logic | 4-6 hours | High |
+| Client notifications | 2 hours | Medium |
+| Prometheus metrics | 2 hours | Medium |
+| Frontend UI handling | 3-4 hours | Medium |
+| Testing & tuning | 4-6 hours | High |
+| **Total** | **15-20 hours** | **Phase 2** |
+
+#### Rollout Strategy
+
+1. **Phase 1**: Implement with conservative defaults
+   - Enable for 10% of users
+   - Monitor metrics (throttle rates, disconnections)
+   - Tune thresholds based on data
+
+2. **Phase 2**: Gradual rollout
+   - 25% → 50% → 100% of users
+   - A/B test: throttling vs disconnection
+   - Compare user retention metrics
+
+3. **Phase 3**: Optimization
+   - Tune throttle levels based on network type (4G, 5G, WiFi)
+   - Consider geo-based thresholds
+   - Machine learning for adaptive thresholds
+
+#### Configuration
+
+Add environment variables for tuning:
+
+```yaml
+# docker-compose.yml
+environment:
+  WS_THROTTLE_ENABLED: "true"
+  WS_THROTTLE_LIGHT_PERCENT: "75"
+  WS_THROTTLE_MEDIUM_PERCENT: "50"
+  WS_THROTTLE_HEAVY_PERCENT: "25"
+  WS_THROTTLE_RECOVERY_SECONDS: "30"
+  WS_THROTTLE_MAX_LEVEL: "3"
+```
+
+#### Alternative: Priority-Based Throttling
+
+For advanced use cases, implement priority-based message filtering:
+
+```go
+type MessagePriority int
+
+const (
+    PriorityLow    MessagePriority = 0 // Metadata updates
+    PriorityMedium MessagePriority = 1 // Comment updates
+    PriorityHigh   MessagePriority = 2 // Price updates
+    PriorityCritical MessagePriority = 3 // Trade confirmations
+)
+
+// When throttled, drop low-priority messages first
+func (s *Server) shouldSendMessage(client *Client, priority MessagePriority) bool {
+    level := atomic.LoadInt32(&client.throttleLevel)
+
+    switch level {
+    case ThrottleLight:
+        return priority >= PriorityMedium // Drop low priority
+    case ThrottleMedium:
+        return priority >= PriorityHigh // Drop low+medium
+    case ThrottleHeavy:
+        return priority == PriorityCritical // Only critical
+    default:
+        return true // Send all
+    }
+}
+```
+
+This ensures critical updates (like trade confirmations) always get through, even when throttled.
+
+---
+
 ## Next Steps
 
 1. **This week**: Sign up for Synadia Cloud (5 min)

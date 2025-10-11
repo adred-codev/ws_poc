@@ -20,18 +20,18 @@ const http = require('http');
 // IMPORTANT: Test configuration should match WebSocket server configuration!
 //
 // The server's resource limits are configured in docker-compose.yml:
-//   - WS_MAX_CONNECTIONS: 2000 (hard connection limit)
+//   - WS_MAX_CONNECTIONS: 18000 (hard connection limit)
 //   - WS_MAX_NATS_RATE: 20 messages/sec (rate limit)
 //   - WS_CPU_REJECT_THRESHOLD: 75% (emergency brake)
 //
 // TEST MODES:
 //
 // 1. CAPACITY TEST (recommended default):
-//    - Set TARGET_CONNECTIONS = server's WS_MAX_CONNECTIONS (2000)
+//    - Set TARGET_CONNECTIONS = server's WS_MAX_CONNECTIONS (18000)
 //    - Set RAMP_RATE to gradual value (100-200 conn/sec)
 //    - Expected: All connections succeed, server stable, no rejections
 //    - Purpose: Verify server handles maximum configured load
-//    - Example: TARGET_CONNECTIONS=2000 RAMP_RATE=100 npm run test:sustained
+//    - Example: TARGET_CONNECTIONS=18000 RAMP_RATE=100 npm run test:sustained
 //
 // 2. STRESS/OVERLOAD TEST (intentional overload):
 //    - Set TARGET_CONNECTIONS > server's WS_MAX_CONNECTIONS (e.g., 3000-4000)
@@ -41,11 +41,11 @@ const http = require('http');
 //    - Example: TARGET_CONNECTIONS=3000 RAMP_RATE=200 npm run test:sustained
 //
 // 3. BURST/SPIKE TEST (rapid connection attempts):
-//    - Set TARGET_CONNECTIONS to server limit (2000)
+//    - Set TARGET_CONNECTIONS to server limit (18000)
 //    - Set RAMP_RATE very high (1000-2000 conn/sec)
 //    - Expected: Some rejections during burst, server recovers, final count = limit
 //    - Purpose: Verify server handles traffic spikes gracefully
-//    - Example: TARGET_CONNECTIONS=2000 RAMP_RATE=1000 npm run test:sustained
+//    - Example: TARGET_CONNECTIONS=18000 RAMP_RATE=1000 npm run test:sustained
 //
 // ============================================================================
 
@@ -57,7 +57,7 @@ const CONFIG = {
   // Target connections
   // DEFAULT: Matches server's WS_MAX_CONNECTIONS for capacity testing
   // Override with TARGET_CONNECTIONS env var for stress testing
-  TARGET_CONNECTIONS: parseInt(process.env.TARGET_CONNECTIONS) || 2000,
+  TARGET_CONNECTIONS: parseInt(process.env.TARGET_CONNECTIONS) || 18000,
 
   // Ramp-up settings (gradual increase)
   // DEFAULT: Moderate ramp for smooth capacity testing
@@ -112,12 +112,28 @@ class LoadTestConnection {
     this.messagesReceived = 0;
     this.connected = false;
     this.connectTime = null;
+
+    // PERFORMANCE: Pre-allocate buffer for message processing
+    // Reduces GC pressure by reusing string buffers
+    this.messageBuffer = [];
+    this.processingBatch = false;
   }
 
   connect() {
     return new Promise((resolve) => {
       try {
-        this.ws = new WebSocket(CONFIG.WS_URL);
+        // PERFORMANCE OPTIMIZATION: Configure WebSocket for high throughput
+        this.ws = new WebSocket(CONFIG.WS_URL, {
+          // Disable compression for speed (we're testing throughput, not bandwidth)
+          perMessageDeflate: false,
+
+          // Increase buffer sizes for better throughput
+          // Default is 16KB, we increase to 512KB to handle bursts
+          maxPayload: 512 * 1024, // 512KB max message size
+
+          // Disable auto-ping (we handle heartbeats manually)
+          skipUTF8Validation: true, // Skip UTF-8 validation for speed
+        });
 
         this.ws.on('open', () => {
           this.connected = true;
@@ -165,15 +181,51 @@ class LoadTestConnection {
     this.messagesReceived++;
     state.messagesReceived++;
 
-    // Basic validation
-    try {
-      const message = JSON.parse(data.toString());
-      if (!message.type) {
-        state.errors++;
-      }
-    } catch (error) {
-      state.errors++;
+    // PERFORMANCE OPTIMIZATION: Batch message processing
+    // Instead of processing each message individually (expensive),
+    // collect messages in buffer and process in batches
+    // This reduces:
+    // 1. Number of setImmediate() calls (context switches)
+    // 2. JSON parsing overhead per message
+    // 3. Event loop pressure
+
+    this.messageBuffer.push(data);
+
+    // Process batch when we have 10 messages or if not already processing
+    if (this.messageBuffer.length >= 10 || !this.processingBatch) {
+      this.processBatchedMessages();
     }
+  }
+
+  processBatchedMessages() {
+    if (this.processingBatch || this.messageBuffer.length === 0) {
+      return;
+    }
+
+    this.processingBatch = true;
+
+    // Defer batch processing to next tick
+    setImmediate(() => {
+      const batch = this.messageBuffer.splice(0, this.messageBuffer.length);
+
+      for (const data of batch) {
+        try {
+          const message = JSON.parse(data.toString());
+          if (!message.type) {
+            state.errors++;
+          }
+        } catch (error) {
+          state.errors++;
+        }
+      }
+
+      this.processingBatch = false;
+
+      // If more messages arrived while processing, schedule next batch
+      if (this.messageBuffer.length > 0) {
+        this.processBatchedMessages();
+      }
+    });
   }
 
   onError(error) {
@@ -187,6 +239,10 @@ class LoadTestConnection {
     if (this.heartbeatInterval) {
       clearInterval(this.heartbeatInterval);
     }
+
+    // PERFORMANCE: Clean up message buffer to prevent memory leak
+    this.messageBuffer = [];
+    this.processingBatch = false;
   }
 
   startHeartbeat() {
@@ -360,7 +416,7 @@ async function runTest() {
   console.log('='.repeat(80));
 
   // Determine test mode based on configuration
-  const serverMaxConnections = 2000; // From WS_MAX_CONNECTIONS in docker-compose.yml
+  const serverMaxConnections = parseInt(process.env.WS_MAX_CONNECTIONS) || 18000;
   let testMode = 'CAPACITY TEST';
   let testModeEmoji = '📊';
   let testModeDescription = 'Testing at server capacity limit';

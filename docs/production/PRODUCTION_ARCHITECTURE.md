@@ -141,11 +141,41 @@ WebSocket approach (event-driven):
 
 ### 2.2 Component Breakdown
 
-**ws-go instances** (2-5× e2-small):
-- Each handles 10,000 connections
-- Start with 2 (20k capacity)
-- Auto-scale to 5 (50k capacity) if needed
-- Cost: 2 × $12.23 = $24.46/month
+**ws-go instances** (2-5× e2-small OR 2-3× e2-medium):
+
+**Option A: e2-small without centralized logs (10,000 connections per instance)**
+- 2 vCPU (shared), 2GB RAM
+- Configuration: 256 workers, 25k goroutines, 1792M limit
+- Cost per instance: $12.23/month
+- Start with 2 instances (20k capacity)
+- Auto-scale to 5 instances (50k capacity)
+- **Total cost**: 2 × $12.23 = $24.46/month
+- **Note**: No Promtail (logs via SSH only)
+
+**Option B: e2-small with reduced capacity + Promtail (8,500 connections per instance)**
+- 2 vCPU (shared), 2GB RAM
+- Configuration: 192 workers, 20k goroutines, 1536M limit (ws-go) + 256M (Promtail)
+- Cost per instance: $12.23/month
+- Start with 3 instances (25.5k capacity)
+- Auto-scale to 5 instances (42.5k capacity)
+- **Total cost**: 3 × $12.23 = $36.69/month
+- **Note**: Promtail ships logs to centralized Loki, visible in Grafana
+- **Why reduced capacity**: e2-small only has 2GB RAM - Promtail needs 256M, leaving 1536M for ws-go
+
+**Option C: e2-medium with full capacity + Promtail (18,000 connections per instance)**
+- 2 vCPU (shared), 4GB RAM
+- Configuration: 512 workers, 44k goroutines, 3584M limit (ws-go) + 256M (Promtail)
+- Cost per instance: $24.46/month
+- Start with 2 instances (36k capacity)
+- Auto-scale to 4 instances (72k capacity)
+- **Total cost**: 2 × $24.46 = $48.92/month
+- **Note**: Promtail ships logs to centralized Loki, visible in Grafana
+- **Best for**: Production deployments needing both capacity + observability
+
+**Recommendation**:
+- **Testing/staging**: Option A (cheapest, manual logs)
+- **Production <40k users**: Option B (balanced cost/observability)
+- **Production 40k+ users**: Option C (maximum capacity + full observability)
 
 **NATS** (optional, 1× e2-micro):
 - Simple pub/sub if backend wants to push events
@@ -259,21 +289,24 @@ services:
       - "3004:3002"
 
     environment:
-      # Resource limits
+      # Resource limits (e2-small)
       - WS_CPU_LIMIT=1.8
       - WS_MEMORY_LIMIT=1879048192      # 1792MB
       - WS_MAX_CONNECTIONS=10000
 
-      # Worker pool (light load, fewer workers)
-      - WS_WORKER_POOL_SIZE=128
-      - WS_WORKER_QUEUE_SIZE=12800
+      # Worker pool sizing (proven formula: max(32, connections/40))
+      # For 10k connections: max(32, 10000/40) = 250 → use 256 (power of 2)
+      - WS_WORKER_POOL_SIZE=256
+      - WS_WORKER_QUEUE_SIZE=25600      # 100x workers
 
-      # Goroutine limits
+      # Goroutine limits (proven formula: ((connections × 2) + workers + 13) × 1.2)
+      # For 10k: ((10000 × 2) + 256 + 13) × 1.2 = 24,323 → round to 25000
       - WS_MAX_GOROUTINES=25000
 
-      # No rate limiting (current load is very light)
-      - WS_MAX_NATS_RATE=0              # Unlimited
-      - WS_MAX_BROADCAST_RATE=0         # Unlimited
+      # Rate limiting (safety valves for production)
+      # Set to 0 (unlimited) if you trust your load, or use 1000 as safety limit
+      - WS_MAX_NATS_RATE=1000           # Max NATS messages/sec
+      - WS_MAX_BROADCAST_RATE=1000      # Max broadcasts/sec
 
       # NATS connection
       - NATS_URL=nats://nats:4222
@@ -584,6 +617,8 @@ useEffect(() => {
 
 ### 6.1 Infrastructure Costs (Monthly)
 
+**Option A: e2-small without Promtail (baseline)**
+
 | Component | Qty | Type | Cost |
 |-----------|-----|------|------|
 | ws-go | 2 | e2-small | $24.46 |
@@ -592,6 +627,28 @@ useEffect(() => {
 | Monitoring | 1 | e2-small | $12.23 |
 | Disks | 3 | 10GB SSD | $5.10 |
 | **Subtotal** | - | - | **$65.91** |
+
+**Option B: e2-small with reduced capacity + Promtail**
+
+| Component | Qty | Type | Cost |
+|-----------|-----|------|------|
+| ws-go + Promtail | 3 | e2-small | $36.69 |
+| NATS | 1 | e2-micro | $6.12 |
+| Load Balancer | 1 | TCP LB | $18.00 |
+| Monitoring (Loki + Prometheus + Grafana) | 1 | e2-small | $12.23 |
+| Disks | 4 | 10GB SSD | $6.80 |
+| **Subtotal** | - | - | **$79.84** |
+
+**Option C: e2-medium with full capacity + Promtail (recommended)**
+
+| Component | Qty | Type | Cost |
+|-----------|-----|------|------|
+| ws-go + Promtail | 2 | e2-medium | $48.92 |
+| NATS | 1 | e2-micro | $6.12 |
+| Load Balancer | 1 | TCP LB | $18.00 |
+| Monitoring (Loki + Prometheus + Grafana) | 1 | e2-small | $12.23 |
+| Disks | 3 | 10GB SSD | $5.10 |
+| **Subtotal** | - | - | **$90.37** |
 
 ### 6.2 Network Egress (Variable)
 
@@ -619,7 +676,10 @@ Next 7.3 TB: 7.3 × 1024 × $0.12 = $897
 Total: $897/month
 ```
 
-**Total with compression**: $65.91 + $897 = **$963/month**
+**Total with compression**:
+- Option A (no Promtail): $65.91 + $897 = **$963/month**
+- Option B (3× e2-small): $79.84 + $897 = **$977/month**
+- Option C (2× e2-medium): $90.37 + $897 = **$987/month**
 
 ### 6.3 Moderate scenario (40k concurrent)
 
@@ -627,22 +687,51 @@ Total: $897/month
 **Bandwidth**: 16 MB/sec = 41.4 TB/month
 **Compressed**: 16.6 TB/month
 **Network cost**: ~$1,800/month
-**Total**: $1,866/month
 
-**Infrastructure**: Need 4 instances (add 2) = +$24.46
+**Infrastructure scaling**:
+- Option A (10k per instance): Need 4 instances = 4 × $12.23 = $48.92
+- Option B (8.5k per instance): Need 5 instances = 5 × $12.23 = $61.15
+- Option C (18k per instance): Need 3 instances = 3 × $24.46 = $73.38
 
-**Grand total**: **$1,890/month**
+**Grand total (40k concurrent)**:
+- Option A: $65.91 + $23.46 (2 more instances) + $1,800 = **$1,889/month**
+- Option B: $79.84 + $24.46 (2 more instances) + $1,800 = **$1,904/month**
+- Option C: $90.37 + $24.46 (1 more instance) + $1,800 = **$1,915/month**
 
 ### 6.4 Cost Comparison
 
-| Users | Concurrent | Instances | Network | Total | Per Connection |
-|-------|------------|-----------|---------|-------|----------------|
-| 200k | 20k | 2 | $897 | **$963** | $0.048 |
-| 200k | 40k | 4 | $1,800 | **$1,890** | $0.047 |
-| 500k | 50k | 5 | $2,250 | **$2,376** | $0.048 |
-| 500k | 100k | 10 | $4,500 | **$4,622** | $0.046 |
+**Option A: e2-small without Promtail (10k per instance)**
 
-**Cost scales linearly** with concurrent connections.
+| Users | Concurrent | Instances | Infrastructure | Network | Total | Per Connection |
+|-------|------------|-----------|----------------|---------|-------|----------------|
+| 200k | 20k | 2 | $66 | $897 | **$963** | $0.048 |
+| 200k | 40k | 4 | $90 | $1,800 | **$1,890** | $0.047 |
+| 500k | 50k | 5 | $103 | $2,250 | **$2,353** | $0.047 |
+| 500k | 100k | 10 | $189 | $4,500 | **$4,689** | $0.047 |
+
+**Option B: e2-small with reduced capacity + Promtail (8.5k per instance)**
+
+| Users | Concurrent | Instances | Infrastructure | Network | Total | Per Connection |
+|-------|------------|-----------|----------------|---------|-------|----------------|
+| 200k | 17k | 2 | $80 | $760 | **$840** | $0.049 |
+| 200k | 25.5k | 3 | $80 | $1,140 | **$1,220** | $0.048 |
+| 200k | 42.5k | 5 | $104 | $1,900 | **$2,004** | $0.047 |
+| 500k | 51k | 6 | $116 | $2,280 | **$2,396** | $0.047 |
+
+**Option C: e2-medium with full capacity + Promtail (18k per instance)**
+
+| Users | Concurrent | Instances | Infrastructure | Network | Total | Per Connection |
+|-------|------------|-----------|----------------|---------|-------|----------------|
+| 200k | 18k | 1 | $91 | $805 | **$896** | $0.050 |
+| 200k | 36k | 2 | $90 | $1,610 | **$1,700** | $0.047 |
+| 500k | 54k | 3 | $115 | $2,415 | **$2,530** | $0.047 |
+| 500k | 90k | 5 | $163 | $4,025 | **$4,188** | $0.047 |
+
+**Key insights**:
+- **Option A**: Cheapest at higher scale (no Promtail overhead), but manual log access only
+- **Option B**: Moderate cost, full observability, but needs more instances
+- **Option C**: Best capacity + observability balance, most cost-effective at high scale
+- **Cost scales linearly** with concurrent connections (~$0.047-0.050 per connection)
 
 ---
 
@@ -873,14 +962,28 @@ For now, backend just publishes each transaction directly to NATS.
 
 ## Summary
 
-**Start Simple**:
-- 2× ws-go (e2-small): $24/month
-- 1× NATS (e2-micro): $6/month
-- Load balancer: $18/month
-- Monitoring: $12/month
-- **Total infrastructure**: $60/month
-- **Network egress** (compressed): $900/month
-- **Grand total**: **$960/month**
+**Deployment Options**:
+
+**Option A: e2-small without Promtail (cheapest)**
+- 2× ws-go (e2-small, 10k each): $24/month
+- Infrastructure: $66/month
+- Network egress (compressed, 20k users): $897/month
+- **Grand total**: **$963/month**
+- **Best for**: Testing, staging, manual log access acceptable
+
+**Option B: e2-small with reduced capacity + Promtail (balanced)**
+- 3× ws-go (e2-small, 8.5k each): $37/month
+- Infrastructure: $80/month
+- Network egress (compressed, 25.5k users): $1,140/month
+- **Grand total**: **$1,220/month**
+- **Best for**: Production <40k users, balanced cost + observability
+
+**Option C: e2-medium with full capacity + Promtail (recommended)**
+- 2× ws-go (e2-medium, 18k each): $49/month
+- Infrastructure: $90/month
+- Network egress (compressed, 36k users): $1,610/month
+- **Grand total**: **$1,700/month**
+- **Best for**: Production 40k+ users, maximum capacity + full observability
 
 **Handles Current Load Easily**:
 - 20-40k concurrent connections

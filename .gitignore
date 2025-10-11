@@ -48,3 +48,6 @@ loki_data/
 *.bak
 tmp/
 temp/
+
+# sessions
+docs/sessions

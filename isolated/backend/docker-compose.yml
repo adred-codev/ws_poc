@@ -87,7 +87,7 @@ services:
     image: grafana/loki:3.3.2
     container_name: odin-loki
     ports:
-      - "127.0.0.1:3101:3100"
+      - "0.0.0.0:3100:3100"  # Exposed for remote Promtail (ws-go instance)
     volumes:
       - ./loki-config.yml:/etc/loki/loki-config.yml
       - loki_data:/loki

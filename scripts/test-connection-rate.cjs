@@ -1,15 +1,23 @@
 const WebSocket = require('ws');
 
-const SERVER_URL = process.argv[2] || 'ws://localhost:3002/ws';
-const TARGET_CONNECTIONS = parseInt(process.argv[3]) || 3000;
+const SERVER_URL = process.argv[2] || process.env.WS_URL || 'ws://localhost:3004/ws';
+const TARGET_CONNECTIONS = parseInt(process.argv[3]) || parseInt(process.env.TARGET_CONNECTIONS) || 3000;
+const HOLD_DURATION = parseInt(process.argv[4]) || parseInt(process.env.DURATION) || 0; // 0 = close immediately (original behavior)
 const PREFIX = SERVER_URL.includes('3002') ? 'GO' : 'NODE';
 
-console.log(`🧪 [${PREFIX}] Testing connection success rate with ${TARGET_CONNECTIONS} connections`);
-console.log(`📊 [${PREFIX}] Target: 90%+ success rate`);
+const testMode = HOLD_DURATION > 0 ? 'CAPACITY TEST (hold connections)' : 'CONNECTION RATE TEST (close immediately)';
+
+console.log(`🧪 [${PREFIX}] ${testMode}`);
+console.log(`📊 [${PREFIX}] Target: ${TARGET_CONNECTIONS} connections`);
+if (HOLD_DURATION > 0) {
+  console.log(`⏱️  [${PREFIX}] Hold Duration: ${HOLD_DURATION}s`);
+}
+console.log(`📊 [${PREFIX}] Success Target: 90%+`);
 
 let connectionAttempts = 0;
 let connectionSuccesses = 0;
 let connectionFailures = 0;
+let activeConnections = []; // Store connections if holding
 let startTime = Date.now();
 
 function createConnection(index) {
@@ -30,10 +38,35 @@ function createConnection(index) {
         resolved = true;
         clearTimeout(timeout);
         connectionSuccesses++;
-        resolve(true);
 
-        // Close immediately after successful connection
-        ws.close(1000, 'Test complete');
+        if (HOLD_DURATION > 0) {
+          // CAPACITY TEST MODE: Hold connection open
+          activeConnections.push(ws);
+
+          // Send heartbeat every 30s to prevent timeout
+          const heartbeat = setInterval(() => {
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'heartbeat' }));
+            } else {
+              clearInterval(heartbeat);
+            }
+          }, 30000);
+
+          ws.heartbeatInterval = heartbeat;
+        } else {
+          // CONNECTION RATE TEST MODE: Close immediately (original behavior)
+          ws.close(1000, 'Test complete');
+        }
+
+        resolve(true);
+      }
+    });
+
+    // Handle WebSocket pings from server (respond with pong)
+    // The ws library should handle this automatically, but we'll be explicit
+    ws.on('ping', () => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.pong();
       }
     });
 
@@ -85,7 +118,7 @@ async function testConnectionRate() {
   const totalTime = (Date.now() - startTime) / 1000;
   const finalSuccessRate = (connectionSuccesses / connectionAttempts * 100).toFixed(1);
 
-  console.log(`\n🏁 [${PREFIX}] Connection rate test completed`);
+  console.log(`\n🏁 [${PREFIX}] Connection establishment completed`);
   console.log(`📊 [${PREFIX}] Final Results:`);
   console.log(`   Total attempts: ${connectionAttempts}`);
   console.log(`   Successful connections: ${connectionSuccesses}`);
@@ -98,6 +131,28 @@ async function testConnectionRate() {
     console.log(`✅ [${PREFIX}] SUCCESS: Target 90%+ success rate achieved!`);
   } else {
     console.log(`❌ [${PREFIX}] FAILED: Success rate below 90% target`);
+  }
+
+  // If holding connections, wait for duration
+  if (HOLD_DURATION > 0) {
+    console.log(`\n⏳ [${PREFIX}] Holding ${activeConnections.length} connections for ${HOLD_DURATION}s...`);
+    console.log(`   (Press Ctrl+C to end test early)`);
+
+    await new Promise(resolve => setTimeout(resolve, HOLD_DURATION * 1000));
+
+    console.log(`\n🔄 [${PREFIX}] Closing ${activeConnections.length} connections...`);
+    for (const ws of activeConnections) {
+      if (ws.heartbeatInterval) {
+        clearInterval(ws.heartbeatInterval);
+      }
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.close(1000, 'Test complete');
+      }
+    }
+
+    // Wait for connections to close
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    console.log(`✅ [${PREFIX}] All connections closed`);
   }
 
   process.exit(0);

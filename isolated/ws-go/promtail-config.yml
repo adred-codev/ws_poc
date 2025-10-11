@@ -1,3 +1,6 @@
+# Promtail Configuration - ws-go Instance
+# Ships logs from ws-go container to Loki on backend instance
+
 server:
   http_listen_port: 9080
   grpc_listen_port: 0
@@ -7,18 +10,20 @@ positions:
   filename: /tmp/positions.yaml
 
 clients:
-  - url: http://loki:3100/loki/api/v1/push
+  # Point to Loki on backend instance (internal IP)
+  # ${BACKEND_INTERNAL_IP} will be substituted during deployment
+  - url: http://${BACKEND_INTERNAL_IP}:3100/loki/api/v1/push
 
 scrape_configs:
-  # Scrape logs from Docker containers
+  # Scrape logs from local Docker containers
   - job_name: docker
     docker_sd_configs:
       - host: unix:///var/run/docker.sock
         refresh_interval: 5s
     relabel_configs:
-      # Only scrape containers in odin-network
+      # Only scrape odin-ws-go container
       - source_labels: ['__meta_docker_container_name']
-        regex: '/(odin-.*)'
+        regex: '/(odin-ws-go)'
         action: keep
 
       # Extract container name
@@ -36,36 +41,15 @@ scrape_configs:
         regex: '(.*)'
         target_label: 'image'
 
-      # Add service label based on container name (backend services only)
-      # Note: ws-go is on a separate instance with its own Promtail
+      # Add service label
       - source_labels: ['container_name']
-        regex: 'odin-publisher'
+        regex: 'odin-ws-go'
         target_label: 'service'
-        replacement: 'publisher'
-
-      - source_labels: ['container_name']
-        regex: 'odin-nats'
-        target_label: 'service'
-        replacement: 'nats'
-
-      - source_labels: ['container_name']
-        regex: 'odin-prometheus'
-        target_label: 'service'
-        replacement: 'prometheus'
-
-      - source_labels: ['container_name']
-        regex: 'odin-grafana'
-        target_label: 'service'
-        replacement: 'grafana'
-
-      - source_labels: ['container_name']
-        regex: 'odin-loki'
-        target_label: 'service'
-        replacement: 'loki'
+        replacement: 'websocket-go'
 
       # Add instance label
       - target_label: 'instance'
-        replacement: 'odin-backend'
+        replacement: 'odin-ws-go'
 
       # Add environment label
       - target_label: 'environment'
@@ -92,23 +76,15 @@ scrape_configs:
       - labels:
           level:
 
-      # Extract message content (for searching)
+      # Extract message content
       - regex:
           expression: '(?P<message>.*)'
 
-      # Add labels for specific patterns (backend services)
+      # Add labels for specific patterns
       - match:
-          selector: '{service="publisher"}'
+          selector: '{service="websocket-go"}'
           stages:
             - regex:
-                expression: '(?i)(publish|token|price|nats)'
-            - labels:
-                event_type:
-
-      - match:
-          selector: '{service="nats"}'
-          stages:
-            - regex:
-                expression: '(?i)(jetstream|consumer|stream|error)'
+                expression: '(?i)(broadcast|connection|message|client|nats)'
             - labels:
                 event_type:

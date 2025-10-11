@@ -461,7 +461,7 @@ func (s *Server) monitorMemory() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
-	memLimitMB := 512.0 // Container memory limit
+	memLimitMB := float64(s.config.MemoryLimit) / 1024.0 / 1024.0 // Container memory limit from config
 
 	for {
 		select {
@@ -791,10 +791,15 @@ func (s *Server) broadcast(message []byte) {
 					//   1001 = Going away (server restart)
 					//   1008 = Policy violation (rate limit, too slow)
 					//   1011 = Internal error
-					if client.conn != nil {
+					// CRITICAL FIX: Capture conn pointer locally to prevent TOCTOU race condition
+					// Race scenario: readPump/writePump may set client.conn = nil between our
+					// nil check and usage, causing panic. Local variable is safe even if
+					// client.conn becomes nil after we capture it.
+					conn := client.conn
+					if conn != nil {
 						closeMsg := ws.NewCloseFrameBody(ws.StatusPolicyViolation, "Client too slow to process messages")
-						ws.WriteFrame(client.conn, ws.NewCloseFrame(closeMsg))
-						client.conn.Close()
+						ws.WriteFrame(conn, ws.NewCloseFrame(closeMsg))
+						conn.Close()
 					}
 
 					// Increment slow client counter for monitoring

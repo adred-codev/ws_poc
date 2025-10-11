@@ -163,6 +163,84 @@ tasks:
           DURATION: "3600"
 
   # ============================================================================
+  # MESSAGE THROUGHPUT TESTS - Test message processing WITHOUT connection scaling
+  # Purpose: Isolate message throughput from connection capacity testing
+  # Expected: High message rate, zero slow client disconnects, low latency
+  # ============================================================================
+
+  throughput:
+    desc: Run message throughput test (fixed connections, override with TARGET_CONNECTIONS/DURATION)
+    vars:
+      TARGET_CONNECTIONS: '{{.TARGET_CONNECTIONS | default "500"}}'
+      DURATION: '{{.DURATION | default "300"}}'
+      WS_URL: '{{.WS_URL | default "ws://localhost:3004/ws"}}'
+    cmds:
+      - node {{.SCRIPTS_DIR}}/test-message-throughput.cjs {{.WS_URL}} {{.TARGET_CONNECTIONS}} {{.DURATION}}
+    env:
+      TARGET_CONNECTIONS: '{{.TARGET_CONNECTIONS}}'
+      DURATION: '{{.DURATION}}'
+      WS_URL: '{{.WS_URL}}'
+
+  throughput:500:
+    desc: "MESSAGE THROUGHPUT - 500 connections, full message load (5 min)"
+    cmds:
+      - task: throughput
+        vars:
+          TARGET_CONNECTIONS: "500"
+          DURATION: "300"
+
+  throughput:1000:
+    desc: "MESSAGE THROUGHPUT - 1000 connections, full message load (5 min)"
+    cmds:
+      - task: throughput
+        vars:
+          TARGET_CONNECTIONS: "1000"
+          DURATION: "300"
+
+  # ============================================================================
+  # CONNECTION CAPACITY TESTS - Test max connections WITHOUT message load
+  # Purpose: Isolate connection handling from message throughput testing
+  # Expected: Connections established and stable, minimal CPU/memory per connection
+  # ============================================================================
+
+  capacity:
+    desc: Run connection capacity test (no messages, override with TARGET_CONNECTIONS/DURATION)
+    vars:
+      TARGET_CONNECTIONS: '{{.TARGET_CONNECTIONS | default "5000"}}'
+      DURATION: '{{.DURATION | default "300"}}'
+      WS_URL: '{{.WS_URL | default "ws://localhost:3004/ws"}}'
+    cmds:
+      - node {{.SCRIPTS_DIR}}/test-connection-rate.cjs {{.WS_URL}} {{.TARGET_CONNECTIONS}} {{.DURATION}}
+    env:
+      TARGET_CONNECTIONS: '{{.TARGET_CONNECTIONS}}'
+      DURATION: '{{.DURATION}}'
+      WS_URL: '{{.WS_URL}}'
+
+  capacity:5k:
+    desc: "CONNECTION CAPACITY - 5000 connections, no messages (5 min)"
+    cmds:
+      - task: capacity
+        vars:
+          TARGET_CONNECTIONS: "5000"
+          DURATION: "300"
+
+  capacity:10k:
+    desc: "CONNECTION CAPACITY - 10000 connections, no messages (5 min)"
+    cmds:
+      - task: capacity
+        vars:
+          TARGET_CONNECTIONS: "10000"
+          DURATION: "300"
+
+  capacity:max:
+    desc: "CONNECTION CAPACITY - Test server max (18000 connections, no messages, 10 min)"
+    cmds:
+      - task: capacity
+        vars:
+          TARGET_CONNECTIONS: "18000"
+          DURATION: "600"
+
+  # ============================================================================
   # LEGACY TASKS (kept for backwards compatibility, redirect to new variants)
   # ============================================================================
 

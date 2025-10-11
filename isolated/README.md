@@ -37,21 +37,28 @@ This directory contains Docker Compose manifests for running the WebSocket serve
 
 ## Instances
 
-### odin-ws-go (e2-small)
-- **Services:** WebSocket server only
-- **Resources:** 2.0 vCPU, 2 GB RAM
-- **Config:** 10,000 max connections, 256 workers
+### odin-ws-go (e2-medium)
+- **Services:** WebSocket server + Promtail
+- **Resources:** 2.0 vCPU, 4 GB RAM
+- **Config:** 18,000 max connections, 512 workers
+- **Allocation:** ws-go (1.9 CPU, 3584M), Promtail (0.1 CPU, 256M)
 - **External Port:** 3004 (WebSocket + metrics)
-- **Cost:** $12.23/month
+- **Cost:** $24.46/month
 
 ### odin-backend (e2-small)
 - **Services:** NATS, Publisher, Prometheus, Grafana, Loki, Promtail
 - **Resources:** 2.0 vCPU, 2 GB RAM
 - **External Ports:** 3010 (Grafana), 3003 (Publisher)
-- **Internal Port:** 4222 (NATS - exposed on 0.0.0.0 for ws-go)
+- **Internal Port:** 4222 (NATS - exposed on 0.0.0.0 for ws-go), 3100 (Loki - for ws-go Promtail)
 - **Cost:** $12.23/month
 
-**Total Cost:** $24.46/month
+### odin-test-runner (e2-micro)
+- **Services:** Load testing client (Docker)
+- **Resources:** 0.25-2.0 vCPU (burstable), 1 GB RAM
+- **Purpose:** Remote load testing via internal network
+- **Cost:** $6.00/month
+
+**Total Cost:** $42.69/month
 
 ## Directory Structure
 
@@ -158,22 +165,25 @@ envsubst < docker-compose.yml | docker compose -f - up -d
 
 ## Firewall Rules
 
-- `allow-websocket-isolated` - External → ws-go:3004
-- `allow-nats-internal` - ws-go → backend:4222 (internal only)
-- `allow-prometheus-scrape-isolated` - backend → ws-go:3002 (internal only)
-- `allow-grafana-isolated` - External → backend:3010
-- `allow-publisher-isolated` - External → backend:3003
+- `allow-websocket-isolated` - External → ws-go:3004 (WebSocket connections)
+- `allow-nats-internal` - ws-go → backend:4222 (NATS client, internal only)
+- `allow-prometheus-scrape-isolated` - backend → ws-go:3002 (Prometheus scraping, internal only)
+- `allow-loki-push-isolated` - ws-go → backend:3100 (Promtail log shipping, internal only)
+- `allow-grafana-isolated` - External → backend:3010 (Grafana UI)
+- `allow-publisher-isolated` - External → backend:3003 (Publisher API)
 
 ## Comparison with Shared Setup
 
-| Aspect | Shared (Current) | Isolated (This) |
-|--------|------------------|-----------------|
-| Instances | 1 × e2-small | 2 × e2-small |
-| ws-go CPU | ~1.5 shared | 1.8 dedicated |
-| ws-go Memory | ~768MB shared | 1792MB dedicated |
-| Max Connections | 2,000 | 10,000 |
-| Metrics | Polluted | Clean |
-| Cost/month | $12.23 | $24.46 |
+| Aspect | Shared (Original) | Isolated (This) |
+|--------|-------------------|-----------------|
+| Instances | 1 × e2-small | 3 (medium + small + micro) |
+| ws-go CPU | ~1.5 shared | 1.9 dedicated |
+| ws-go Memory | ~768MB shared | 3584MB dedicated |
+| Max Connections | 2,000 | 18,000 |
+| Logs | Centralized | Centralized (Promtail on ws-go) |
+| Metrics | Polluted | Clean (isolated ws-go) |
+| Load Testing | Local | Remote (dedicated instance) |
+| Cost/month | $12.23 | $42.69 |
 
 ## When to Use This Setup
 

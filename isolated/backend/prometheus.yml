@@ -16,7 +16,7 @@ scrape_configs:
   # WebSocket server (remote instance)
   - job_name: "ws-go"
     static_configs:
-      - targets: ["${WS_GO_INTERNAL_IP}:3002"]
+      - targets: ["${WS_GO_INTERNAL_IP}:3004"]
         labels:
           instance: "odin-ws-go"
           service: "websocket"
