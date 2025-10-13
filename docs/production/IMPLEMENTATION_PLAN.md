@@ -69,15 +69,18 @@
 
 **Why perfect for your use case**:
 - Free tier: 10GB bandwidth/month, 1GB storage
-- Your usage: 12 tx/sec × 500 bytes = 6KB/sec = 15.5GB/month
-- **Fits in free tier!** (barely, but works)
+- Your usage (based on production metrics):
+  - **Average day** (1,100 tx): ~450 MB/month
+  - **Peak day** (40,000 tx): ~7.5 GB/month sustained
+  - Calculation: 0.46 tx/sec × 3.04 events/tx × 500 bytes = ~700 bytes/sec
+- **Comfortably within free tier** (using 45-75% of 10GB limit)
 - Zero ops overhead
 - Production-ready from day 1
-- Upgrade to paid tier when you exceed free limits
+- Upgrade to paid tier only if viral growth occurs
 
 **If exceeding free tier**:
 - Paid tier: $0.10/GB bandwidth
-- Your cost: 15.5GB × $0.10 = **$1.55/month**
+- Your cost at 2x peak: ~15GB × $0.10 = **$1.50/month**
 - Still cheaper than self-hosting ($6/month)
 
 **Verdict**: Use Synadia Cloud, start on free tier

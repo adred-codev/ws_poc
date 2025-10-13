@@ -278,8 +278,8 @@ tasks:
 
       # Build and start
       - echo "🚀 Building and starting ws-go..."
-      - gcloud compute ssh {{.WS_GO_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && docker compose build'"
-      - gcloud compute ssh {{.WS_GO_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && docker compose up -d'"
+      - gcloud compute ssh {{.WS_GO_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && sg docker -c \"docker compose build\"'"
+      - gcloud compute ssh {{.WS_GO_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && sg docker -c \"docker compose up -d\"'"
 
       # Wait and check
       - echo "⏳ Waiting for ws-go to start..."
@@ -315,8 +315,8 @@ tasks:
 
       # Build and start
       - echo "🚀 Building and starting backend services..."
-      - gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && docker compose build'"
-      - gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && docker compose up -d'"
+      - gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && sg docker -c \"docker compose build\"'"
+      - gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && sg docker -c \"docker compose up -d\"'"
 
       # Wait and check
       - echo "⏳ Waiting for services to start..."
@@ -350,7 +350,7 @@ tasks:
 
       # Move to deploy user's home and build
       - gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo rm -rf /home/deploy/test-runner && sudo mkdir -p /home/deploy/test-runner && sudo mv /tmp/test_runner_deploy/* /home/deploy/test-runner/ && sudo chown -R deploy:deploy /home/deploy/test-runner'
-      - gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo su - deploy -c "cd test-runner && docker build -t ws-test-runner ."'
+      - gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo su - deploy -c "cd test-runner && sg docker -c \"docker build -t ws-test-runner .\""'
       - echo "✅ Test runner deployed and built"
 
 # ============================================================================
@@ -382,7 +382,7 @@ tasks:
     desc: Check test-runner instance status
     cmds:
       - echo "🏥 Checking test-runner instance..."
-      - gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command="docker --version" && echo "✅ Test-runner ready" || echo "❌ Test-runner not accessible"
+      - gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo docker --version" && echo "✅ Test-runner ready" || echo "❌ Test-runner not accessible"
 
   health:all:
     desc: Check health of all services
@@ -473,22 +473,22 @@ tasks:
   logs:ws-go:
     desc: Show ws-go logs
     cmds:
-      - gcloud compute ssh {{.WS_GO_INSTANCE}} --zone={{.GCP_ZONE}} --command='docker compose logs -f --tail=100'
+      - gcloud compute ssh {{.WS_GO_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo docker compose -f /home/deploy/ws_poc/docker-compose.yml logs -f --tail=100'
 
   logs:backend:
     desc: Show backend services logs
     cmds:
-      - gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --command='docker compose logs -f --tail=100'
+      - gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo docker compose -f /home/deploy/ws_poc/docker-compose.yml logs -f --tail=100'
 
   logs:nats:
     desc: Show NATS logs
     cmds:
-      - gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --command='docker logs -f odin-nats'
+      - gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo docker logs -f odin-nats'
 
   logs:prometheus:
     desc: Show Prometheus logs
     cmds:
-      - gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --command='docker logs -f odin-prometheus'
+      - gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo docker logs -f odin-prometheus'
 
 # ============================================================================
 # PUBLISHER CONTROL
@@ -505,15 +505,15 @@ tasks:
       - curl -s http://{{.BACKEND_EXTERNAL_IP}}:3003/stats | jq '.'
 
   publisher:start:
-    desc: Start publishing messages (20 msg/sec by default)
+    desc: Start publishing messages (25 msg/sec - production rate)
     cmds:
       - echo "▶️  Starting publisher..."
       - |
         curl -X POST http://{{.BACKEND_EXTERNAL_IP}}:3003/control \
           -H "Content-Type: application/json" \
-          -d '{"action": "start", "messagesPerSecond": 20, "connections": 1000}' | jq '.'
+          -d '{"action": "start", "messagesPerSecond": 25, "connections": 7000}' | jq '.'
       - echo ""
-      - echo "✅ Publisher started (20 messages/sec)"
+      - echo "✅ Publisher started (25 messages/sec - production rate)"
 
   publisher:stop:
     desc: Stop publishing messages
@@ -525,15 +525,15 @@ tasks:
           -d '{"action": "stop"}' | jq '.'
 
   publisher:start:high:
-    desc: Start publishing at high rate (100 msg/sec)
+    desc: Start publishing at high rate (50 msg/sec)
     cmds:
       - echo "▶️  Starting publisher at high rate..."
       - |
         curl -X POST http://{{.BACKEND_EXTERNAL_IP}}:3003/control \
           -H "Content-Type: application/json" \
-          -d '{"action": "start", "messagesPerSecond": 100, "connections": 10000}' | jq '.'
+          -d '{"action": "start", "messagesPerSecond": 50, "connections": 7000}' | jq '.'
       - echo ""
-      - echo "✅ Publisher started (100 messages/sec)"
+      - echo "✅ Publisher started (50 messages/sec - high rate)"
 
 # ============================================================================
 # TESTING
@@ -549,25 +549,25 @@ tasks:
     desc: Light load test (1,000 connections, 60s)
     cmds:
       - echo "🧪 Running light load test..."
-      - WS_URL=ws://{{.WS_GO_EXTERNAL_IP}}:3004/ws HEALTH_URL=http://{{.WS_GO_EXTERNAL_IP}}:3004/health WS_MAX_CONNECTIONS=18000 TARGET_CONNECTIONS=1000 DURATION=60 node scripts/sustained-load-test.cjs
+      - WS_URL=ws://{{.WS_GO_EXTERNAL_IP}}:3004/ws HEALTH_URL=http://{{.WS_GO_EXTERNAL_IP}}:3004/health WS_MAX_CONNECTIONS=7000 TARGET_CONNECTIONS=1000 DURATION=60 node scripts/sustained-load-test.cjs
 
   test:medium:
     desc: Medium load test (5,000 connections, 300s)
     cmds:
       - echo "🧪 Running medium load test..."
-      - WS_URL=ws://{{.WS_GO_EXTERNAL_IP}}:3004/ws HEALTH_URL=http://{{.WS_GO_EXTERNAL_IP}}:3004/health WS_MAX_CONNECTIONS=18000 TARGET_CONNECTIONS=5000 DURATION=300 node scripts/sustained-load-test.cjs
+      - WS_URL=ws://{{.WS_GO_EXTERNAL_IP}}:3004/ws HEALTH_URL=http://{{.WS_GO_EXTERNAL_IP}}:3004/health WS_MAX_CONNECTIONS=7000 TARGET_CONNECTIONS=5000 DURATION=300 node scripts/sustained-load-test.cjs
 
   test:capacity:
-    desc: Capacity test (18,000 connections, 600s)
+    desc: Production capacity test (7,000 connections - target, 600s)
     cmds:
-      - echo "🧪 Running capacity test..."
-      - WS_URL=ws://{{.WS_GO_EXTERNAL_IP}}:3004/ws HEALTH_URL=http://{{.WS_GO_EXTERNAL_IP}}:3004/health WS_MAX_CONNECTIONS=18000 TARGET_CONNECTIONS=18000 DURATION=600 node scripts/sustained-load-test.cjs
+      - echo "🧪 Running production capacity test..."
+      - WS_URL=ws://{{.WS_GO_EXTERNAL_IP}}:3004/ws HEALTH_URL=http://{{.WS_GO_EXTERNAL_IP}}:3004/health WS_MAX_CONNECTIONS=7000 TARGET_CONNECTIONS=7000 DURATION=600 node scripts/sustained-load-test.cjs
 
   test:overload:
-    desc: Overload test (20,000 connections, should reject gracefully)
+    desc: Overload test (10,000 connections, should reject 3K gracefully)
     cmds:
-      - echo "🧪 Running overload test (expect rejections)..."
-      - WS_URL=ws://{{.WS_GO_EXTERNAL_IP}}:3004/ws HEALTH_URL=http://{{.WS_GO_EXTERNAL_IP}}:3004/health WS_MAX_CONNECTIONS=18000 TARGET_CONNECTIONS=20000 DURATION=300 node scripts/sustained-load-test.cjs
+      - echo "🧪 Running overload test (expect rejections above 7K)..."
+      - WS_URL=ws://{{.WS_GO_EXTERNAL_IP}}:3004/ws HEALTH_URL=http://{{.WS_GO_EXTERNAL_IP}}:3004/health WS_MAX_CONNECTIONS=7000 TARGET_CONNECTIONS=10000 DURATION=300 node scripts/sustained-load-test.cjs
 
   # Remote tests (run in Docker on test-runner instance)
   test:remote:light:
@@ -578,7 +578,7 @@ tasks:
         gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo su - deploy -c "docker run --rm \
           -e WS_URL=ws://{{.WS_GO_INTERNAL_IP}}:3004/ws \
           -e HEALTH_URL=http://{{.WS_GO_INTERNAL_IP}}:3004/health \
-          -e WS_MAX_CONNECTIONS=18000 \
+          -e WS_MAX_CONNECTIONS=7000 \
           -e TARGET_CONNECTIONS=1000 \
           -e DURATION=60 \
           ws-test-runner"'
@@ -591,35 +591,36 @@ tasks:
         gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo su - deploy -c "docker run --rm \
           -e WS_URL=ws://{{.WS_GO_INTERNAL_IP}}:3004/ws \
           -e HEALTH_URL=http://{{.WS_GO_INTERNAL_IP}}:3004/health \
-          -e WS_MAX_CONNECTIONS=18000 \
+          -e WS_MAX_CONNECTIONS=7000 \
           -e TARGET_CONNECTIONS=5000 \
           -e DURATION=300 \
           ws-test-runner"'
 
   test:remote:capacity:
-    desc: Capacity test (18,000 connections, 600s) - runs remotely in Docker
+    desc: Production capacity test (7,000 connections - target, 600s) - runs remotely in Docker
     cmds:
-      - echo "🧪 Running capacity test remotely..."
+      - echo "🧪 Running production capacity test remotely..."
       - |
         gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo su - deploy -c "docker run --rm \
           --ulimit nofile=200000:200000 \
           -e WS_URL=ws://{{.WS_GO_INTERNAL_IP}}:3004/ws \
           -e HEALTH_URL=http://{{.WS_GO_INTERNAL_IP}}:3004/health \
-          -e WS_MAX_CONNECTIONS=18000 \
-          -e TARGET_CONNECTIONS=10000 \
+          -e WS_MAX_CONNECTIONS=7000 \
+          -e TARGET_CONNECTIONS=7000 \
           -e DURATION=600 \
           ws-test-runner"'
 
   test:remote:overload:
-    desc: Overload test (20,000 connections, should reject gracefully) - runs remotely in Docker
+    desc: Maximum capacity test (8,849 connections - tested max, 300s) - runs remotely in Docker
     cmds:
-      - echo "🧪 Running overload test remotely (expect rejections)..."
+      - echo "🧪 Running maximum capacity test remotely (88.5% success rate expected)..."
       - |
         gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo su - deploy -c "docker run --rm \
+          --ulimit nofile=200000:200000 \
           -e WS_URL=ws://{{.WS_GO_INTERNAL_IP}}:3004/ws \
           -e HEALTH_URL=http://{{.WS_GO_INTERNAL_IP}}:3004/health \
-          -e WS_MAX_CONNECTIONS=18000 \
-          -e TARGET_CONNECTIONS=18000 \
+          -e WS_MAX_CONNECTIONS=7000 \
+          -e TARGET_CONNECTIONS=8849 \
           -e DURATION=300 \
           ws-test-runner"'
 
@@ -699,14 +700,15 @@ tasks:
           -e DURATION=300 \
           ws-test-runner node test-connection-rate.cjs"'
 
-  test:remote:capacity:18k:
-    desc: REMOTE CONNECTION CAPACITY - 18000 connections at server limit (10 min)
+  test:remote:capacity:7k:
+    desc: REMOTE CONNECTION CAPACITY - 7000 connections production target (10 min)
     cmds:
-      - echo "🔌 Running remote connection capacity test (18000 connections - server limit)..."
+      - echo "🔌 Running remote connection capacity test (7000 connections - production target)..."
       - |
         gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo su - deploy -c "docker run --rm \
+          --ulimit nofile=200000:200000 \
           -e WS_URL=ws://{{.WS_GO_INTERNAL_IP}}:3004/ws \
-          -e TARGET_CONNECTIONS=18000 \
+          -e TARGET_CONNECTIONS=7000 \
           -e DURATION=600 \
           ws-test-runner node test-connection-rate.cjs"'
 
@@ -718,7 +720,7 @@ tasks:
     desc: Restart ws-go service
     cmds:
       - echo "🔄 Restarting ws-go..."
-      - gcloud compute ssh {{.WS_GO_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && docker compose restart'"
+      - gcloud compute ssh {{.WS_GO_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && sg docker -c \"docker compose restart\"'"
       - sleep 5
       - task: health:ws-go
 
@@ -726,7 +728,7 @@ tasks:
     desc: Restart backend services
     cmds:
       - echo "🔄 Restarting backend services..."
-      - gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && docker compose restart'"
+      - gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && sg docker -c \"docker compose restart\"'"
       - sleep 10
       - task: health:backend
 
@@ -749,7 +751,7 @@ tasks:
       - echo "📦 Updating ws-go..."
       - gcloud compute scp --recurse {{.USER_WORKING_DIR}}/src {{.WS_GO_INSTANCE}}:/tmp/ --zone={{.GCP_ZONE}}
       - gcloud compute ssh {{.WS_GO_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo rm -rf /home/deploy/ws_poc/src && sudo mv /tmp/src /home/deploy/ws_poc/ && sudo chown -R deploy:deploy /home/deploy/ws_poc/src"
-      - gcloud compute ssh {{.WS_GO_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && docker compose build && docker compose up -d'"
+      - gcloud compute ssh {{.WS_GO_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && sg docker -c \"docker compose build && docker compose up -d\"'"
       - sleep 5
       - task: health:ws-go
 
@@ -767,13 +769,13 @@ tasks:
     desc: Stop ws-go service (keep instance running)
     cmds:
       - echo "⏹️  Stopping ws-go..."
-      - gcloud compute ssh {{.WS_GO_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && docker compose down'"
+      - gcloud compute ssh {{.WS_GO_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && sg docker -c \"docker compose down\"'"
 
   stop:backend:
     desc: Stop backend services (keep instance running)
     cmds:
       - echo "⏹️  Stopping backend services..."
-      - gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && docker compose down'"
+      - gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo su - deploy -c 'cd ws_poc && sg docker -c \"docker compose down\"'"
 
   stop:test-runner:
     desc: Stop test-runner (no-op - no persistent services)

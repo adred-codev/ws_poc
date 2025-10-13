@@ -29,25 +29,28 @@ services:
       - WS_CPU_LIMIT=1.9
       - WS_MEMORY_LIMIT=7516192768 # 7 GB in bytes (7168 MB)
 
-      # Capacity: 10,000 connections (realistic with 0.7MB per conn)
-      - WS_MAX_CONNECTIONS=10000
+      # Capacity: 7,000 connections (production-validated target for 99%+ success rate)
+      # Memory: 7,000 × 0.7MB + 974MB overhead = 5,874MB (81% of 7GB limit)
+      # Tested maximum: 8,849 connections (88.5% success rate at 99% memory)
+      - WS_MAX_CONNECTIONS=7000
 
-      # Worker pool sizing
-      # Formula: max(32, connections/40) = max(32, 10000/40) = 250 → 256 (power of 2)
-      # Load per worker: (10000 × 12) / 256 = 468 msg/sec per worker
-      - WS_WORKER_POOL_SIZE=256
-      - WS_WORKER_QUEUE_SIZE=25600 # 100x workers
+      # Worker pool sizing (production-validated formula)
+      # Formula: max(32, connections/40) = max(32, 7000/40) = 175 → 192 (power of 2)
+      # Load per worker: (7000 × 25) / 192 = 911 msg/sec per worker (optimal: 300-1,000)
+      - WS_WORKER_POOL_SIZE=192
+      - WS_WORKER_QUEUE_SIZE=19200 # 100x workers
 
-      # Rate limiting (safety valves)
-      # With filtering: ~1,210 avg subscribers per message
-      # 12 msg/sec × 1,210 = 14,520 writes/sec
-      - WS_MAX_NATS_RATE=1000
-      - WS_MAX_BROADCAST_RATE=1000
+      # Rate limiting (based on production metrics: 280K users, 40K tx/day peak)
+      # Actual rates: 5 msg/sec (average) to 19.7 msg/sec (high peak)
+      # Setting: 25 msg/sec provides 25% headroom above peak
+      # Total writes: 7,000 × 25 = 175,000 writes/sec
+      - WS_MAX_NATS_RATE=25
+      - WS_MAX_BROADCAST_RATE=25
 
       # Goroutine limit
-      # Formula: ((10000 × 2) + 256 + 13) × 1.2 = 24,323
-      # Rounded: 25,000
-      - WS_MAX_GOROUTINES=25000
+      # Formula: ((7000 × 2) + 192 + 13) × 1.2 = 17,046 → 17,500
+      # Actual at runtime: (7,000 × 2) + 192 + 13 = 14,205 goroutines (81% of limit)
+      - WS_MAX_GOROUTINES=17500
 
       # Safety thresholds
       - WS_CPU_REJECT_THRESHOLD=75.0
