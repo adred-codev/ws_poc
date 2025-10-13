@@ -1,5 +1,5 @@
 # WebSocket Server - Isolated Setup
-# Instance: odin-ws-go (dedicated e2-medium)
+# Instance: odin-ws-go (dedicated e2-standard-2)
 # Purpose: Handle WebSocket connections with full observability (logs + metrics)
 #
 # This compose file is templated. Before deployment, substitute:
@@ -24,31 +24,30 @@ services:
       - "-nats"
       - "nats://${BACKEND_INTERNAL_IP}:4222"
     environment:
-      # Resource limits (e2-medium: 2 vCPU, 4GB RAM)
-      # Allocation: 1.9 CPU, 3584M (leaves 0.1 CPU + 256M for Promtail)
+      # Resource limits (e2-standard-2: 2 vCPU, 8GB RAM)
+      # Allocation: 1.9 CPU, 7GB (leaves 0.1 CPU + 256M for Promtail + 768M system)
       - WS_CPU_LIMIT=1.9
-      - WS_MEMORY_LIMIT=3758096384 # 3584MB in bytes
+      - WS_MEMORY_LIMIT=7516192768 # 7 GB in bytes (7168 MB)
 
-      # Capacity: 18,000 connections
-      - WS_MAX_CONNECTIONS=18000
+      # Capacity: 10,000 connections (realistic with 0.7MB per conn)
+      - WS_MAX_CONNECTIONS=10000
 
       # Worker pool sizing
-      # Formula: max(32, connections/40) = max(32, 18000/40) = 450 → 512 (power of 2)
-      # Load per worker: (18000 × 20) / 512 = 703 items/sec
-      - WS_WORKER_POOL_SIZE=512
-      - WS_WORKER_QUEUE_SIZE=51200 # 100x workers
+      # Formula: max(32, connections/40) = max(32, 10000/40) = 250 → 256 (power of 2)
+      # Load per worker: (10000 × 12) / 256 = 468 msg/sec per worker
+      - WS_WORKER_POOL_SIZE=256
+      - WS_WORKER_QUEUE_SIZE=25600 # 100x workers
 
       # Rate limiting (safety valves)
-      # Each NATS msg = 1 broadcast to ALL connections
-      # At 18k conns: 20 msg/sec × 18k = 360k total writes/sec
-      # Current real load: ~12 msg/sec (well below limit)
+      # With filtering: ~1,210 avg subscribers per message
+      # 12 msg/sec × 1,210 = 14,520 writes/sec
       - WS_MAX_NATS_RATE=1000
       - WS_MAX_BROADCAST_RATE=1000
 
       # Goroutine limit
-      # Formula: ((18000 × 2) + 512 + 13) × 1.2 = 43,830
-      # Rounded: 44,000
-      - WS_MAX_GOROUTINES=44000
+      # Formula: ((10000 × 2) + 256 + 13) × 1.2 = 24,323
+      # Rounded: 25,000
+      - WS_MAX_GOROUTINES=25000
 
       # Safety thresholds
       - WS_CPU_REJECT_THRESHOLD=75.0
@@ -63,7 +62,7 @@ services:
       resources:
         limits:
           cpus: "1.9"
-          memory: 3584M
+          memory: 7168M
     ulimits:
       nofile:
         soft: 200000

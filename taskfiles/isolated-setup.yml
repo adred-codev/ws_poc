@@ -25,9 +25,9 @@ vars:
   TEST_RUNNER_INSTANCE: odin-test-runner
 
   # Machine types
-  WS_GO_MACHINE_TYPE: e2-medium
+  WS_GO_MACHINE_TYPE: e2-standard-2
   BACKEND_MACHINE_TYPE: e2-small
-  TEST_RUNNER_MACHINE_TYPE: e2-micro
+  TEST_RUNNER_MACHINE_TYPE: e2-standard-4
 
   # Get instance IPs dynamically
   WS_GO_EXTERNAL_IP:
@@ -425,7 +425,7 @@ tasks:
       - echo "   Zone → {{.GCP_ZONE}}"
       - echo "   Internal IP → {{.TEST_RUNNER_INTERNAL_IP}}"
       - echo "   Machine Type → {{.TEST_RUNNER_MACHINE_TYPE}}"
-      - echo "   Resources → 0.25-2.0 vCPU (burstable), 1GB RAM"
+      - echo "   Resources → 4 vCPU (sustained), 16GB RAM"
 
   info:all:
     desc: Show information for all instances
@@ -602,10 +602,11 @@ tasks:
       - echo "🧪 Running capacity test remotely..."
       - |
         gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo su - deploy -c "docker run --rm \
+          --ulimit nofile=200000:200000 \
           -e WS_URL=ws://{{.WS_GO_INTERNAL_IP}}:3004/ws \
           -e HEALTH_URL=http://{{.WS_GO_INTERNAL_IP}}:3004/health \
           -e WS_MAX_CONNECTIONS=18000 \
-          -e TARGET_CONNECTIONS=18000 \
+          -e TARGET_CONNECTIONS=10000 \
           -e DURATION=600 \
           ws-test-runner"'
 
@@ -618,7 +619,7 @@ tasks:
           -e WS_URL=ws://{{.WS_GO_INTERNAL_IP}}:3004/ws \
           -e HEALTH_URL=http://{{.WS_GO_INTERNAL_IP}}:3004/health \
           -e WS_MAX_CONNECTIONS=18000 \
-          -e TARGET_CONNECTIONS=20000 \
+          -e TARGET_CONNECTIONS=18000 \
           -e DURATION=300 \
           ws-test-runner"'
 

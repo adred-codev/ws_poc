@@ -19,9 +19,21 @@ export const updateFrequencies: UpdateFrequencies = {
   USER_TRADES: 0, // Instant
 };
 
-// NATS subject hierarchy matching Odin spec
+// NATS subject hierarchy - Hierarchical Channel Format
+// Format: odin.token.{SYMBOL}.{EVENT_TYPE}
+// Event types: trade, liquidity, metadata, social, favorites, creation, analytics, balances
 export const subjects: NatsSubjects = {
-  // Individual updates
+  // Hierarchical token event subjects (PRIMARY - used by WebSocket server)
+  tokenTrade: (tokenId: string) => `odin.token.${tokenId}.trade`,
+  tokenLiquidity: (tokenId: string) => `odin.token.${tokenId}.liquidity`,
+  tokenMetadata: (tokenId: string) => `odin.token.${tokenId}.metadata`,
+  tokenSocial: (tokenId: string) => `odin.token.${tokenId}.social`,
+  tokenFavorites: (tokenId: string) => `odin.token.${tokenId}.favorites`,
+  tokenCreation: (tokenId: string) => `odin.token.${tokenId}.creation`,
+  tokenAnalytics: (tokenId: string) => `odin.token.${tokenId}.analytics`,
+  tokenBalances: (tokenId: string) => `odin.token.${tokenId}.balances`,
+
+  // Legacy subjects (DEPRECATED - kept for backwards compatibility during migration)
   tokenPrice: (tokenId: string) => `odin.token.${tokenId}.price`,
   tokenVolume: (tokenId: string) => `odin.token.${tokenId}.volume`,
   tokenHolders: (tokenId: string) => `odin.token.${tokenId}.holders`,
@@ -29,7 +41,7 @@ export const subjects: NatsSubjects = {
   // Batch updates from scheduler
   batchUpdate: 'odin.token.batch.update',
 
-  // Real-time trade events
+  // Real-time trade events (legacy format)
   trades: (tokenId: string) => `odin.trades.${tokenId}`,
   userTrades: (userId: string) => `odin.trades.user.${userId}`,
 

@@ -400,8 +400,9 @@ class TokenPricePublisher {
         nonce: this.generateNonce()
       };
 
-      // Publish to NATS
-      const subject = subjects.tokenPrice(tokenId);
+      // Publish to NATS using hierarchical subject format
+      // Format: odin.token.{SYMBOL}.trade (e.g., odin.token.BTC.trade)
+      const subject = subjects.tokenTrade(tokenId);
       this.nats.publish(subject, sc.encode(JSON.stringify(priceUpdate)));
 
       this.stats.messagesPublished++;

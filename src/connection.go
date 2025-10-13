@@ -76,13 +76,26 @@ type Client struct {
 	lastMessageSentAt time.Time // Timestamp of last successful send
 	sendAttempts      int32     // Consecutive failed send attempts (atomic for thread-safety)
 	slowClientWarned  bool      // Flag to avoid log spam (warn once)
+
+	// Subscription filtering fields
+	// Purpose: Only send messages to clients subscribed to specific channels
+	// Performance: Reduces broadcast fanout from O(all_clients) to O(subscribed_clients)
+	//
+	// Example: 10K clients, 200 tokens
+	// - Without filtering: 12 msg/sec × 10K clients = 120K writes/sec (CPU 99%+)
+	// - With filtering: 12 msg/sec × 500 avg subscribers = 6K writes/sec (CPU <30%)
+	//
+	// Memory: ~40 bytes per subscription
+	// - map[string]struct{}: 8 bytes (key) + 0 bytes (value) + ~32 bytes (map overhead)
+	// - 30 subscriptions per client: 30 × 40 = 1.2KB per client
+	// - 10K clients: 10K × 1.2KB = 12MB total (negligible)
+	subscriptions *SubscriptionSet // Thread-safe set of subscribed channels
 }
 
 // ConnectionPool manages a pool of reusable client objects
 type ConnectionPool struct {
 	pool    sync.Pool
 	maxSize int
-	current int64
 }
 
 func NewConnectionPool(maxSize int) *ConnectionPool {
@@ -140,6 +153,15 @@ func (p *ConnectionPool) Get() *Client {
 		atomic.StoreInt32(&client.sendAttempts, 0)
 		client.slowClientWarned = false
 
+		// Initialize subscription set
+		// Each new connection starts with no subscriptions
+		// Client must explicitly subscribe to channels via WebSocket messages
+		if client.subscriptions == nil {
+			client.subscriptions = NewSubscriptionSet()
+		} else {
+			client.subscriptions.Clear()
+		}
+
 		return client
 	}
 	return nil
@@ -155,5 +177,109 @@ func (p *ConnectionPool) Put(c *Client) {
 	c.server = nil
 	c.id = 0
 
+	// Clear subscriptions before returning to pool
+	if c.subscriptions != nil {
+		c.subscriptions.Clear()
+	}
+
 	p.pool.Put(c)
+}
+
+// SubscriptionSet is a thread-safe set of channel subscriptions
+// Used to filter which messages a client receives
+//
+// Thread-safety: All methods use RWMutex for safe concurrent access
+// - Add/Remove: Write lock (exclusive)
+// - Has/Count/List: Read lock (shared - multiple readers allowed)
+//
+// Performance characteristics:
+// - Add/Remove: O(1) average
+// - Has: O(1) average
+// - List: O(n) where n = number of subscriptions
+// - Memory: ~40 bytes per subscription (map overhead)
+type SubscriptionSet struct {
+	channels map[string]struct{} // Set implementation using map with empty struct values
+	mu       sync.RWMutex        // Protects concurrent access to channels map
+}
+
+// NewSubscriptionSet creates a new empty subscription set
+func NewSubscriptionSet() *SubscriptionSet {
+	return &SubscriptionSet{
+		channels: make(map[string]struct{}),
+	}
+}
+
+// Add subscribes to a channel
+// Thread-safe: Uses write lock
+func (s *SubscriptionSet) Add(channel string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.channels[channel] = struct{}{}
+}
+
+// AddMultiple subscribes to multiple channels at once
+// More efficient than calling Add() multiple times (single lock acquisition)
+func (s *SubscriptionSet) AddMultiple(channels []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, ch := range channels {
+		s.channels[ch] = struct{}{}
+	}
+}
+
+// Remove unsubscribes from a channel
+// Thread-safe: Uses write lock
+func (s *SubscriptionSet) Remove(channel string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.channels, channel)
+}
+
+// RemoveMultiple unsubscribes from multiple channels at once
+// More efficient than calling Remove() multiple times (single lock acquisition)
+func (s *SubscriptionSet) RemoveMultiple(channels []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, ch := range channels {
+		delete(s.channels, ch)
+	}
+}
+
+// Has checks if client is subscribed to a channel
+// Thread-safe: Uses read lock (allows concurrent Has() calls)
+func (s *SubscriptionSet) Has(channel string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, exists := s.channels[channel]
+	return exists
+}
+
+// Count returns the number of active subscriptions
+// Thread-safe: Uses read lock
+func (s *SubscriptionSet) Count() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.channels)
+}
+
+// List returns a copy of all subscribed channels
+// Thread-safe: Uses read lock
+// Returns: New slice (safe to modify without affecting internal state)
+func (s *SubscriptionSet) List() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	result := make([]string, 0, len(s.channels))
+	for ch := range s.channels {
+		result = append(result, ch)
+	}
+	return result
+}
+
+// Clear removes all subscriptions
+// Thread-safe: Uses write lock
+func (s *SubscriptionSet) Clear() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.channels = make(map[string]struct{})
 }

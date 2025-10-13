@@ -245,8 +245,20 @@ export interface UpdateFrequencies {
   USER_TRADES: number;
 }
 
-// NATS Subjects
+// NATS Subjects - Hierarchical Channel Format
 export interface NatsSubjects {
+  // Hierarchical token event subjects (PRIMARY)
+  // Format: odin.token.{SYMBOL}.{EVENT_TYPE}
+  tokenTrade: (tokenId: string) => string;
+  tokenLiquidity: (tokenId: string) => string;
+  tokenMetadata: (tokenId: string) => string;
+  tokenSocial: (tokenId: string) => string;
+  tokenFavorites: (tokenId: string) => string;
+  tokenCreation: (tokenId: string) => string;
+  tokenAnalytics: (tokenId: string) => string;
+  tokenBalances: (tokenId: string) => string;
+
+  // Legacy subjects (DEPRECATED - kept for backwards compatibility)
   tokenPrice: (tokenId: string) => string;
   tokenVolume: (tokenId: string) => string;
   tokenHolders: (tokenId: string) => string;

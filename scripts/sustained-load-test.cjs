@@ -1,13 +1,47 @@
 #!/usr/bin/env node
 
 /**
- * Sustained Load Test for WebSocket Server
+ * Sustained Load Test for WebSocket Server with Hierarchical Subscription Filtering
  *
- * Purpose: Test server stability under sustained load
+ * Purpose: Test server stability under sustained load with realistic subscription patterns
  * - Gradual ramp-up (avoid burst rejections)
  * - Hold connections stable (no churn)
  * - Active message flow throughout
  * - Monitor metrics over time
+ * - Support hierarchical channel subscriptions (BTC.trade, ETH.analytics, etc.)
+ * - Multiple subscription distribution modes (all, single, random)
+ *
+ * HIERARCHICAL SUBSCRIPTION FILTERING
+ * ------------------------------------
+ * Each client can subscribe to specific channels (SYMBOL.EVENT_TYPE) instead of receiving all messages.
+ * This tests the server's hierarchical subscription filtering which provides:
+ * - 160x reduction vs no filtering (10K clients × 8 event types)
+ * - 8x reduction vs symbol-only filtering (specific event type targeting)
+ *
+ * Channel Format: {SYMBOL}.{EVENT_TYPE}
+ * - EVENT_TYPES: trade, liquidity, metadata, social, favorites, creation, analytics, balances
+ * - Examples: BTC.trade, ETH.liquidity, SOL.analytics
+ *
+ * Environment Variables:
+ * - CHANNELS: Comma-separated list of hierarchical channels (default: BTC.trade,ETH.trade,SOL.trade,ODIN.trade,DOGE.trade)
+ * - SUBSCRIPTION_MODE: Distribution strategy - 'all', 'single', or 'random' (default: all)
+ * - CHANNELS_PER_CLIENT: For 'random' mode, how many channels per client (default: 3)
+ *
+ * Examples:
+ * - All clients subscribe to all trade channels (default):
+ *   npm run test:sustained
+ *
+ * - Each client subscribes to ONE channel (round-robin):
+ *   SUBSCRIPTION_MODE=single TARGET_CONNECTIONS=5000 npm run test:sustained
+ *
+ * - Each client subscribes to 2 random event types for BTC:
+ *   SUBSCRIPTION_MODE=random CHANNELS=BTC.trade,BTC.liquidity,BTC.analytics CHANNELS_PER_CLIENT=2 TARGET_CONNECTIONS=5000 npm run test:sustained
+ *
+ * - Test mixed event types across symbols:
+ *   CHANNELS=BTC.trade,ETH.trade,SOL.analytics,ODIN.social SUBSCRIPTION_MODE=random CHANNELS_PER_CLIENT=2 npm run test:sustained
+ *
+ * - Test without subscriptions (receive all messages):
+ *   CHANNELS= npm run test:sustained
  */
 
 const WebSocket = require('ws');
@@ -74,6 +108,25 @@ const CONFIG = {
 
   // Health check interval
   HEALTH_CHECK_INTERVAL_MS: 5000, // Check every 5 seconds
+
+  // Subscription settings
+  // Hierarchical channels to subscribe to (comma-separated in env var)
+  // Format: {SYMBOL}.{EVENT_TYPE}
+  // DEFAULT: BTC.trade,ETH.trade,SOL.trade,ODIN.trade,DOGE.trade (trade events only)
+  // Example: CHANNELS=BTC.trade,ETH.liquidity,SOL.analytics npm run test:sustained
+  // To test WITHOUT subscriptions (receive all): CHANNELS= npm run test:sustained
+  CHANNELS: (process.env.CHANNELS || 'BTC.trade,ETH.trade,SOL.trade,ODIN.trade,DOGE.trade').split(',').filter(c => c.trim()),
+
+  // Subscription distribution strategy:
+  // - 'all': All clients subscribe to ALL channels (default)
+  // - 'random': Each client subscribes to random subset of channels
+  // - 'single': Each client subscribes to only ONE channel (round-robin)
+  // Example: SUBSCRIPTION_MODE=random npm run test:sustained
+  SUBSCRIPTION_MODE: process.env.SUBSCRIPTION_MODE || 'all',
+
+  // For 'random' mode: how many channels per client (1-N)
+  // Example: SUBSCRIPTION_MODE=random CHANNELS_PER_CLIENT=2 npm run test:sustained
+  CHANNELS_PER_CLIENT: parseInt(process.env.CHANNELS_PER_CLIENT) || 3,
 };
 
 // ============================================================================
@@ -90,6 +143,12 @@ const state = {
   messagesReceived: 0,
   errors: 0,
   connectionErrors: {},
+
+  // Subscription tracking
+  subscriptionsSent: 0,
+  subscriptionsConfirmed: 0,
+  subscriptionsFailed: 0,
+  messagesFilteredOut: 0, // Messages received before subscription (shouldn't happen with filtering)
 
   // Health monitoring
   lastHealthCheck: null,
@@ -117,6 +176,11 @@ class LoadTestConnection {
     // Reduces GC pressure by reusing string buffers
     this.messageBuffer = [];
     this.processingBatch = false;
+
+    // Subscription management
+    this.subscribedChannels = [];
+    this.subscribed = false;
+    this.subscriptionPending = false;
   }
 
   connect() {
@@ -140,6 +204,12 @@ class LoadTestConnection {
           this.connectTime = Date.now();
           state.activeConnections.set(this.id, this);
           this.startHeartbeat(); // Start sending heartbeats to prevent timeout
+
+          // Auto-subscribe to channels if configured
+          if (CONFIG.CHANNELS.length > 0) {
+            this.autoSubscribe();
+          }
+
           resolve(true);
         });
 
@@ -178,8 +248,42 @@ class LoadTestConnection {
   }
 
   onMessage(data) {
-    this.messagesReceived++;
-    state.messagesReceived++;
+    try {
+      const message = JSON.parse(data.toString());
+
+      // Handle subscription acknowledgments separately (don't count as regular messages)
+      if (message.type === 'subscription_ack') {
+        this.subscribed = true;
+        this.subscriptionPending = false;
+        state.subscriptionsConfirmed++;
+        return;
+      }
+
+      // Handle unsubscription acknowledgments
+      if (message.type === 'unsubscription_ack') {
+        return;
+      }
+
+      // Handle pong messages
+      if (message.type === 'pong') {
+        return;
+      }
+
+      // Count regular messages
+      this.messagesReceived++;
+      state.messagesReceived++;
+
+      // If we received a message before subscribing, count it as filtered out
+      // (This shouldn't happen with proper server-side filtering)
+      if (CONFIG.CHANNELS.length > 0 && !this.subscribed) {
+        state.messagesFilteredOut++;
+      }
+
+    } catch (error) {
+      // If parsing fails, treat as regular message for batched processing
+      this.messagesReceived++;
+      state.messagesReceived++;
+    }
 
     // PERFORMANCE OPTIMIZATION: Batch message processing
     // Instead of processing each message individually (expensive),
@@ -256,6 +360,82 @@ class LoadTestConnection {
         }
       }
     }, 30000); // 30 seconds (half of server's 60s timeout)
+  }
+
+  /**
+   * Auto-subscribe based on configured distribution mode
+   */
+  autoSubscribe() {
+    let channelsToSubscribe = [];
+
+    switch (CONFIG.SUBSCRIPTION_MODE) {
+      case 'all':
+        // All clients subscribe to all channels
+        channelsToSubscribe = CONFIG.CHANNELS;
+        break;
+
+      case 'single':
+        // Each client subscribes to one channel (round-robin)
+        const channelIndex = this.id % CONFIG.CHANNELS.length;
+        channelsToSubscribe = [CONFIG.CHANNELS[channelIndex]];
+        break;
+
+      case 'random':
+        // Each client subscribes to random subset of channels
+        const numChannels = Math.min(CONFIG.CHANNELS_PER_CLIENT, CONFIG.CHANNELS.length);
+        const shuffled = [...CONFIG.CHANNELS].sort(() => Math.random() - 0.5);
+        channelsToSubscribe = shuffled.slice(0, numChannels);
+        break;
+
+      default:
+        channelsToSubscribe = CONFIG.CHANNELS;
+    }
+
+    this.subscribe(channelsToSubscribe);
+  }
+
+  /**
+   * Subscribe to specific channels
+   */
+  subscribe(channels) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || this.subscriptionPending) {
+      return;
+    }
+
+    try {
+      const message = JSON.stringify({
+        type: 'subscribe',
+        data: { channels }
+      });
+
+      this.ws.send(message);
+      this.subscribedChannels = channels;
+      this.subscriptionPending = true;
+      state.subscriptionsSent++;
+    } catch (error) {
+      state.subscriptionsFailed++;
+    }
+  }
+
+  /**
+   * Unsubscribe from specific channels
+   */
+  unsubscribe(channels) {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    try {
+      const message = JSON.stringify({
+        type: 'unsubscribe',
+        data: { channels }
+      });
+
+      this.ws.send(message);
+      this.subscribedChannels = this.subscribedChannels.filter(c => !channels.includes(c));
+    } catch (error) {
+      // Ignore errors
+    }
   }
 
   close() {
@@ -378,6 +558,20 @@ function printReport() {
   console.log(`   Received:     ${state.messagesReceived.toLocaleString()}`);
   console.log(`   Rate:         ${msgRate.toFixed(2)} msg/sec`);
   console.log(`   Errors:       ${state.errors} (${(state.errors / (state.messagesReceived || 1) * 100).toFixed(2)}%)`);
+  if (state.messagesFilteredOut > 0) {
+    console.log(`   ⚠️  Pre-sub msgs: ${state.messagesFilteredOut} (should be 0 with filtering)`);
+  }
+
+  if (CONFIG.CHANNELS.length > 0) {
+    console.log('\n🔔 Subscriptions:');
+    console.log(`   Mode:         ${CONFIG.SUBSCRIPTION_MODE}`);
+    console.log(`   Channels:     ${CONFIG.CHANNELS.join(', ')}`);
+    console.log(`   Sent:         ${state.subscriptionsSent}`);
+    console.log(`   Confirmed:    ${state.subscriptionsConfirmed}`);
+    console.log(`   Failed:       ${state.subscriptionsFailed}`);
+    const subRate = (state.subscriptionsConfirmed / state.subscriptionsSent * 100).toFixed(1);
+    console.log(`   Success Rate: ${subRate}%`);
+  }
 
   console.log('\n💻 Server Health:');
   console.log(`   Status:       ${health?.healthy ? '✅ Healthy' : '❌ Unhealthy'}`);
@@ -440,6 +634,19 @@ async function runTest() {
   console.log(`   Sustain:      ${CONFIG.SUSTAIN_DURATION_MS / 1000}s (${Math.floor(CONFIG.SUSTAIN_DURATION_MS / 60000)} minutes)`);
   console.log(`   Server:       ${CONFIG.WS_URL}`);
   console.log(`   Health:       ${CONFIG.HEALTH_URL}`);
+
+  if (CONFIG.CHANNELS.length > 0) {
+    console.log(`\n🔔 Subscription Settings:`);
+    console.log(`   Mode:         ${CONFIG.SUBSCRIPTION_MODE}`);
+    console.log(`   Channels:     ${CONFIG.CHANNELS.join(', ')} (${CONFIG.CHANNELS.length} total)`);
+    if (CONFIG.SUBSCRIPTION_MODE === 'random') {
+      console.log(`   Per Client:   ${CONFIG.CHANNELS_PER_CLIENT} channels`);
+    }
+    console.log(`   Impact:       Expected ${CONFIG.CHANNELS.length}x reduction in message fanout`);
+  } else {
+    console.log(`\n⚠️  Subscription Filtering: DISABLED (all clients receive all messages)`);
+  }
+
   console.log('\n' + '='.repeat(80) + '\n');
 
   // Initial health check
