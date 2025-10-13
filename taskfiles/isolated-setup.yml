@@ -158,6 +158,13 @@ tasks:
             curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
             chmod +x /usr/local/bin/docker-compose
 
+            # TCP SYN queue tuning (handle high connection ramp rates)
+            # See: docs/production/IMPLEMENTATION_PLAN.md:1048-1120
+            sysctl -w net.ipv4.tcp_max_syn_backlog=8192
+            sysctl -w net.core.somaxconn=8192
+            sysctl -w net.ipv4.tcp_syncookies=1
+            printf "net.ipv4.tcp_max_syn_backlog = 8192\nnet.core.somaxconn = 8192\nnet.ipv4.tcp_syncookies = 1\n" >> /etc/sysctl.conf
+
             # Create deploy user
             useradd -m -s /bin/bash -G docker deploy
 
@@ -229,6 +236,18 @@ tasks:
             # Install Docker
             curl -fsSL https://get.docker.com -o get-docker.sh
             sh get-docker.sh
+
+            # TCP tuning for high connection count load testing
+            # See: docs/production/IMPLEMENTATION_PLAN.md:1144-1276
+            # Increase ephemeral port range (28K → 64K ports)
+            sysctl -w net.ipv4.ip_local_port_range="1024 65535"
+            # Enable TIME_WAIT socket reuse (critical for high connection tests)
+            sysctl -w net.ipv4.tcp_tw_reuse=1
+            # Reduce TIME_WAIT timeout (4x faster cleanup)
+            sysctl -w net.ipv4.tcp_fin_timeout=15
+            # Increase connection tracking table
+            sysctl -w net.netfilter.nf_conntrack_max=200000
+            printf "net.ipv4.ip_local_port_range = 1024 65535\nnet.ipv4.tcp_tw_reuse = 1\nnet.ipv4.tcp_fin_timeout = 15\nnet.netfilter.nf_conntrack_max = 200000\n" >> /etc/sysctl.conf
 
             # Create deploy user
             useradd -m -s /bin/bash -G docker deploy

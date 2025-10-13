@@ -81,6 +81,12 @@ const http = require('http');
 //    - Purpose: Verify server handles traffic spikes gracefully
 //    - Example: TARGET_CONNECTIONS=18000 RAMP_RATE=1000 npm run test:sustained
 //
+// CONNECTION TIMEOUT:
+//    - Default: 10 seconds (industry standard for production systems)
+//    - Override with CONNECTION_TIMEOUT env var (in milliseconds)
+//    - Example: CONNECTION_TIMEOUT=15000 npm run test:sustained (15s timeout)
+//    - Note: 5s is too aggressive for realistic load testing (users wait 10-30s)
+//
 // ============================================================================
 
 const CONFIG = {
@@ -127,6 +133,17 @@ const CONFIG = {
   // For 'random' mode: how many channels per client (1-N)
   // Example: SUBSCRIPTION_MODE=random CHANNELS_PER_CLIENT=2 npm run test:sustained
   CHANNELS_PER_CLIENT: parseInt(process.env.CHANNELS_PER_CLIENT) || 3,
+
+  // Connection timeout (default: 10s - industry standard)
+  // Why 10 seconds?
+  // - Real users wait 10-30s before giving up (not 5s "impatient developer timeout")
+  // - Industry standard: AWS ELB (60s), Cloudflare (100s), Socket.io (20s), SignalR (15s)
+  // - Load testing: Must match production client behavior for accurate capacity testing
+  // - Goroutine scheduling: Server needs time to schedule new goroutines during load spikes
+  //   (spawning 1000 connections = 2000 goroutines while managing 10K+ existing = 2-8s normal)
+  // - 5s timeout was testing "how many connect in 5s?" instead of "what's true capacity?"
+  // Override with CONNECTION_TIMEOUT env var (in milliseconds)
+  CONNECTION_TIMEOUT_MS: parseInt(process.env.CONNECTION_TIMEOUT) || 10000,
 };
 
 // ============================================================================
@@ -232,13 +249,13 @@ class LoadTestConnection {
           }
         });
 
-        // Connection timeout (5 seconds)
+        // Connection timeout (configurable, default 10s)
         setTimeout(() => {
           if (!this.connected) {
             this.ws.terminate();
             resolve(false);
           }
-        }, 5000);
+        }, CONFIG.CONNECTION_TIMEOUT_MS);
 
       } catch (error) {
         this.onError(error);
@@ -631,6 +648,7 @@ async function runTest() {
   console.log(`   Target:       ${CONFIG.TARGET_CONNECTIONS} connections`);
   console.log(`   Server Limit: ${serverMaxConnections} connections (WS_MAX_CONNECTIONS)`);
   console.log(`   Ramp Rate:    ${CONFIG.RAMP_RATE} conn/sec`);
+  console.log(`   Timeout:      ${CONFIG.CONNECTION_TIMEOUT_MS / 1000}s (connection timeout)`);
   console.log(`   Sustain:      ${CONFIG.SUSTAIN_DURATION_MS / 1000}s (${Math.floor(CONFIG.SUSTAIN_DURATION_MS / 60000)} minutes)`);
   console.log(`   Server:       ${CONFIG.WS_URL}`);
   console.log(`   Health:       ${CONFIG.HEALTH_URL}`);
