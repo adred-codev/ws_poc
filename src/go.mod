@@ -2,19 +2,17 @@ module go-server-2
 
 go 1.21
 
-require github.com/gobwas/ws v1.3.1
-
-require github.com/nats-io/nats.go v1.31.0
-
-require github.com/shirou/gopsutil/v3 v3.23.12
-
-require go.uber.org/automaxprocs v1.5.3
-
-require github.com/prometheus/client_golang v1.17.0
-
-require github.com/rs/zerolog v1.33.0
-
-require golang.org/x/time v0.8.0
+require (
+	github.com/caarlos0/env/v11 v11.3.1
+	github.com/gobwas/ws v1.3.1
+	github.com/joho/godotenv v1.5.1
+	github.com/nats-io/nats.go v1.31.0
+	github.com/prometheus/client_golang v1.17.0
+	github.com/rs/zerolog v1.33.0
+	github.com/shirou/gopsutil/v3 v3.23.12
+	go.uber.org/automaxprocs v1.5.3
+	golang.org/x/time v0.8.0
+)
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect

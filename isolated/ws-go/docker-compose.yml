@@ -2,12 +2,19 @@
 # Instance: odin-ws-go (dedicated e2-standard-2)
 # Purpose: Handle WebSocket connections with full observability (logs + metrics)
 #
-# This compose file is templated. Before deployment, substitute:
-#   ${BACKEND_INTERNAL_IP} - Internal IP of backend instance running NATS/Loki
+# CONFIGURATION:
+#   All settings are in .env.production file (documented with formulas/rationale)
+#   Override for local testing: Create .env.production.local (gitignored)
+#   Override at deployment: Set environment variables (takes precedence over .env)
 #
-# Example:
-#   export BACKEND_INTERNAL_IP=10.128.0.2
-#   envsubst < docker-compose.yml | docker compose -f - up -d
+# DEPLOYMENT:
+#   1. Set BACKEND_INTERNAL_IP environment variable (required for NATS connection)
+#   2. Run: export BACKEND_INTERNAL_IP=10.128.0.2 && docker-compose up -d
+#
+# DOCKER RESOURCE LIMITS:
+#   - Must match WS_CPU_LIMIT and WS_MEMORY_LIMIT in .env.production
+#   - CPU: 1.9 cores (leaves 0.1 for Promtail)
+#   - Memory: 7168M (leaves ~1GB for system + Promtail from 8GB total)
 
 services:
   ws-go:
@@ -19,47 +26,11 @@ services:
       - "0.0.0.0:3004:3002"
     command:
       - "./odin-ws-server"
-      - "-addr"
-      - ":3002"
-      - "-nats"
-      - "nats://${BACKEND_INTERNAL_IP}:4222"
-    environment:
-      # Resource limits (e2-standard-2: 2 vCPU, 8GB RAM)
-      # Allocation: 1.9 CPU, 7GB (leaves 0.1 CPU + 256M for Promtail + 768M system)
-      - WS_CPU_LIMIT=1.9
-      - WS_MEMORY_LIMIT=7516192768 # 7 GB in bytes (7168 MB)
-
-      # Capacity: 7,000 connections (production-validated target for 99%+ success rate)
-      # Memory: 7,000 × 0.7MB + 974MB overhead = 5,874MB (81% of 7GB limit)
-      # Tested maximum: 8,849 connections (88.5% success rate at 99% memory)
-      - WS_MAX_CONNECTIONS=7000
-
-      # Worker pool sizing (production-validated formula)
-      # Formula: max(32, connections/40) = max(32, 7000/40) = 175 → 192 (power of 2)
-      # Load per worker: (7000 × 25) / 192 = 911 msg/sec per worker (optimal: 300-1,000)
-      - WS_WORKER_POOL_SIZE=192
-      - WS_WORKER_QUEUE_SIZE=19200 # 100x workers
-
-      # Rate limiting (based on production metrics: 280K users, 40K tx/day peak)
-      # Actual rates: 5 msg/sec (average) to 19.7 msg/sec (high peak)
-      # Setting: 25 msg/sec provides 25% headroom above peak
-      # Total writes: 7,000 × 25 = 175,000 writes/sec
-      - WS_MAX_NATS_RATE=25
-      - WS_MAX_BROADCAST_RATE=25
-
-      # Goroutine limit
-      # Formula: ((7000 × 2) + 192 + 13) × 1.2 = 17,046 → 17,500
-      # Actual at runtime: (7,000 × 2) + 192 + 13 = 14,205 goroutines (81% of limit)
-      - WS_MAX_GOROUTINES=17500
-
-      # Safety thresholds
-      - WS_CPU_REJECT_THRESHOLD=75.0
-      - WS_CPU_PAUSE_THRESHOLD=80.0
-
-      # Logging
-      - LOG_LEVEL=info
-      - LOG_FORMAT=json
-
+    # Load configuration from .env.production file
+    # All environment variables are documented there with formulas and rationale
+    # To override: Create .env.production.local (gitignored) or set ENV vars at runtime
+    env_file:
+      - .env.production
     restart: unless-stopped
     deploy:
       resources:
