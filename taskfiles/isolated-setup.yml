@@ -453,6 +453,12 @@ tasks:
       - echo "   Grafana → http://{{.BACKEND_EXTERNAL_IP}}:3010 (admin/admin)"
       - echo "   Test WS → wscat -c ws://{{.WS_GO_EXTERNAL_IP}}:3004/ws"
 
+  list:
+    desc: List all running VMs in the project
+    cmds:
+      - echo "🖥️  Listing all compute instances..."
+      - gcloud compute instances list
+
   ip:
     desc: Show key URLs (quick access)
     cmds:
@@ -807,19 +813,19 @@ tasks:
     desc: Delete ws-go instance
     cmds:
       - echo "🗑️  Deleting ws-go instance..."
-      - gcloud compute instances delete {{.WS_GO_INSTANCE}} --zone={{.GCP_ZONE}} --quiet
+      - gcloud compute instances delete {{.WS_GO_INSTANCE}} --zone={{.GCP_ZONE}} --quiet || echo "⚠️  Instance {{.WS_GO_INSTANCE}} not found or already deleted"
 
   delete:backend:
     desc: Delete backend instance
     cmds:
       - echo "🗑️  Deleting backend instance..."
-      - gcloud compute instances delete {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --quiet
+      - gcloud compute instances delete {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --quiet || echo "⚠️  Instance {{.BACKEND_INSTANCE}} not found or already deleted"
 
   delete:test-runner:
     desc: Delete test-runner instance
     cmds:
       - echo "🗑️  Deleting test-runner instance..."
-      - gcloud compute instances delete {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --quiet
+      - gcloud compute instances delete {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --quiet || echo "⚠️  Instance {{.TEST_RUNNER_INSTANCE}} not found or already deleted"
 
   delete:all:
     desc: Delete all instances
