@@ -373,7 +373,15 @@ class LoadTestConnection {
         try {
           this.ws.send(JSON.stringify({ type: 'heartbeat' }));
         } catch (error) {
-          // Ignore send errors
+          // ROOT CAUSE FIX: Connection is dead - detect and close it properly
+          // Previously ignored send errors, causing dead connections to remain tracked
+          // as "active" and inflating connection counts, explaining the "dwindling" effect
+          //
+          // When TCP connection becomes stale (e.g., GCP network infrastructure drops it),
+          // the WebSocket send() will fail. We must close the connection properly so the
+          // onClose() handler can clean up state.activeConnections tracking.
+          console.log(`⚠️  Connection ${this.id} dead (heartbeat send failed): ${error.message}`);
+          this.close();
         }
       }
     }, 30000); // 30 seconds (half of server's 60s timeout)

@@ -104,11 +104,11 @@ func NewLogger(config LoggerConfig) zerolog.Logger {
 //
 // Example:
 //
-//	LogError(logger, err, "Failed to broadcast", map[string]interface{}{
+//	LogError(logger, err, "Failed to broadcast", map[string]any{
 //	    "client_id": client.id,
 //	    "message_size": len(data),
 //	})
-func LogError(logger zerolog.Logger, err error, msg string, fields map[string]interface{}) {
+func LogError(logger zerolog.Logger, err error, msg string, fields map[string]any) {
 	event := logger.Error().Err(err)
 
 	// Add all context fields
@@ -131,7 +131,7 @@ func LogError(logger zerolog.Logger, err error, msg string, fields map[string]in
 //	        LogErrorWithStack(logger, fmt.Errorf("panic: %v", r), "Worker panic recovered", nil)
 //	    }
 //	}()
-func LogErrorWithStack(logger zerolog.Logger, err error, msg string, fields map[string]interface{}) {
+func LogErrorWithStack(logger zerolog.Logger, err error, msg string, fields map[string]any) {
 	stack := string(debug.Stack())
 
 	event := logger.Error().Err(err).Str("stack_trace", stack)
@@ -152,12 +152,12 @@ func LogErrorWithStack(logger zerolog.Logger, err error, msg string, fields map[
 //
 //	defer func() {
 //	    if r := recover(); r != nil {
-//	        LogPanic(logger, r, "Worker goroutine panic", map[string]interface{}{
+//	        LogPanic(logger, r, "Worker goroutine panic", map[string]any{
 //	            "worker_id": id,
 //	        })
 //	    }
 //	}()
-func LogPanic(logger zerolog.Logger, panicValue interface{}, msg string, fields map[string]interface{}) {
+func LogPanic(logger zerolog.Logger, panicValue any, msg string, fields map[string]any) {
 	stack := string(debug.Stack())
 
 	event := logger.Fatal().

@@ -36,11 +36,12 @@ import (
 // Trade-off: Higher memory usage but prevents slow client disconnections at scale
 type Client struct {
 	// Basic WebSocket fields
-	id     int64       // Unique client identifier
-	conn   net.Conn    // Underlying TCP connection
-	server *Server     // Reference to parent server
-	send   chan []byte // Buffered channel for outgoing messages (2048 deep)
-	mu     sync.RWMutex
+	id        int64       // Unique client identifier
+	conn      net.Conn    // Underlying TCP connection
+	server    *Server     // Reference to parent server
+	send      chan []byte // Buffered channel for outgoing messages (2048 deep)
+	mu        sync.RWMutex
+	closeOnce sync.Once // Ensures connection is only closed once
 
 	// Message reliability fields
 	// Sequence generator - creates monotonically increasing message IDs
@@ -75,7 +76,7 @@ type Client struct {
 	// - FIX protocol: 5 second timeout (more lenient)
 	lastMessageSentAt time.Time // Timestamp of last successful send
 	sendAttempts      int32     // Consecutive failed send attempts (atomic for thread-safety)
-	slowClientWarned  bool      // Flag to avoid log spam (warn once)
+	slowClientWarned  int32     // Flag to avoid log spam (warn once) - atomic: 0 = not warned, 1 = warned
 
 	// Subscription filtering fields
 	// Purpose: Only send messages to clients subscribed to specific channels
@@ -94,28 +95,33 @@ type Client struct {
 
 // ConnectionPool manages a pool of reusable client objects
 type ConnectionPool struct {
-	pool    sync.Pool
-	maxSize int
+	pool       sync.Pool
+	maxSize    int
+	bufferPool *BufferPool
 }
 
-func NewConnectionPool(maxSize int) *ConnectionPool {
-	return &ConnectionPool{
-		maxSize: maxSize,
-		pool: sync.Pool{
-			New: func() interface{} {
-				return &Client{
-					// Buffer size increased from 256 to 2048 for high-scale scenarios
-					// Why 2048:
-					// - At 20 broadcasts/sec, provides 102 seconds of buffer (vs 12.8s with 256)
-					// - Prevents cascade disconnections when clients temporarily slow
-					// - Memory cost: 1MB per client (2048 × 500 bytes avg message)
-					// - At 1000 clients: 1GB total buffer memory (acceptable)
-					// - At 500 clients: 500MB total buffer memory (very safe)
-					send: make(chan []byte, 2048),
-				}
-			},
+func NewConnectionPool(maxSize int, bufferPool *BufferPool) *ConnectionPool {
+	cp := &ConnectionPool{maxSize: maxSize, bufferPool: bufferPool}
+
+	cp.pool = sync.Pool{
+		New: func() interface{} {
+			client := &Client{
+				// Buffer size increased from 256 to 2048 for high-scale scenarios
+				// Why 2048:
+				// - At 20 broadcasts/sec, provides 102 seconds of buffer (vs 12.8s with 256)
+				// - Prevents cascade disconnections when clients temporarily slow
+				// - Memory cost: 1MB per client (2048 × 500 bytes avg message)
+				// - At 1000 clients: 1GB total buffer memory (acceptable)
+				// - At 500 clients: 500MB total buffer memory (very safe)
+				send: make(chan []byte, 2048),
+			}
+
+			client.replayBuffer = NewReplayBuffer(100, bufferPool)
+			return client
 		},
 	}
+
+	return cp
 }
 
 func (p *ConnectionPool) Get() *Client {
@@ -143,15 +149,18 @@ func (p *ConnectionPool) Get() *Client {
 		// Memory calculation: 100 messages × ~500 bytes = ~50KB per client
 		// With 7,864 max clients: 50KB × 7,864 = 393MB (fits in 512MB container)
 		if client.replayBuffer == nil {
-			client.replayBuffer = NewReplayBuffer(100)
+			client.replayBuffer = NewReplayBuffer(100, p.bufferPool)
 		} else {
+			if p.bufferPool != nil {
+				client.replayBuffer.withPool(p.bufferPool)
+			}
 			client.replayBuffer.Clear()
 		}
 
 		// Initialize slow client detection fields
 		client.lastMessageSentAt = time.Now()
 		atomic.StoreInt32(&client.sendAttempts, 0)
-		client.slowClientWarned = false
+		atomic.StoreInt32(&client.slowClientWarned, 0) // 0 = not warned
 
 		// Initialize subscription set
 		// Each new connection starts with no subscriptions
@@ -180,6 +189,10 @@ func (p *ConnectionPool) Put(c *Client) {
 	// Clear subscriptions before returning to pool
 	if c.subscriptions != nil {
 		c.subscriptions.Clear()
+	}
+
+	if c.replayBuffer != nil {
+		c.replayBuffer.Clear()
 	}
 
 	p.pool.Put(c)

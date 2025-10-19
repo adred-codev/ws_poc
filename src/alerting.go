@@ -11,7 +11,7 @@ import (
 // Alerter interface for sending notifications to external services
 // Implementations: Slack, Email, PagerDuty, etc.
 type Alerter interface {
-	Alert(level AuditLevel, message string, metadata map[string]interface{})
+	Alert(level AuditLevel, message string, metadata map[string]any)
 }
 
 // MultiAlerter sends alerts to multiple alerters
@@ -24,7 +24,7 @@ func NewMultiAlerter(alerters ...Alerter) *MultiAlerter {
 	return &MultiAlerter{alerters: alerters}
 }
 
-func (m *MultiAlerter) Alert(level AuditLevel, message string, metadata map[string]interface{}) {
+func (m *MultiAlerter) Alert(level AuditLevel, message string, metadata map[string]any) {
 	for _, alerter := range m.alerters {
 		// Run in goroutine to avoid blocking
 		go alerter.Alert(level, message, metadata)
@@ -46,7 +46,7 @@ func NewSlackAlerter(webhookURL, channel, username string) *SlackAlerter {
 	}
 }
 
-func (s *SlackAlerter) Alert(level AuditLevel, message string, metadata map[string]interface{}) {
+func (s *SlackAlerter) Alert(level AuditLevel, message string, metadata map[string]any) {
 	if s.webhookURL == "" {
 		return // Not configured
 	}
@@ -55,20 +55,20 @@ func (s *SlackAlerter) Alert(level AuditLevel, message string, metadata map[stri
 	emoji := s.getEmoji(level)
 
 	// Build fields from metadata
-	fields := []map[string]interface{}{}
+	fields := []map[string]any{}
 	for k, v := range metadata {
-		fields = append(fields, map[string]interface{}{
+		fields = append(fields, map[string]any{
 			"title": k,
 			"value": fmt.Sprintf("%v", v),
 			"short": true,
 		})
 	}
 
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"username": s.username,
 		"channel":  s.channel,
 		"text":     fmt.Sprintf("%s *%s Alert*", emoji, level),
-		"attachments": []map[string]interface{}{
+		"attachments": []map[string]any{
 			{
 				"color":     color,
 				"title":     message,
@@ -125,7 +125,7 @@ func NewConsoleAlerter() *ConsoleAlerter {
 	return &ConsoleAlerter{}
 }
 
-func (c *ConsoleAlerter) Alert(level AuditLevel, message string, metadata map[string]interface{}) {
+func (c *ConsoleAlerter) Alert(level AuditLevel, message string, metadata map[string]any) {
 	fmt.Printf("\n🔔 ALERT [%s]: %s\n", level, message)
 	if len(metadata) > 0 {
 		fmt.Println("  Metadata:")

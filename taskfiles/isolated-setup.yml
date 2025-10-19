@@ -25,7 +25,7 @@ vars:
   TEST_RUNNER_INSTANCE: odin-test-runner
 
   # Machine types
-  WS_GO_MACHINE_TYPE: e2-standard-2
+  WS_GO_MACHINE_TYPE: e2-standard-4
   BACKEND_MACHINE_TYPE: e2-small
   TEST_RUNNER_MACHINE_TYPE: e2-standard-4
 
@@ -216,9 +216,10 @@ tasks:
       - echo "✅ backend instance created"
 
   create:test-runner:
-    desc: Create test runner instance (e2-micro) for load testing
+    desc: Create test runner instance (supports both Node.js and Go test runners)
     cmds:
-      - echo "🖥️  Creating test runner instance..."
+      - echo "🖥️  Creating test runner instance (e2-standard-4)..."
+      - echo "   Supports both Node.js (event loop demo) and Go (7K capacity testing)"
       - |
         gcloud compute instances create {{.TEST_RUNNER_INSTANCE}} \
           --zone={{.GCP_ZONE}} \
@@ -255,11 +256,16 @@ tasks:
             useradd -m -s /bin/bash deploy
             usermod -aG docker deploy
 
-            echo "✅ test-runner instance ready"
+            echo "✅ test-runner instance ready (supports Node.js and Go test runners)"
           '
       - echo "⏳ Waiting for instance to be ready..."
       - sleep 30
       - echo "✅ test-runner instance created"
+
+  create:test-runner-go:
+    desc: Create test runner instance for Go-based load testing (alias to create:test-runner)
+    cmds:
+      - task: create:test-runner
 
   create:all:
     desc: Create all instances (backend + ws-go + test-runner)
@@ -338,24 +344,27 @@ tasks:
       - echo "✅ Backend services deployed"
 
   deploy:all:
-    desc: Deploy all instances (backend + ws-go + test-runner)
+    desc: Deploy all instances (backend + ws-go + Go test-runner)
     cmds:
       - task: deploy:backend
       - task: deploy:ws-go
-      - task: deploy:test-runner
+      - task: deploy:test-runner-go
       - echo ""
       - echo "🎉 Full deployment complete!"
+      - echo ""
       - task: info:all
 
   deploy:test-runner:
-    desc: Deploy test runner to dedicated test-runner instance
+    desc: Deploy Node.js test runner (demonstrates event loop bottleneck)
     cmds:
-      - echo "📦 Deploying test runner to test-runner instance..."
+      - echo "📦 Deploying Node.js test runner to test-runner instance..."
+      - |
+        echo "⚠️  NOTE: Node.js test runner will hit event loop bottleneck at ~3K connections"
 
       # Prepare directories
       - gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command='rm -rf /tmp/test_runner_deploy && mkdir -p /tmp/test_runner_deploy'
 
-      # Copy test runner files to temp (including new split test scripts)
+      # Copy test runner files to temp
       - gcloud compute scp {{.USER_WORKING_DIR}}/isolated/test-runner/Dockerfile {{.TEST_RUNNER_INSTANCE}}:/tmp/test_runner_deploy/ --zone={{.GCP_ZONE}}
       - gcloud compute scp {{.USER_WORKING_DIR}}/scripts/sustained-load-test.cjs {{.TEST_RUNNER_INSTANCE}}:/tmp/test_runner_deploy/ --zone={{.GCP_ZONE}}
       - gcloud compute scp {{.USER_WORKING_DIR}}/scripts/test-connection-rate.cjs {{.TEST_RUNNER_INSTANCE}}:/tmp/test_runner_deploy/ --zone={{.GCP_ZONE}}
@@ -364,7 +373,29 @@ tasks:
       # Move to deploy user's home and build
       - gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo rm -rf /home/deploy/test-runner && sudo mkdir -p /home/deploy/test-runner && sudo mv /tmp/test_runner_deploy/* /home/deploy/test-runner/ && sudo chown -R deploy:deploy /home/deploy/test-runner'
       - gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo docker build -t ws-test-runner /home/deploy/test-runner'
-      - echo "✅ Test runner deployed and built"
+      - echo "✅ Node.js test runner deployed and built"
+
+  deploy:test-runner-go:
+    desc: Deploy Go test runner (solves event loop bottleneck - RECOMMENDED)
+    cmds:
+      - echo "📦 Deploying Go test runner to test-runner instance..."
+      - echo "✨ Go test runner uses goroutines - no event loop bottleneck!"
+
+      # Prepare directories
+      - gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command='rm -rf /tmp/test_runner_go_deploy && mkdir -p /tmp/test_runner_go_deploy'
+
+      # Copy Go test runner files
+      - echo "📤 Copying Go test runner files..."
+      - gcloud compute scp {{.USER_WORKING_DIR}}/isolated/test-runner-go/Dockerfile {{.TEST_RUNNER_INSTANCE}}:/tmp/test_runner_go_deploy/ --zone={{.GCP_ZONE}}
+      - gcloud compute scp {{.USER_WORKING_DIR}}/scripts/sustained-load-test.go {{.TEST_RUNNER_INSTANCE}}:/tmp/test_runner_go_deploy/ --zone={{.GCP_ZONE}}
+      - gcloud compute scp {{.USER_WORKING_DIR}}/scripts/go.mod {{.TEST_RUNNER_INSTANCE}}:/tmp/test_runner_go_deploy/ --zone={{.GCP_ZONE}}
+      - gcloud compute scp {{.USER_WORKING_DIR}}/scripts/go.sum {{.TEST_RUNNER_INSTANCE}}:/tmp/test_runner_go_deploy/ --zone={{.GCP_ZONE}} 2>/dev/null || echo "⚠️  No go.sum file (will be generated during build)"
+
+      # Move to deploy user's home and build
+      - gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo rm -rf /home/deploy/test-runner-go && sudo mkdir -p /home/deploy/test-runner-go && sudo mv /tmp/test_runner_go_deploy/* /home/deploy/test-runner-go/ && sudo chown -R deploy:deploy /home/deploy/test-runner-go'
+      - echo "🔨 Building Go test runner image (goroutine-based, no event loop bottleneck)..."
+      - gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo docker build -t ws-test-runner-go /home/deploy/test-runner-go'
+      - echo "✅ Go test runner deployed and built"
 
 # ============================================================================
 # HEALTH & STATUS
@@ -588,11 +619,11 @@ tasks:
       - echo "🧪 Running overload test (expect rejections above 7K)..."
       - WS_URL=ws://{{.WS_GO_EXTERNAL_IP}}:3004/ws HEALTH_URL=http://{{.WS_GO_EXTERNAL_IP}}:3004/health WS_MAX_CONNECTIONS=7000 TARGET_CONNECTIONS=10000 DURATION=300 node scripts/sustained-load-test.cjs
 
-  # Remote tests (run in Docker on test-runner instance)
+  # Remote tests (run in Docker on test-runner instance using Go - no event loop bottleneck)
   test:remote:light:
-    desc: Light load test (1,000 connections, 60s) - runs remotely in Docker
+    desc: Light load test (1,000 connections, 60s) - runs remotely with Go test runner
     cmds:
-      - echo "🧪 Running light load test remotely..."
+      - echo "🧪 Running light load test remotely (Go)..."
       - |
         gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo docker run --rm \
           -e WS_URL=ws://{{.WS_GO_INTERNAL_IP}}:3004/ws \
@@ -600,12 +631,12 @@ tasks:
           -e WS_MAX_CONNECTIONS=7000 \
           -e TARGET_CONNECTIONS=1000 \
           -e DURATION=60 \
-          ws-test-runner'
+          ws-test-runner-go'
 
   test:remote:medium:
-    desc: Medium load test (5,000 connections, 300s) - runs remotely in Docker
+    desc: Medium load test (5,000 connections, 300s) - runs remotely with Go test runner
     cmds:
-      - echo "🧪 Running medium load test remotely..."
+      - echo "🧪 Running medium load test remotely (Go)..."
       - |
         gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo docker run --rm \
           -e WS_URL=ws://{{.WS_GO_INTERNAL_IP}}:3004/ws \
@@ -613,12 +644,12 @@ tasks:
           -e WS_MAX_CONNECTIONS=7000 \
           -e TARGET_CONNECTIONS=5000 \
           -e DURATION=300 \
-          ws-test-runner'
+          ws-test-runner-go'
 
   test:remote:capacity:
-    desc: Production capacity test (7,000 connections - target, 600s) - runs remotely in Docker
+    desc: Production capacity test (7,000 connections - target, 3600s) - runs remotely with Go test runner
     cmds:
-      - echo "🧪 Running production capacity test remotely..."
+      - echo "🧪 Running production capacity test remotely (Go)..."
       - |
         gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo docker run --rm \
           --ulimit nofile=200000:200000 \
@@ -626,22 +657,22 @@ tasks:
           -e HEALTH_URL=http://{{.WS_GO_INTERNAL_IP}}:3004/health \
           -e WS_MAX_CONNECTIONS=7000 \
           -e TARGET_CONNECTIONS=7000 \
-          -e DURATION=600 \
-          ws-test-runner'
+          -e DURATION=3600 \
+          ws-test-runner-go'
 
   test:remote:overload:
-    desc: Maximum capacity test (8,849 connections - tested max, 300s) - runs remotely in Docker
+    desc: Overload test (10,000 connections - should reject excess, 300s) - runs remotely with Go test runner
     cmds:
-      - echo "🧪 Running maximum capacity test remotely (88.5% success rate expected)..."
+      - echo "🧪 Running overload test remotely (Go) - expect rejections above 7K..."
       - |
         gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo docker run --rm \
           --ulimit nofile=200000:200000 \
           -e WS_URL=ws://{{.WS_GO_INTERNAL_IP}}:3004/ws \
           -e HEALTH_URL=http://{{.WS_GO_INTERNAL_IP}}:3004/health \
           -e WS_MAX_CONNECTIONS=7000 \
-          -e TARGET_CONNECTIONS=8849 \
+          -e TARGET_CONNECTIONS=10000 \
           -e DURATION=300 \
-          ws-test-runner'
+          ws-test-runner-go'
 
   # ============================================================================
   # SPLIT TESTING STRATEGY - Isolate connection capacity from message throughput

@@ -24,12 +24,16 @@ import (
 
 const (
 	// Time allowed to write a message to the peer.
-	writeWait = 10 * time.Second
+	// Reduced from 10s to 5s for faster detection of slow clients
+	writeWait = 5 * time.Second
 
 	// Time allowed to read the next pong message from the peer.
-	pongWait = 60 * time.Second
+	// Reduced from 60s to 30s to detect dead connections faster
+	// Industry standard: 15-30s (Bloomberg: 15s, Coinbase: 30s)
+	pongWait = 30 * time.Second
 
 	// Send pings to peer with this period. Must be less than pongWait.
+	// = 27 seconds with new pongWait
 	pingPeriod = (pongWait * 9) / 10
 )
 
@@ -135,15 +139,17 @@ func NewServer(config ServerConfig, logger *log.Logger) (*Server, error) {
 		Format: config.LogFormat,
 	})
 
+	bufferPool := NewBufferPool(config.BufferSize)
+
 	s := &Server{
 		config:         config,
 		logger:         logger,       // Old logger (backwards compat)
 		structLogger:   structLogger, // New structured logger
 		ctx:            ctx,
 		cancel:         cancel,
-		connections:    NewConnectionPool(config.MaxConnections),
+		bufferPool:     bufferPool,
+		connections:    NewConnectionPool(config.MaxConnections, bufferPool),
 		connectionsSem: make(chan struct{}, config.MaxConnections),
-		bufferPool:     NewBufferPool(config.BufferSize),
 		workerPool:     NewWorkerPool(config.WorkerCount, config.WorkerQueueSize, structLogger),
 		rateLimiter:    NewRateLimiter(),
 		stats: &Stats{
@@ -171,7 +177,7 @@ func NewServer(config ServerConfig, logger *log.Logger) (*Server, error) {
 	if config.NATSUrl != "" {
 		nc, err := nats.Connect(config.NATSUrl, nats.MaxReconnects(5), nats.ReconnectWait(2*time.Second))
 		if err != nil {
-			s.auditLogger.Critical("NATSConnectionFailed", "Failed to connect to NATS", map[string]interface{}{
+			s.auditLogger.Critical("NATSConnectionFailed", "Failed to connect to NATS", map[string]any{
 				"url":   config.NATSUrl,
 				"error": err.Error(),
 			})
@@ -180,7 +186,7 @@ func NewServer(config ServerConfig, logger *log.Logger) (*Server, error) {
 		s.natsConn = nc
 		logger.Printf("Connected to NATS at %s", config.NATSUrl)
 
-		s.auditLogger.Info("NATSConnected", "Connected to NATS successfully", map[string]interface{}{
+		s.auditLogger.Info("NATSConnected", "Connected to NATS successfully", map[string]any{
 			"url": config.NATSUrl,
 		})
 
@@ -188,7 +194,7 @@ func NewServer(config ServerConfig, logger *log.Logger) (*Server, error) {
 		js, err := nc.JetStream()
 		if err != nil {
 			RecordJetStreamError(ErrorSeverityFatal)
-			s.auditLogger.Critical("JetStreamInitFailed", "Failed to initialize JetStream", map[string]interface{}{
+			s.auditLogger.Critical("JetStreamInitFailed", "Failed to initialize JetStream", map[string]any{
 				"error": err.Error(),
 			})
 			logger.Printf("❌ FATAL: JetStream init failed: %v", err)
@@ -215,7 +221,7 @@ func NewServer(config ServerConfig, logger *log.Logger) (*Server, error) {
 			})
 			if err != nil {
 				RecordJetStreamError(ErrorSeverityFatal)
-				s.auditLogger.Critical("StreamCreationFailed", "Failed to create JetStream stream", map[string]interface{}{
+				s.auditLogger.Critical("StreamCreationFailed", "Failed to create JetStream stream", map[string]any{
 					"stream": streamName,
 					"error":  err.Error(),
 				})
@@ -264,6 +270,10 @@ func (s *Server) Start() error {
 				// Rate limit exceeded - NAK for redelivery
 				if err := msg.Nak(); err != nil {
 					RecordJetStreamError(ErrorSeverityWarning)
+					s.structLogger.Error().
+						Err(err).
+						Str("reason", "rate_limit_nak_failed").
+						Msg("Failed to NAK message during rate limiting")
 				}
 				dropped := atomic.AddInt64(&droppedCount, 1)
 				IncrementNATSDropped()
@@ -282,6 +292,10 @@ func (s *Server) Start() error {
 				// CPU critically high - NAK message for redelivery
 				if err := msg.Nak(); err != nil {
 					RecordJetStreamError(ErrorSeverityWarning)
+					s.structLogger.Error().
+						Err(err).
+						Str("reason", "cpu_brake_nak_failed").
+						Msg("Failed to NAK message during CPU emergency brake")
 				}
 				dropped := atomic.AddInt64(&droppedCount, 1)
 				IncrementNATSDropped()
@@ -309,11 +323,19 @@ func (s *Server) Start() error {
 				if err := msg.Ack(); err != nil {
 					RecordJetStreamError(ErrorSeverityWarning)
 					ackFails := atomic.AddInt64(&ackFailCount, 1)
+
+					// Log every ack failure at debug level, summary every 100 at warn level
+					s.structLogger.Debug().
+						Err(err).
+						Int64("total_ack_failures", ackFails).
+						Str("subject", msg.Subject).
+						Msg("Failed to ACK NATS message")
+
 					if ackFails%100 == 0 {
 						s.structLogger.Warn().
 							Int64("ack_failures", ackFails).
 							Err(err).
-							Msg("Failed to ACK messages")
+							Msg("High NATS ACK failure rate - check NATS connection health")
 					}
 				}
 			})
@@ -321,7 +343,7 @@ func (s *Server) Start() error {
 
 		if err != nil {
 			RecordJetStreamError(ErrorSeverityCritical)
-			s.auditLogger.Critical("JetStreamSubscriptionFailed", "Failed to subscribe to JetStream", map[string]interface{}{
+			s.auditLogger.Critical("JetStreamSubscriptionFailed", "Failed to subscribe to JetStream", map[string]any{
 				"subject": "odin.token.>",
 				"error":   err.Error(),
 			})
@@ -370,7 +392,7 @@ func (s *Server) Start() error {
 	// Start ResourceGuard monitoring (static limits with safety checks)
 	s.resourceGuard.StartMonitoring(s.ctx, s.config.MetricsInterval)
 
-	s.auditLogger.Info("ServerStarted", "WebSocket server started successfully", map[string]interface{}{
+	s.auditLogger.Info("ServerStarted", "WebSocket server started successfully", map[string]any{
 		"addr":           s.config.Addr,
 		"maxConnections": s.config.MaxConnections,
 	})
@@ -434,6 +456,7 @@ func (s *Server) monitorNATS() {
 	defer ticker.Stop()
 
 	wasConnected := s.natsConn.IsConnected()
+	lastSubCheck := time.Now()
 
 	for {
 		select {
@@ -445,14 +468,45 @@ func (s *Server) monitorNATS() {
 			// Detect connection state changes
 			if wasConnected && !isConnected {
 				// Connection lost
-				s.auditLogger.Critical("NATSDisconnected", "Lost connection to NATS server", map[string]interface{}{
+				s.auditLogger.Critical("NATSDisconnected", "Lost connection to NATS server", map[string]any{
 					"url": s.config.NATSUrl,
 				})
+				s.structLogger.Error().
+					Str("url", s.config.NATSUrl).
+					Msg("NATS connection lost")
 			} else if !wasConnected && isConnected {
 				// Connection restored
-				s.auditLogger.Info("NATSReconnected", "Reconnected to NATS server", map[string]interface{}{
+				s.auditLogger.Info("NATSReconnected", "Reconnected to NATS server", map[string]any{
 					"url": s.config.NATSUrl,
 				})
+				s.structLogger.Info().
+					Str("url", s.config.NATSUrl).
+					Msg("NATS connection restored")
+			}
+
+			// Check subscription health every 30 seconds
+			if time.Since(lastSubCheck) >= 30*time.Second {
+				if s.natsSubcription != nil {
+					// Check if subscription is still valid
+					if !s.natsSubcription.IsValid() {
+						s.auditLogger.Critical("NATSSubscriptionInvalid", "NATS subscription is invalid", map[string]any{
+							"subject": "odin.token.>",
+						})
+						s.structLogger.Error().
+							Str("subject", "odin.token.>").
+							Msg("NATS subscription is invalid - clients will not receive updates")
+					}
+
+					// Get pending message count for monitoring
+					pending, _, err := s.natsSubcription.Pending()
+					if err == nil && pending > 1000 {
+						// High pending count indicates subscription isn't keeping up
+						s.structLogger.Warn().
+							Int("pending_messages", pending).
+							Msg("High NATS pending message count - subscription may be falling behind")
+					}
+				}
+				lastSubCheck = time.Now()
 			}
 
 			wasConnected = isConnected
@@ -482,7 +536,7 @@ func (s *Server) monitorMemory() {
 
 			// Critical threshold: >90%
 			if memPercent > 90 {
-				s.auditLogger.Critical("HighMemoryUsage", "Memory usage above 90%, OOM risk", map[string]interface{}{
+				s.auditLogger.Critical("HighMemoryUsage", "Memory usage above 90%, OOM risk", map[string]any{
 					"memory_used_mb":  memUsedMB,
 					"memory_limit_mb": memLimitMB,
 					"percentage":      memPercent,
@@ -490,7 +544,7 @@ func (s *Server) monitorMemory() {
 				})
 			} else if memPercent > 80 {
 				// Warning threshold: >80%
-				s.auditLogger.Warning("ModerateMemoryUsage", "Memory usage above 80%", map[string]interface{}{
+				s.auditLogger.Warning("ModerateMemoryUsage", "Memory usage above 80%", map[string]any{
 					"memory_used_mb":  memUsedMB,
 					"memory_limit_mb": memLimitMB,
 					"percentage":      memPercent,
@@ -512,7 +566,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	shouldAccept, reason := s.resourceGuard.ShouldAcceptConnection()
 	if !shouldAccept {
 		currentConnections := atomic.LoadInt64(&s.stats.CurrentConnections)
-		s.auditLogger.Warning("ConnectionRejected", reason, map[string]interface{}{
+		s.auditLogger.Warning("ConnectionRejected", reason, map[string]any{
 			"currentConnections": currentConnections,
 			"maxConnections":     s.config.MaxConnections,
 			"reason":             reason,
@@ -533,7 +587,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		// Slot acquired
 	case <-time.After(5 * time.Second):
 		// Server at capacity, reject with 503
-		s.auditLogger.Warning("ServerAtCapacity", "Connection rejected - server at maximum capacity", map[string]interface{}{
+		s.auditLogger.Warning("ServerAtCapacity", "Connection rejected - server at maximum capacity", map[string]any{
 			"currentConnections": atomic.LoadInt64(&s.stats.CurrentConnections),
 			"maxConnections":     s.config.MaxConnections,
 		})
@@ -545,7 +599,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	conn, _, _, err := ws.UpgradeHTTP(r, w)
 	if err != nil {
 		<-s.connectionsSem // Release slot
-		s.auditLogger.Error("WebSocketUpgradeFailed", "Failed to upgrade HTTP connection to WebSocket", map[string]interface{}{
+		s.auditLogger.Error("WebSocketUpgradeFailed", "Failed to upgrade HTTP connection to WebSocket", map[string]any{
 			"error":      err.Error(),
 			"remoteAddr": r.RemoteAddr,
 		})
@@ -572,7 +626,13 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) readPump(c *Client) {
 	defer func() {
-		c.conn.Close()
+		// Use sync.Once to ensure connection is only closed once
+		// Prevents race condition with writePump also trying to close
+		c.closeOnce.Do(func() {
+			if c.conn != nil {
+				c.conn.Close()
+			}
+		})
 		s.clients.Delete(c)
 		atomic.AddInt64(&s.stats.CurrentConnections, -1)
 		s.connections.Put(c)
@@ -588,6 +648,12 @@ func (s *Server) readPump(c *Client) {
 	for {
 		msg, op, err := wsutil.ReadClientData(c.conn)
 		if err != nil {
+			// Log disconnection reason for visibility
+			s.structLogger.Debug().
+				Int64("client_id", c.id).
+				Err(err).
+				Str("reason", "read_error").
+				Msg("Client disconnected from readPump")
 			break
 		}
 
@@ -611,14 +677,14 @@ func (s *Server) readPump(c *Client) {
 				s.logger.Printf("⚠️  Client %d rate limited (exceeded 100 burst or 10/sec sustained)", c.id)
 
 				// Audit log rate limiting event
-				s.auditLogger.Warning("ClientRateLimited", "Client exceeded rate limit", map[string]interface{}{
+				s.auditLogger.Warning("ClientRateLimited", "Client exceeded rate limit", map[string]any{
 					"clientID": c.id,
 					"limit":    "100 burst, 10/sec sustained",
 				})
 
 				// Send error message to client
 				// This helps client-side debugging (they know why messages are being dropped)
-				errorMsg := map[string]interface{}{
+				errorMsg := map[string]any{
 					"type":    "error",
 					"code":    "RATE_LIMIT_EXCEEDED",
 					"message": "Too many messages, please slow down (limit: 10/sec)",
@@ -649,7 +715,7 @@ func (s *Server) readPump(c *Client) {
 		} else if op == ws.OpPing {
 			// The gobwas library handles pongs automatically by default
 		} else if op == ws.OpClose {
-			break
+			return
 		}
 	}
 }
@@ -658,9 +724,13 @@ func (s *Server) writePump(c *Client) {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
-		if c.conn != nil {
-			c.conn.Close()
-		}
+		// Use sync.Once to ensure connection is only closed once
+		// Prevents race condition with readPump also trying to close
+		c.closeOnce.Do(func() {
+			if c.conn != nil {
+				c.conn.Close()
+			}
+		})
 	}()
 
 	for {
@@ -668,6 +738,10 @@ func (s *Server) writePump(c *Client) {
 		case message, ok := <-c.send:
 			if !ok {
 				// The server closed the channel.
+				s.structLogger.Debug().
+					Int64("client_id", c.id).
+					Str("reason", "send_channel_closed").
+					Msg("Client send channel closed, disconnecting")
 				if c.conn != nil {
 					wsutil.WriteServerMessage(c.conn, ws.OpClose, []byte{})
 				}
@@ -675,12 +749,22 @@ func (s *Server) writePump(c *Client) {
 			}
 
 			if c.conn == nil {
+				s.structLogger.Warn().
+					Int64("client_id", c.id).
+					Str("reason", "connection_nil").
+					Msg("Client connection is nil in writePump")
 				return
 			}
 
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			err := wsutil.WriteServerMessage(c.conn, ws.OpText, message)
 			if err != nil {
+				s.structLogger.Debug().
+					Int64("client_id", c.id).
+					Err(err).
+					Str("reason", "write_error").
+					Int("message_size", len(message)).
+					Msg("Failed to write message to client")
 				return
 			}
 			atomic.AddInt64(&s.stats.MessagesSent, 1)
@@ -690,10 +774,19 @@ func (s *Server) writePump(c *Client) {
 
 		case <-ticker.C:
 			if c.conn == nil {
+				s.structLogger.Warn().
+					Int64("client_id", c.id).
+					Str("reason", "connection_nil_ping").
+					Msg("Client connection is nil during ping")
 				return
 			}
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := wsutil.WriteServerMessage(c.conn, ws.OpPing, nil); err != nil {
+				s.structLogger.Debug().
+					Int64("client_id", c.id).
+					Err(err).
+					Str("reason", "ping_write_error").
+					Msg("Failed to send ping to client")
 				return
 			}
 		}
@@ -850,9 +943,9 @@ func (s *Server) broadcast(subject string, message []byte) {
 				attempts := atomic.AddInt32(&client.sendAttempts, 1)
 
 				// Log warning on first failure (avoid spam)
-				if attempts == 1 && !client.slowClientWarned {
+				// Use atomic CompareAndSwap to avoid race condition
+				if attempts == 1 && atomic.CompareAndSwapInt32(&client.slowClientWarned, 0, 1) {
 					s.logger.Printf("⚠️  Client %d is slow (send buffer full)", client.id)
-					client.slowClientWarned = true
 				}
 
 				// Disconnect after 3 consecutive failures (industry standard)
@@ -863,7 +956,7 @@ func (s *Server) broadcast(subject string, message []byte) {
 					s.logger.Printf("❌ Disconnecting client %d (too slow: %d consecutive send failures)", client.id, attempts)
 
 					// Audit log slow client disconnection
-					s.auditLogger.Warning("SlowClientDisconnected", "Client disconnected for being too slow", map[string]interface{}{
+					s.auditLogger.Warning("SlowClientDisconnected", "Client disconnected for being too slow", map[string]any{
 						"clientID":         client.id,
 						"consecutiveFails": attempts,
 					})
@@ -989,6 +1082,8 @@ func (s *Server) handleClientMessage(c *Client, data []byte) {
 
 		// Send each message from replay buffer
 		// Note: These already have sequence numbers (from when originally sent)
+		sentCount := 0
+	replayLoop:
 		for i, msg := range messages {
 			data, err := msg.Serialize()
 			if err != nil {
@@ -996,20 +1091,47 @@ func (s *Server) handleClientMessage(c *Client, data []byte) {
 				continue
 			}
 
-			// Send with 1 second timeout (replay is important, give more time)
+			// Send with 3 second timeout (increased from 1s for better recovery)
+			// Replay is critical for gap recovery, so we're more patient
 			select {
 			case c.send <- data:
 				// Sent successfully
-			case <-time.After(1 * time.Second):
-				// If client can't handle replay messages, they're too slow
-				// This is a problem because they'll just keep falling behind
-				s.logger.Printf("❌ Client %d too slow to handle replay (dropped message %d/%d)", c.id, i+1, len(messages))
+				sentCount++
+			case <-time.After(3 * time.Second):
+				// Client too slow to handle replay - incomplete recovery
+				s.structLogger.Warn().
+					Int64("client_id", c.id).
+					Int("sent", sentCount).
+					Int("total", len(messages)).
+					Int("dropped", len(messages)-sentCount).
+					Msg("Replay incomplete - client too slow")
 
-				// Should we disconnect? Probably not during replay
-				// Client might be temporarily slow but recovering
-				// Let regular slow client detection handle it
-				break
+				// Notify client that replay was incomplete
+				// Client can request another replay or reconnect
+				errorMsg := map[string]any{
+					"type":    "replay_incomplete",
+					"sent":    sentCount,
+					"total":   len(messages),
+					"message": fmt.Sprintf("Replay incomplete: sent %d of %d messages", sentCount, len(messages)),
+				}
+				if errorData, err := json.Marshal(errorMsg); err == nil {
+					// Best effort send (don't wait if client buffer full)
+					select {
+					case c.send <- errorData:
+					default:
+					}
+				}
+
+				break replayLoop
 			}
+		}
+
+		// Log successful replay
+		if sentCount == len(messages) {
+			s.structLogger.Debug().
+				Int64("client_id", c.id).
+				Int("message_count", sentCount).
+				Msg("Replay completed successfully")
 		}
 
 		// Increment replay counter for monitoring
@@ -1026,7 +1148,7 @@ func (s *Server) handleClientMessage(c *Client, data []byte) {
 		// So they send application-level heartbeats
 		//
 		// We respond with current server time (helps detect clock skew)
-		pong := map[string]interface{}{
+		pong := map[string]any{
 			"type": "pong",
 			"ts":   time.Now().UnixMilli(),
 		}
@@ -1079,7 +1201,7 @@ func (s *Server) handleClientMessage(c *Client, data []byte) {
 		s.logger.Printf("✅ Client %d subscribed to %d channels: %v", c.id, len(subReq.Channels), subReq.Channels)
 
 		// Send acknowledgment to client
-		ack := map[string]interface{}{
+		ack := map[string]any{
 			"type":       "subscription_ack",
 			"subscribed": subReq.Channels,
 			"count":      c.subscriptions.Count(),
@@ -1112,7 +1234,7 @@ func (s *Server) handleClientMessage(c *Client, data []byte) {
 		s.logger.Printf("✅ Client %d unsubscribed from %d channels: %v", c.id, len(unsubReq.Channels), unsubReq.Channels)
 
 		// Send acknowledgment to client
-		ack := map[string]interface{}{
+		ack := map[string]any{
 			"type":         "unsubscription_ack",
 			"unsubscribed": unsubReq.Channels,
 			"count":        c.subscriptions.Count(),
@@ -1268,38 +1390,38 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 	// Build response
 	w.WriteHeader(statusCode)
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	json.NewEncoder(w).Encode(map[string]any{
 		"status":  status,
 		"healthy": isHealthy,
-		"checks": map[string]interface{}{
-			"nats": map[string]interface{}{
+		"checks": map[string]any{
+			"nats": map[string]any{
 				"status":  natsStatus,
 				"healthy": natsHealthy,
 			},
-			"capacity": map[string]interface{}{
+			"capacity": map[string]any{
 				"current":    currentConns,
 				"max":        maxConns,
 				"percentage": capacityPercent,
 				"healthy":    capacityHealthy,
 			},
-			"goroutines": map[string]interface{}{
+			"goroutines": map[string]any{
 				"current":    goroutinesCurrent,
 				"limit":      goroutinesLimit,
 				"percentage": goroutinesPercent,
 				"healthy":    goroutinesHealthy,
 			},
-			"memory": map[string]interface{}{
+			"memory": map[string]any{
 				"used_mb":    memoryMB,
 				"limit_mb":   memLimitMB,
 				"percentage": memPercent,
 				"healthy":    memHealthy,
 			},
-			"cpu": map[string]interface{}{
+			"cpu": map[string]any{
 				"percentage": cpuPercent,
 				"threshold":  s.config.CPURejectThreshold,
 				"healthy":    cpuHealthy,
 			},
-			"limits": map[string]interface{}{
+			"limits": map[string]any{
 				"max_connections":  s.config.MaxConnections,
 				"max_goroutines":   s.config.MaxGoroutines,
 				"cpu_threshold":    s.config.CPURejectThreshold,

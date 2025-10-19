@@ -22,12 +22,12 @@ const (
 // AuditEvent represents a single auditable event in the system
 // All events are logged as JSON for easy parsing by log aggregation tools
 type AuditEvent struct {
-	Level     AuditLevel             `json:"level"`
-	Timestamp time.Time              `json:"timestamp"`
-	Event     string                 `json:"event"`               // Event type: "ServerAtCapacity", "SlowClientDisconnected", etc.
-	ClientID  *int64                 `json:"client_id,omitempty"` // Optional client ID
-	Message   string                 `json:"message"`             // Human-readable description
-	Metadata  map[string]interface{} `json:"metadata,omitempty"`  // Additional context
+	Level     AuditLevel     `json:"level"`
+	Timestamp time.Time      `json:"timestamp"`
+	Event     string         `json:"event"`               // Event type: "ServerAtCapacity", "SlowClientDisconnected", etc.
+	ClientID  *int64         `json:"client_id,omitempty"` // Optional client ID
+	Message   string         `json:"message"`             // Human-readable description
+	Metadata  map[string]any `json:"metadata,omitempty"`  // Additional context
 }
 
 // AuditLogger handles structured logging for all auditable events
@@ -110,27 +110,27 @@ func (a *AuditLogger) shouldLog(level AuditLevel) bool {
 // Convenience methods for common log levels
 
 // Debug logs a debug-level event
-func (a *AuditLogger) Debug(event, message string, metadata map[string]interface{}) {
+func (a *AuditLogger) Debug(event, message string, metadata map[string]any) {
 	a.Log(AuditEvent{Level: DEBUG, Event: event, Message: message, Metadata: metadata})
 }
 
 // Info logs an info-level event
-func (a *AuditLogger) Info(event, message string, metadata map[string]interface{}) {
+func (a *AuditLogger) Info(event, message string, metadata map[string]any) {
 	a.Log(AuditEvent{Level: INFO, Event: event, Message: message, Metadata: metadata})
 }
 
 // Warning logs a warning-level event
-func (a *AuditLogger) Warning(event, message string, metadata map[string]interface{}) {
+func (a *AuditLogger) Warning(event, message string, metadata map[string]any) {
 	a.Log(AuditEvent{Level: WARNING, Event: event, Message: message, Metadata: metadata})
 }
 
 // Error logs an error-level event
-func (a *AuditLogger) Error(event, message string, metadata map[string]interface{}) {
+func (a *AuditLogger) Error(event, message string, metadata map[string]any) {
 	a.Log(AuditEvent{Level: ERROR, Event: event, Message: message, Metadata: metadata})
 }
 
 // Critical logs a critical-level event
-func (a *AuditLogger) Critical(event, message string, metadata map[string]interface{}) {
+func (a *AuditLogger) Critical(event, message string, metadata map[string]any) {
 	a.Log(AuditEvent{Level: CRITICAL, Event: event, Message: message, Metadata: metadata})
 }
 
@@ -148,7 +148,7 @@ type ClientLogger struct {
 	clientID    int64
 }
 
-func (c *ClientLogger) Debug(event, message string, metadata map[string]interface{}) {
+func (c *ClientLogger) Debug(event, message string, metadata map[string]any) {
 	c.auditLogger.Log(AuditEvent{
 		Level:    DEBUG,
 		Event:    event,
@@ -158,7 +158,7 @@ func (c *ClientLogger) Debug(event, message string, metadata map[string]interfac
 	})
 }
 
-func (c *ClientLogger) Info(event, message string, metadata map[string]interface{}) {
+func (c *ClientLogger) Info(event, message string, metadata map[string]any) {
 	c.auditLogger.Log(AuditEvent{
 		Level:    INFO,
 		Event:    event,
@@ -168,7 +168,7 @@ func (c *ClientLogger) Info(event, message string, metadata map[string]interface
 	})
 }
 
-func (c *ClientLogger) Warning(event, message string, metadata map[string]interface{}) {
+func (c *ClientLogger) Warning(event, message string, metadata map[string]any) {
 	c.auditLogger.Log(AuditEvent{
 		Level:    WARNING,
 		Event:    event,
@@ -178,7 +178,7 @@ func (c *ClientLogger) Warning(event, message string, metadata map[string]interf
 	})
 }
 
-func (c *ClientLogger) Error(event, message string, metadata map[string]interface{}) {
+func (c *ClientLogger) Error(event, message string, metadata map[string]any) {
 	c.auditLogger.Log(AuditEvent{
 		Level:    ERROR,
 		Event:    event,
@@ -188,7 +188,7 @@ func (c *ClientLogger) Error(event, message string, metadata map[string]interfac
 	})
 }
 
-func (c *ClientLogger) Critical(event, message string, metadata map[string]interface{}) {
+func (c *ClientLogger) Critical(event, message string, metadata map[string]any) {
 	c.auditLogger.Log(AuditEvent{
 		Level:    CRITICAL,
 		Event:    event,

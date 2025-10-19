@@ -188,7 +188,7 @@ func (rg *ResourceGuard) ShouldAcceptConnection() (accept bool, reason string) {
 			Int64("current_memory_mb", currentMemory/(1024*1024)).
 			Int64("limit_mb", rg.config.MemoryLimit/(1024*1024)).
 			Msg("Connection rejected: memory limit exceeded")
-		return false, fmt.Sprintf("memory limit exceeded")
+		return false, "memory limit exceeded"
 	}
 
 	// Check 4: Goroutine limit
@@ -285,24 +285,33 @@ func (rg *ResourceGuard) ReleaseGoroutine() {
 //
 // Call this periodically (e.g., every 15 seconds) to keep resource state current.
 func (rg *ResourceGuard) UpdateResources() {
-	// Get CPU usage
-	cpuPercent, err := cpu.Percent(1*time.Second, false)
-	if err != nil || len(cpuPercent) == 0 {
+	// Get CPU usage with 100ms sample interval (non-blocking but accurate)
+	// Why 100ms instead of cpu.Percent(0, false):
+	// - cpu.Percent(0) has no baseline on first call, returns invalid data
+	// - cpu.Percent(1*time.Second) blocks for 1 second (too long for 15s update cycle)
+	// - 100ms is short enough to not block significantly, long enough to be accurate
+	cpuPercent, err := cpu.Percent(100*time.Millisecond, false)
+	if err != nil {
 		LogError(rg.logger, err, "Failed to get CPU usage", nil)
-		return
+	} else if len(cpuPercent) > 0 {
+		rg.currentCPU.Store(cpuPercent[0])
 	}
 
-	// Get memory usage
+	// Get memory usage via ReadMemStats (proven reliable)
+	// Why ReadMemStats instead of runtime/metrics:
+	// - runtime/metrics returns KindBad on Docker/GCP environments (returns metric_kind=0)
+	// - ReadMemStats is universal and reliable across all platforms
+	// - Stop-the-world pause is < 1ms typically, acceptable for 15s update interval
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
-
-	// Update atomic values
-	rg.currentCPU.Store(cpuPercent[0])
 	rg.currentMemory.Store(int64(mem.Alloc))
 
+	currentCPU := rg.currentCPU.Load().(float64)
+	currentMemory := rg.currentMemory.Load().(int64)
+
 	rg.logger.Debug().
-		Float64("cpu_percent", cpuPercent[0]).
-		Int64("memory_mb", int64(mem.Alloc)/(1024*1024)).
+		Float64("cpu_percent", currentCPU).
+		Int64("memory_mb", currentMemory/(1024*1024)).
 		Int64("connections", atomic.LoadInt64(rg.currentConns)).
 		Int("goroutines", runtime.NumGoroutine()).
 		Msg("Resource state updated")
@@ -325,7 +334,11 @@ func (rg *ResourceGuard) StartMonitoring(ctx context.Context, interval time.Dura
 				currentMemory := rg.currentMemory.Load().(int64)
 
 				cpuHeadroom := 100.0 - currentCPU
-				memHeadroom := 100.0 - (float64(currentMemory)/float64(rg.config.MemoryLimit))*100
+				memPercent := 0.0
+				if rg.config.MemoryLimit > 0 {
+					memPercent = (float64(currentMemory) / float64(rg.config.MemoryLimit)) * 100
+				}
+				memHeadroom := 100.0 - memPercent
 
 				UpdateCapacityHeadroom(cpuHeadroom, memHeadroom)
 				UpdateCapacityMetrics(rg.config.MaxConnections, rg.config.CPURejectThreshold)
@@ -343,8 +356,8 @@ func (rg *ResourceGuard) StartMonitoring(ctx context.Context, interval time.Dura
 }
 
 // GetStats returns current resource statistics for debugging
-func (rg *ResourceGuard) GetStats() map[string]interface{} {
-	return map[string]interface{}{
+func (rg *ResourceGuard) GetStats() map[string]any {
+	return map[string]any{
 		"max_connections":      rg.config.MaxConnections,
 		"current_connections":  atomic.LoadInt64(rg.currentConns),
 		"cpu_percent":          rg.currentCPU.Load().(float64),
