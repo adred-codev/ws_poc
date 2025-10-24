@@ -40,8 +40,7 @@ type Client struct {
 	conn      net.Conn    // Underlying TCP connection
 	server    *Server     // Reference to parent server
 	send      chan []byte // Buffered channel for outgoing messages (512 slots, 108s @ 4.7 msg/sec)
-	mu        sync.RWMutex
-	closeOnce sync.Once // Ensures connection is only closed once
+	closeOnce sync.Once   // Ensures connection is only closed once
 
 	// Message reliability fields
 	// Sequence generator - creates monotonically increasing message IDs

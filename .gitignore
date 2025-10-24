@@ -24,10 +24,10 @@ yarn-debug.log*
 yarn-error.log*
 
 # Environment files
-.env
-.env.local
-.env.production
-.env.*.local
+# .env
+# .env.local
+# .env.production
+# .env.*.local
 
 # IDE
 .vscode/
@@ -50,4 +50,4 @@ tmp/
 temp/
 
 # sessions
-docs/sessions
+sessions
