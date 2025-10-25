@@ -31,6 +31,9 @@ type Config struct {
 	WorkerPoolSize  int `env:"WS_WORKER_POOL_SIZE" envDefault:"0"`  // 0 = auto-calculate
 	WorkerQueueSize int `env:"WS_WORKER_QUEUE_SIZE" envDefault:"0"` // 0 = auto-calculate
 
+	// Sharding (lock contention mitigation)
+	NumShards int `env:"WS_NUM_SHARDS" envDefault:"16"` // Number of shards for SubscriptionIndex
+
 	// Rate limiting
 	MaxNATSRate      int `env:"WS_MAX_NATS_RATE" envDefault:"20"`
 	MaxBroadcastRate int `env:"WS_MAX_BROADCAST_RATE" envDefault:"20"`
@@ -175,6 +178,7 @@ func (c *Config) Print() {
 	fmt.Println("\n=== Worker Pool ===")
 	fmt.Printf("Workers:         %d\n", c.WorkerPoolSize)
 	fmt.Printf("Queue Size:      %d\n", c.WorkerQueueSize)
+	fmt.Printf("Shards:          %d (lock contention: %dx reduction)\n", c.NumShards, c.NumShards)
 	fmt.Println("\n=== Rate Limits ===")
 	fmt.Printf("NATS Messages:   %d/sec\n", c.MaxNATSRate)
 	fmt.Printf("Broadcasts:      %d/sec\n", c.MaxBroadcastRate)

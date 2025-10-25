@@ -49,6 +49,7 @@ func main() {
 		BufferSize:      4096, // Constant
 		WorkerCount:     cfg.WorkerPoolSize,
 		WorkerQueueSize: cfg.WorkerQueueSize,
+		NumShards:       cfg.NumShards,
 
 		// Static resource limits (explicit from config)
 		CPULimit:    cfg.CPULimit,

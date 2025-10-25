@@ -245,29 +245,22 @@ export interface UpdateFrequencies {
   USER_TRADES: number;
 }
 
-// NATS Subjects - Hierarchical Channel Format
+// NATS Subjects - Coarse-Grained Channel Format
+// Event types are in message payload, not in NATS subject
 export interface NatsSubjects {
-  // Hierarchical token event subjects (PRIMARY)
-  // Format: odin.token.{SYMBOL}.{EVENT_TYPE}
-  tokenTrade: (tokenId: string) => string;
-  tokenLiquidity: (tokenId: string) => string;
-  tokenMetadata: (tokenId: string) => string;
-  tokenSocial: (tokenId: string) => string;
-  tokenFavorites: (tokenId: string) => string;
-  tokenCreation: (tokenId: string) => string;
-  tokenAnalytics: (tokenId: string) => string;
-  tokenBalances: (tokenId: string) => string;
+  // Coarse-grained token channel (all events for a token)
+  // Format: odin.token.{tokenId}
+  // Example: odin.token.BTC
+  token: (tokenId: string) => string;
 
-  // Legacy subjects (DEPRECATED - kept for backwards compatibility)
-  tokenPrice: (tokenId: string) => string;
-  tokenVolume: (tokenId: string) => string;
-  tokenHolders: (tokenId: string) => string;
-  batchUpdate: string;
-  trades: (tokenId: string) => string;
-  userTrades: (userId: string) => string;
-  marketStats: string;
-  systemHealth: string;
-  connectionState: string;
+  // User-specific channel (all events for a user)
+  // Format: odin.user.{userId}
+  // Example: odin.user.alice
+  user: (userId: string) => string;
+
+  // Global channel (system-wide events: market stats, health, etc.)
+  // Format: odin.global
+  global: string;
 }
 
 // API Request/Response Types

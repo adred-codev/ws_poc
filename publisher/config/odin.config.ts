@@ -19,38 +19,29 @@ export const updateFrequencies: UpdateFrequencies = {
   USER_TRADES: 0, // Instant
 };
 
-// NATS subject hierarchy - Hierarchical Channel Format
-// Format: odin.token.{SYMBOL}.{EVENT_TYPE}
-// Event types: trade, liquidity, metadata, social, favorites, creation, analytics, balances
+// NATS subject hierarchy - Coarse-Grained Channel Format
+// Format: odin.{channelType}.{identifier}
+// Event types are included in message payload, not NATS subject
+//
+// Channel Types:
+//   token - Token-related events (trade, liquidity, metadata, etc.)
+//   user  - User-specific events (favorites, balances)
+//   global - System-wide events (market stats, health)
+//
+// Architecture Decision:
+// - Publisher publishes to coarse-grained subjects (e.g., odin.token.BTC)
+// - Event type is in message payload (e.g., {type: 'token:trade', ...})
+// - WebSocket server broadcasts to matching channels (e.g., token.BTC)
+// - Clients receive ALL events for subscribed tokens and filter by type if needed
 export const subjects: NatsSubjects = {
-  // Hierarchical token event subjects (PRIMARY - used by WebSocket server)
-  tokenTrade: (tokenId: string) => `odin.token.${tokenId}.trade`,
-  tokenLiquidity: (tokenId: string) => `odin.token.${tokenId}.liquidity`,
-  tokenMetadata: (tokenId: string) => `odin.token.${tokenId}.metadata`,
-  tokenSocial: (tokenId: string) => `odin.token.${tokenId}.social`,
-  tokenFavorites: (tokenId: string) => `odin.token.${tokenId}.favorites`,
-  tokenCreation: (tokenId: string) => `odin.token.${tokenId}.creation`,
-  tokenAnalytics: (tokenId: string) => `odin.token.${tokenId}.analytics`,
-  tokenBalances: (tokenId: string) => `odin.token.${tokenId}.balances`,
+  // Coarse-grained token channel (all events for a token)
+  token: (tokenId: string) => `odin.token.${tokenId}`,
 
-  // Legacy subjects (DEPRECATED - kept for backwards compatibility during migration)
-  tokenPrice: (tokenId: string) => `odin.token.${tokenId}.price`,
-  tokenVolume: (tokenId: string) => `odin.token.${tokenId}.volume`,
-  tokenHolders: (tokenId: string) => `odin.token.${tokenId}.holders`,
+  // User-specific channel (all events for a user)
+  user: (userId: string) => `odin.user.${userId}`,
 
-  // Batch updates from scheduler
-  batchUpdate: 'odin.token.batch.update',
-
-  // Real-time trade events (legacy format)
-  trades: (tokenId: string) => `odin.trades.${tokenId}`,
-  userTrades: (userId: string) => `odin.trades.user.${userId}`,
-
-  // Market-wide statistics
-  marketStats: 'odin.market.statistics',
-
-  // System events
-  systemHealth: 'odin.system.health',
-  connectionState: 'odin.connection.state',
+  // Global channel (system-wide events: market stats, health, etc.)
+  global: 'odin.global',
 };
 
 // Performance metrics configuration

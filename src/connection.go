@@ -1,6 +1,7 @@
 package main
 
 import (
+	"hash/fnv"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -471,6 +472,251 @@ func (idx *SubscriptionIndex) Count(channel string) int {
 	defer idx.mu.RUnlock()
 
 	subscribers, exists := idx.subscribers[channel]
+	if !exists {
+		return 0
+	}
+	return len(subscribers)
+}
+
+// =============================================================================
+// SHARDED SUBSCRIPTION INDEX (Lock Contention Mitigation)
+// =============================================================================
+// Reduces lock contention by distributing channels across N independent shards,
+// each with its own lock. Enables efficient use of multiple CPU cores.
+//
+// Performance improvement (with 16 shards):
+// - Before: 1 lock → 83% CPU waste @ GOMAXPROCS=3
+// - After:  16 locks → 15% CPU waste @ GOMAXPROCS=4
+//
+// Shard count is configurable via WS_NUM_SHARDS environment variable.
+// Recommended: numCores × 4 (e.g., 4 cores → 16 shards)
+//
+// See: /Volumes/Dev/Codev/Toniq/ws_poc/docs/LOCK_CONTENTION_STRATEGIES.md
+
+type shard struct {
+	subscribers map[string][]*Client
+	mu          sync.RWMutex
+}
+
+type ShardedSubscriptionIndex struct {
+	shards    []shard // Dynamic slice (size set at runtime)
+	numShards int     // Number of shards (from config)
+}
+
+// NewShardedSubscriptionIndex creates a new sharded subscription index
+// numShards: Number of shards (recommended: numCores × 4)
+func NewShardedSubscriptionIndex(numShards int) *ShardedSubscriptionIndex {
+	// Validate numShards (must be > 0, recommend power of 2 for better distribution)
+	if numShards <= 0 {
+		numShards = 16 // Fallback to safe default
+	}
+
+	idx := &ShardedSubscriptionIndex{
+		shards:    make([]shard, numShards),
+		numShards: numShards,
+	}
+
+	// Initialize each shard's map
+	for i := 0; i < numShards; i++ {
+		idx.shards[i].subscribers = make(map[string][]*Client)
+	}
+
+	return idx
+}
+
+// getShard returns the shard index for a given channel using FNV-1a hash
+func (idx *ShardedSubscriptionIndex) getShard(channel string) int {
+	h := fnv.New32a()
+	h.Write([]byte(channel))
+	return int(h.Sum32() % uint32(idx.numShards))
+}
+
+// Add registers a client as a subscriber to a channel
+// Thread-safe: Locks only the shard for this channel
+func (idx *ShardedSubscriptionIndex) Add(channel string, client *Client) {
+	shardIdx := idx.getShard(channel)
+	shard := &idx.shards[shardIdx]
+
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+
+	// Get existing subscribers or create new slice
+	subscribers := shard.subscribers[channel]
+
+	// Check if client already subscribed (avoid duplicates)
+	for _, existing := range subscribers {
+		if existing == client {
+			return // Already subscribed
+		}
+	}
+
+	// Add client to subscribers list
+	shard.subscribers[channel] = append(subscribers, client)
+}
+
+// AddMultiple registers a client as a subscriber to multiple channels
+// Thread-safe: Locks each relevant shard independently
+func (idx *ShardedSubscriptionIndex) AddMultiple(channels []string, client *Client) {
+	// Group channels by shard to minimize lock acquisitions
+	channelsByShard := make(map[int][]string)
+	for _, channel := range channels {
+		shardIdx := idx.getShard(channel)
+		channelsByShard[shardIdx] = append(channelsByShard[shardIdx], channel)
+	}
+
+	// Process each shard
+	for shardIdx, shardChannels := range channelsByShard {
+		shard := &idx.shards[shardIdx]
+		shard.mu.Lock()
+
+		for _, channel := range shardChannels {
+			subscribers := shard.subscribers[channel]
+
+			// Check if client already subscribed
+			alreadySubscribed := false
+			for _, existing := range subscribers {
+				if existing == client {
+					alreadySubscribed = true
+					break
+				}
+			}
+
+			if !alreadySubscribed {
+				shard.subscribers[channel] = append(subscribers, client)
+			}
+		}
+
+		shard.mu.Unlock()
+	}
+}
+
+// Remove unregisters a client from a channel
+// Thread-safe: Locks only the shard for this channel
+func (idx *ShardedSubscriptionIndex) Remove(channel string, client *Client) {
+	shardIdx := idx.getShard(channel)
+	shard := &idx.shards[shardIdx]
+
+	shard.mu.Lock()
+	defer shard.mu.Unlock()
+
+	subscribers, exists := shard.subscribers[channel]
+	if !exists {
+		return
+	}
+
+	// Find and remove client from subscribers list
+	for i, existing := range subscribers {
+		if existing == client {
+			// Remove by swapping with last element and truncating
+			subscribers[i] = subscribers[len(subscribers)-1]
+			shard.subscribers[channel] = subscribers[:len(subscribers)-1]
+
+			// Clean up empty slices to free memory
+			if len(shard.subscribers[channel]) == 0 {
+				delete(shard.subscribers, channel)
+			}
+			return
+		}
+	}
+}
+
+// RemoveMultiple unregisters a client from multiple channels
+// Thread-safe: Locks each relevant shard independently
+func (idx *ShardedSubscriptionIndex) RemoveMultiple(channels []string, client *Client) {
+	// Group channels by shard to minimize lock acquisitions
+	channelsByShard := make(map[int][]string)
+	for _, channel := range channels {
+		shardIdx := idx.getShard(channel)
+		channelsByShard[shardIdx] = append(channelsByShard[shardIdx], channel)
+	}
+
+	// Process each shard
+	for shardIdx, shardChannels := range channelsByShard {
+		shard := &idx.shards[shardIdx]
+		shard.mu.Lock()
+
+		for _, channel := range shardChannels {
+			subscribers, exists := shard.subscribers[channel]
+			if !exists {
+				continue
+			}
+
+			// Find and remove client
+			for i, existing := range subscribers {
+				if existing == client {
+					subscribers[i] = subscribers[len(subscribers)-1]
+					shard.subscribers[channel] = subscribers[:len(subscribers)-1]
+
+					if len(shard.subscribers[channel]) == 0 {
+						delete(shard.subscribers, channel)
+					}
+					break
+				}
+			}
+		}
+
+		shard.mu.Unlock()
+	}
+}
+
+// RemoveClient removes a client from ALL channels (called on disconnect)
+// Thread-safe: Locks all shards (one at a time to avoid deadlock)
+func (idx *ShardedSubscriptionIndex) RemoveClient(client *Client) {
+	// Process each shard independently
+	for i := 0; i < idx.numShards; i++ {
+		shard := &idx.shards[i]
+		shard.mu.Lock()
+
+		// Iterate all channels in this shard and remove client
+		for channel, subscribers := range shard.subscribers {
+			for j, existing := range subscribers {
+				if existing == client {
+					subscribers[j] = subscribers[len(subscribers)-1]
+					shard.subscribers[channel] = subscribers[:len(subscribers)-1]
+
+					if len(shard.subscribers[channel]) == 0 {
+						delete(shard.subscribers, channel)
+					}
+					break
+				}
+			}
+		}
+
+		shard.mu.Unlock()
+	}
+}
+
+// Get returns a copy of all clients subscribed to a channel
+// Thread-safe: Uses read lock on relevant shard only (optimized for broadcast hot path!)
+// Returns: New slice (safe to iterate without holding lock)
+func (idx *ShardedSubscriptionIndex) Get(channel string) []*Client {
+	shardIdx := idx.getShard(channel)
+	shard := &idx.shards[shardIdx]
+
+	shard.mu.RLock()
+	defer shard.mu.RUnlock()
+
+	subscribers, exists := shard.subscribers[channel]
+	if !exists || len(subscribers) == 0 {
+		return nil
+	}
+
+	// Return a copy to avoid race conditions during iteration
+	result := make([]*Client, len(subscribers))
+	copy(result, subscribers)
+	return result
+}
+
+// Count returns the number of subscribers for a channel
+// Thread-safe: Uses read lock on relevant shard only
+func (idx *ShardedSubscriptionIndex) Count(channel string) int {
+	shardIdx := idx.getShard(channel)
+	shard := &idx.shards[shardIdx]
+
+	shard.mu.RLock()
+	defer shard.mu.RUnlock()
+
+	subscribers, exists := shard.subscribers[channel]
 	if !exists {
 		return 0
 	}

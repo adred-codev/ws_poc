@@ -400,9 +400,10 @@ class TokenPricePublisher {
         nonce: this.generateNonce()
       };
 
-      // Publish to NATS using hierarchical subject format
-      // Format: odin.token.{SYMBOL}.trade (e.g., odin.token.BTC.trade)
-      const subject = subjects.tokenTrade(tokenId);
+      // Publish to NATS using coarse-grained subject format
+      // Format: odin.token.{SYMBOL} (e.g., odin.token.BTC)
+      // Event type is in message payload: {type: 'price:update', ...}
+      const subject = subjects.token(tokenId);
       this.nats.publish(subject, sc.encode(JSON.stringify(priceUpdate)));
 
       this.stats.messagesPublished++;
@@ -459,7 +460,8 @@ class TokenPricePublisher {
         nonce: this.generateNonce()
       };
 
-      this.nats.publish(subjects.marketStats, sc.encode(JSON.stringify(marketStats)));
+      // Publish to global channel for system-wide events
+      this.nats.publish(subjects.global, sc.encode(JSON.stringify(marketStats)));
       console.log(`📈 Published market stats: $${(totalMarketCap / 1e9).toFixed(1)}B market cap`);
 
     } catch (error) {

@@ -1,44 +1,43 @@
 #!/usr/bin/env node
 
 /**
- * Sustained Load Test for WebSocket Server with Hierarchical Subscription Filtering
+ * Sustained Load Test for WebSocket Server with Coarse-Grained Channel Subscriptions
  *
  * Purpose: Test server stability under sustained load with realistic subscription patterns
  * - Gradual ramp-up (avoid burst rejections)
  * - Hold connections stable (no churn)
  * - Active message flow throughout
  * - Monitor metrics over time
- * - Support hierarchical channel subscriptions (BTC.trade, ETH.analytics, etc.)
+ * - Support coarse-grained channel subscriptions (token.BTC, user.alice, global)
  * - Multiple subscription distribution modes (all, single, random)
  *
- * HIERARCHICAL SUBSCRIPTION FILTERING
- * ------------------------------------
- * Each client can subscribe to specific channels (SYMBOL.EVENT_TYPE) instead of receiving all messages.
- * This tests the server's hierarchical subscription filtering which provides:
- * - 160x reduction vs no filtering (10K clients × 8 event types)
- * - 8x reduction vs symbol-only filtering (specific event type targeting)
+ * COARSE-GRAINED SUBSCRIPTION FILTERING
+ * --------------------------------------
+ * Each client can subscribe to specific channels instead of receiving all messages.
+ * Server uses sharded subscription index for efficient routing (16x lock contention reduction).
  *
- * Channel Format: {SYMBOL}.{EVENT_TYPE}
- * - EVENT_TYPES: trade, liquidity, metadata, social, favorites, creation, analytics, balances
- * - Examples: BTC.trade, ETH.liquidity, SOL.analytics
+ * Channel Format: {type}.{identifier} or global
+ * - TYPES: token, user
+ * - Examples: token.BTC (all events for BTC), user.alice (all events for user), global (system-wide)
+ * - Event types in message payload: {type: 'token:trade', tokenId: 'BTC', ...}
  *
  * Environment Variables:
- * - CHANNELS: Comma-separated list of hierarchical channels (default: BTC.trade,ETH.trade,SOL.trade,ODIN.trade,DOGE.trade)
+ * - CHANNELS: Comma-separated list of channels (default: token.BTC,token.ETH,token.SOL,token.ODIN,token.DOGE)
  * - SUBSCRIPTION_MODE: Distribution strategy - 'all', 'single', or 'random' (default: all)
  * - CHANNELS_PER_CLIENT: For 'random' mode, how many channels per client (default: 3)
  *
  * Examples:
- * - All clients subscribe to all trade channels (default):
+ * - All clients subscribe to all token channels (default):
  *   npm run test:sustained
  *
  * - Each client subscribes to ONE channel (round-robin):
  *   SUBSCRIPTION_MODE=single TARGET_CONNECTIONS=5000 npm run test:sustained
  *
- * - Each client subscribes to 2 random event types for BTC:
- *   SUBSCRIPTION_MODE=random CHANNELS=BTC.trade,BTC.liquidity,BTC.analytics CHANNELS_PER_CLIENT=2 TARGET_CONNECTIONS=5000 npm run test:sustained
+ * - Each client subscribes to 2 random channels:
+ *   SUBSCRIPTION_MODE=random CHANNELS=token.BTC,token.ETH,token.SOL CHANNELS_PER_CLIENT=2 TARGET_CONNECTIONS=5000 npm run test:sustained
  *
- * - Test mixed event types across symbols:
- *   CHANNELS=BTC.trade,ETH.trade,SOL.analytics,ODIN.social SUBSCRIPTION_MODE=random CHANNELS_PER_CLIENT=2 npm run test:sustained
+ * - Test mixed channel types:
+ *   CHANNELS=token.BTC,token.ETH,user.alice,global SUBSCRIPTION_MODE=random CHANNELS_PER_CLIENT=2 npm run test:sustained
  *
  * - Test without subscriptions (receive all messages):
  *   CHANNELS= npm run test:sustained
@@ -116,12 +115,12 @@ const CONFIG = {
   HEALTH_CHECK_INTERVAL_MS: 5000, // Check every 5 seconds
 
   // Subscription settings
-  // Hierarchical channels to subscribe to (comma-separated in env var)
-  // Format: {SYMBOL}.{EVENT_TYPE}
-  // DEFAULT: BTC.trade,ETH.trade,SOL.trade,ODIN.trade,DOGE.trade (trade events only)
-  // Example: CHANNELS=BTC.trade,ETH.liquidity,SOL.analytics npm run test:sustained
+  // Coarse-grained channels to subscribe to (comma-separated in env var)
+  // Format: token.{SYMBOL}, user.{USER_ID}, or global
+  // DEFAULT: token.BTC,token.ETH,token.SOL,token.ODIN,token.DOGE (all events for these tokens)
+  // Example: CHANNELS=token.BTC,token.ETH,user.alice npm run test:sustained
   // To test WITHOUT subscriptions (receive all): CHANNELS= npm run test:sustained
-  CHANNELS: (process.env.CHANNELS || 'BTC.trade,ETH.trade,SOL.trade,ODIN.trade,DOGE.trade').split(',').filter(c => c.trim()),
+  CHANNELS: (process.env.CHANNELS || 'token.BTC,token.ETH,token.SOL,token.ODIN,token.DOGE').split(',').filter(c => c.trim()),
 
   // Subscription distribution strategy:
   // - 'all': All clients subscribe to ALL channels (default)

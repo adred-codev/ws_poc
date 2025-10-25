@@ -219,7 +219,7 @@ func parseFlags() *Config {
 	flag.IntVar(&cfg.ConnectionTimeout, "connection-timeout", getEnvInt("CONNECTION_TIMEOUT", 10000), "Connection timeout in milliseconds")
 	flag.IntVar(&cfg.MaxConnections, "max-connections", getEnvInt("WS_MAX_CONNECTIONS", 18000), "Server max connections (for test mode detection)")
 
-	channelsStr := flag.String("channels", getEnv("CHANNELS", "BTC.trade,ETH.trade,SOL.trade,ODIN.trade,DOGE.trade"), "Comma-separated list of channels")
+	channelsStr := flag.String("channels", getEnv("CHANNELS", "token.BTC,token.ETH,token.SOL,token.ODIN,token.DOGE"), "Comma-separated list of channels (coarse-grained format)")
 	flag.StringVar(&cfg.SubscriptionMode, "subscription-mode", getEnv("SUBSCRIPTION_MODE", "all"), "Subscription mode: all, single, random")
 	flag.IntVar(&cfg.ChannelsPerClient, "channels-per-client", getEnvInt("CHANNELS_PER_CLIENT", 3), "Channels per client (for random mode)")
 
