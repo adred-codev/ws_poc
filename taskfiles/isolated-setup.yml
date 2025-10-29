@@ -1,4 +1,4 @@
-version: '3'
+version: "3"
 
 # Isolated Three-Instance Setup
 # Based on docs/INSTANCE_ISOLATION_PLAN.md
@@ -126,9 +126,9 @@ tasks:
       - gcloud compute firewall-rules list --filter="name~'isolated'"
       - echo "✅ Firewall rules configured"
 
-# ============================================================================
-# INFRASTRUCTURE - CREATE INSTANCES
-# ============================================================================
+  # ============================================================================
+  # INFRASTRUCTURE - CREATE INSTANCES
+  # ============================================================================
 
   create:ws-go:
     desc: Create dedicated ws-go instance (e2-small)
@@ -158,12 +158,32 @@ tasks:
             curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
             chmod +x /usr/local/bin/docker-compose
 
-            # TCP SYN queue tuning (handle high connection ramp rates)
-            # See: docs/production/IMPLEMENTATION_PLAN.md:1048-1120
-            sysctl -w net.ipv4.tcp_max_syn_backlog=8192
-            sysctl -w net.core.somaxconn=8192
+            # Kernel tuning for high-scale connections
+            # See docs/KERNEL_CONFIGURATION.md for details
+
+            # Docker NAT connection tracking for 15K connections
+            sysctl -w net.netfilter.nf_conntrack_max=262144
+
+            # TCP listen queue for connection bursts
+            sysctl -w net.ipv4.tcp_max_syn_backlog=16384
+            sysctl -w net.core.somaxconn=16384
+
+            # SYN cookie protection
             sysctl -w net.ipv4.tcp_syncookies=1
-            printf "net.ipv4.tcp_max_syn_backlog = 8192\nnet.core.somaxconn = 8192\nnet.ipv4.tcp_syncookies = 1\n" >> /etc/sysctl.conf
+
+            # Make kernel settings permanent
+            echo "net.netfilter.nf_conntrack_max = 262144" >> /etc/sysctl.conf
+            echo "net.ipv4.tcp_max_syn_backlog = 16384" >> /etc/sysctl.conf
+            echo "net.core.somaxconn = 16384" >> /etc/sysctl.conf
+            echo "net.ipv4.tcp_syncookies = 1" >> /etc/sysctl.conf
+
+            # File descriptor limits for 15K connections
+            echo "* soft nofile 200000" >> /etc/security/limits.conf
+            echo "* hard nofile 200000" >> /etc/security/limits.conf
+            echo "root soft nofile 200000" >> /etc/security/limits.conf
+            echo "root hard nofile 200000" >> /etc/security/limits.conf
+            echo "deploy soft nofile 200000" >> /etc/security/limits.conf
+            echo "deploy hard nofile 200000" >> /etc/security/limits.conf
 
             # Create deploy user and add to docker group
             useradd -m -s /bin/bash deploy
@@ -240,17 +260,34 @@ tasks:
             curl -fsSL https://get.docker.com -o get-docker.sh
             sh get-docker.sh
 
-            # TCP tuning for high connection count load testing
-            # See: docs/production/IMPLEMENTATION_PLAN.md:1144-1276
-            # Increase ephemeral port range (28K → 64K ports)
-            sysctl -w net.ipv4.ip_local_port_range="1024 65535"
-            # Enable TIME_WAIT socket reuse (critical for high connection tests)
+            # Kernel tuning for high-scale client connections
+            # See docs/KERNEL_CONFIGURATION.md for details
+
+            # Ephemeral port range for 15K outbound connections
+            sysctl -w net.ipv4.ip_local_port_range="10000 65000"
+
+            # TIME_WAIT socket reuse for rapid connection cycling
             sysctl -w net.ipv4.tcp_tw_reuse=1
-            # Reduce TIME_WAIT timeout (4x faster cleanup)
+
+            # TIME_WAIT timeout reduction for faster cleanup
             sysctl -w net.ipv4.tcp_fin_timeout=15
-            # Increase connection tracking table
+
+            # Connection tracking table size
             sysctl -w net.netfilter.nf_conntrack_max=200000
-            printf "net.ipv4.ip_local_port_range = 1024 65535\nnet.ipv4.tcp_tw_reuse = 1\nnet.ipv4.tcp_fin_timeout = 15\nnet.netfilter.nf_conntrack_max = 200000\n" >> /etc/sysctl.conf
+
+            # Make kernel settings permanent
+            echo "net.ipv4.ip_local_port_range = 10000 65000" >> /etc/sysctl.conf
+            echo "net.ipv4.tcp_tw_reuse = 1" >> /etc/sysctl.conf
+            echo "net.ipv4.tcp_fin_timeout = 15" >> /etc/sysctl.conf
+            echo "net.netfilter.nf_conntrack_max = 200000" >> /etc/sysctl.conf
+
+            # File descriptor limits for 15K connections
+            echo "* soft nofile 200000" >> /etc/security/limits.conf
+            echo "* hard nofile 200000" >> /etc/security/limits.conf
+            echo "root soft nofile 200000" >> /etc/security/limits.conf
+            echo "root hard nofile 200000" >> /etc/security/limits.conf
+            echo "deploy soft nofile 200000" >> /etc/security/limits.conf
+            echo "deploy hard nofile 200000" >> /etc/security/limits.conf
 
             # Create deploy user and add to docker group
             useradd -m -s /bin/bash deploy
@@ -277,9 +314,9 @@ tasks:
       - echo "🎉 All instances created!"
       - task: info:all
 
-# ============================================================================
-# DEPLOYMENT - COPY FILES & START SERVICES
-# ============================================================================
+  # ============================================================================
+  # DEPLOYMENT - COPY FILES & START SERVICES
+  # ============================================================================
 
   deploy:ws-go:
     desc: Deploy ws-go service to dedicated instance
@@ -397,9 +434,9 @@ tasks:
       - gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo docker build -t ws-test-runner-go /home/deploy/test-runner-go'
       - echo "✅ Go test runner deployed and built"
 
-# ============================================================================
-# HEALTH & STATUS
-# ============================================================================
+  # ============================================================================
+  # HEALTH & STATUS
+  # ============================================================================
 
   health:ws-go:
     desc: Check ws-go health
@@ -506,9 +543,9 @@ tasks:
       - echo "📡 Publisher:"
       - echo "http://{{.BACKEND_EXTERNAL_IP}}:3003"
 
-# ============================================================================
-# SSH & LOGS
-# ============================================================================
+  # ============================================================================
+  # SSH & LOGS
+  # ============================================================================
 
   ssh:ws-go:
     desc: SSH into ws-go instance
@@ -540,9 +577,9 @@ tasks:
     cmds:
       - gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo docker logs -f odin-prometheus'
 
-# ============================================================================
-# PUBLISHER CONTROL
-# ============================================================================
+  # ============================================================================
+  # PUBLISHER CONTROL
+  # ============================================================================
 
   publisher:health:
     desc: Check publisher health
@@ -585,9 +622,9 @@ tasks:
       - echo ""
       - echo "✅ Publisher started (50 messages/sec - high rate)"
 
-# ============================================================================
-# TESTING
-# ============================================================================
+  # ============================================================================
+  # TESTING
+  # ============================================================================
 
   test:connection:
     desc: Test WebSocket connection
@@ -626,6 +663,10 @@ tasks:
       - echo "🧪 Running light load test remotely (Go)..."
       - |
         gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo docker run --rm \
+          --ulimit nofile=200000:200000 \
+          --sysctl net.ipv4.ip_local_port_range="10000 65000" \
+          --sysctl net.ipv4.tcp_tw_reuse=1 \
+          --sysctl net.ipv4.tcp_fin_timeout=15 \
           -e WS_URL=ws://{{.WS_GO_INTERNAL_IP}}:3004/ws \
           -e HEALTH_URL=http://{{.WS_GO_INTERNAL_IP}}:3004/health \
           -e WS_MAX_CONNECTIONS=7000 \
@@ -639,6 +680,10 @@ tasks:
       - echo "🧪 Running medium load test remotely (Go)..."
       - |
         gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo docker run --rm \
+          --ulimit nofile=200000:200000 \
+          --sysctl net.ipv4.ip_local_port_range="10000 65000" \
+          --sysctl net.ipv4.tcp_tw_reuse=1 \
+          --sysctl net.ipv4.tcp_fin_timeout=15 \
           -e WS_URL=ws://{{.WS_GO_INTERNAL_IP}}:3004/ws \
           -e HEALTH_URL=http://{{.WS_GO_INTERNAL_IP}}:3004/health \
           -e WS_MAX_CONNECTIONS=7000 \
@@ -647,16 +692,19 @@ tasks:
           ws-test-runner-go'
 
   test:remote:capacity:
-    desc: Production capacity test (12,000 connections - target, 3600s) - runs remotely with Go test runner
+    desc: Production capacity test (15,000 connections - target, 3600s) - runs remotely with Go test runner
     cmds:
       - echo "🧪 Running production capacity test remotely (Go)..."
       - |
         gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo docker run --rm \
           --ulimit nofile=200000:200000 \
+          --sysctl net.ipv4.ip_local_port_range="10000 65000" \
+          --sysctl net.ipv4.tcp_tw_reuse=1 \
+          --sysctl net.ipv4.tcp_fin_timeout=15 \
           -e WS_URL=ws://{{.WS_GO_INTERNAL_IP}}:3004/ws \
           -e HEALTH_URL=http://{{.WS_GO_INTERNAL_IP}}:3004/health \
-          -e WS_MAX_CONNECTIONS=12000 \
-          -e TARGET_CONNECTIONS=12000 \
+          -e WS_MAX_CONNECTIONS=15000 \
+          -e TARGET_CONNECTIONS=15000 \
           -e DURATION=3600 \
           ws-test-runner-go'
 
@@ -667,6 +715,9 @@ tasks:
       - |
         gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo docker run --rm \
           --ulimit nofile=200000:200000 \
+          --sysctl net.ipv4.ip_local_port_range="10000 65000" \
+          --sysctl net.ipv4.tcp_tw_reuse=1 \
+          --sysctl net.ipv4.tcp_fin_timeout=15 \
           -e WS_URL=ws://{{.WS_GO_INTERNAL_IP}}:3004/ws \
           -e HEALTH_URL=http://{{.WS_GO_INTERNAL_IP}}:3004/health \
           -e WS_MAX_CONNECTIONS=7000 \
@@ -734,6 +785,10 @@ tasks:
       - echo "🔌 Running remote connection capacity test (5000 connections, no messages)..."
       - |
         gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo docker run --rm \
+          --ulimit nofile=200000:200000 \
+          --sysctl net.ipv4.ip_local_port_range="10000 65000" \
+          --sysctl net.ipv4.tcp_tw_reuse=1 \
+          --sysctl net.ipv4.tcp_fin_timeout=15 \
           -e WS_URL=ws://{{.WS_GO_INTERNAL_IP}}:3004/ws \
           -e TARGET_CONNECTIONS=5000 \
           -e DURATION=300 \
@@ -745,6 +800,10 @@ tasks:
       - echo "🔌 Running remote connection capacity test (10000 connections, no messages)..."
       - |
         gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo docker run --rm \
+          --ulimit nofile=200000:200000 \
+          --sysctl net.ipv4.ip_local_port_range="10000 65000" \
+          --sysctl net.ipv4.tcp_tw_reuse=1 \
+          --sysctl net.ipv4.tcp_fin_timeout=15 \
           -e WS_URL=ws://{{.WS_GO_INTERNAL_IP}}:3004/ws \
           -e TARGET_CONNECTIONS=10000 \
           -e DURATION=300 \
@@ -757,14 +816,40 @@ tasks:
       - |
         gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo docker run --rm \
           --ulimit nofile=200000:200000 \
+          --sysctl net.ipv4.ip_local_port_range="10000 65000" \
+          --sysctl net.ipv4.tcp_tw_reuse=1 \
+          --sysctl net.ipv4.tcp_fin_timeout=15 \
           -e WS_URL=ws://{{.WS_GO_INTERNAL_IP}}:3004/ws \
           -e TARGET_CONNECTIONS=7000 \
           -e DURATION=600 \
           ws-test-runner node test-connection-rate.cjs'
 
-# ============================================================================
-# RESTART & UPDATE
-# ============================================================================
+  test:validate:100:
+    desc: CONNECTION HEALTH VALIDATION - 100 connections with bidirectional health checks (5 min)
+    cmds:
+      - echo "🔍 Running 100-connection health validation test..."
+      - echo "   - Bidirectional message flow (client ↔ server)"
+      - echo "   - Heartbeat verification (both directions)"
+      - echo "   - TCP state validation every 5 seconds"
+      - echo "   - Phantom detection (reported vs TCP)"
+      - echo ""
+      - cd scripts && go run connection-health-validator.go
+
+  test:validate:1k:
+    desc: "CONNECTION HEALTH VALIDATION - 1000 connections with phantom detection (10 min)"
+    cmds:
+      - echo "🔍 Running 1K-connection health validation test..."
+      - echo "   - Scale test 1000 concurrent connections"
+      - echo "   - Ramp rate 100 connections/sec (10s ramp)"
+      - echo "   - TCP state validation every 10 seconds"
+      - echo "   - Phantom threshold 20 connections (2%)"
+      - echo "   - Duration 10 minutes"
+      - echo ""
+      - cd scripts && go run connection-health-validator-1k.go
+
+  # ============================================================================
+  # RESTART & UPDATE
+  # ============================================================================
 
   restart:ws-go:
     desc: Restart ws-go service
@@ -795,6 +880,38 @@ tasks:
       - task: restart:test-runner
       - echo "✅ All services restarted"
 
+  restart:clean:
+    desc: "Restart everything with clean slate (stops tests, restarts all services, clears phantoms)"
+    cmds:
+      - echo "🧹 CLEAN RESTART - Stopping all tests and restarting all services"
+      - echo ""
+      - echo "1️⃣  Stopping any running tests on test-runner..."
+      - gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo pkill -9 -f 'sustained-load-test|stress-test|validator' || echo 'No tests running'"
+      - echo ""
+      - echo "2️⃣  Restarting backend services (NATS, Prometheus, Grafana, Loki)..."
+      - gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo docker compose -f /home/deploy/ws_poc/docker-compose.yml restart"
+      - sleep 5
+      - echo ""
+      - echo "3️⃣  Stopping publisher..."
+      - task: publisher:stop
+      - echo ""
+      - echo "4️⃣  Restarting ws-go (clears all connections)..."
+      - gcloud compute ssh {{.WS_GO_INSTANCE}} --zone={{.GCP_ZONE}} --command="sudo docker compose -f /home/deploy/ws_poc/docker-compose.yml restart"
+      - sleep 10
+      - echo ""
+      - echo "5️⃣  Verifying clean slate..."
+      - task: health:ws-go
+      - echo ""
+      - echo "6️⃣  Starting publisher..."
+      - task: publisher:start
+      - echo ""
+      - echo "✅ CLEAN RESTART COMPLETE"
+      - echo ""
+      - echo "📊 Current State:"
+      - curl -s http://{{.WS_GO_EXTERNAL_IP}}:3004/health | jq '.checks.capacity'
+      - echo ""
+      - echo "🚀 Ready for testing! All phantoms cleared."
+
   update:ws-go:
     desc: Update ws-go code and restart
     cmds:
@@ -811,9 +928,9 @@ tasks:
       - echo "📝 Updating ws-go configuration..."
       - task: deploy:ws-go
 
-# ============================================================================
-# CLEANUP
-# ============================================================================
+  # ============================================================================
+  # CLEANUP
+  # ============================================================================
 
   stop:ws-go:
     desc: Stop ws-go service (keep instance running)

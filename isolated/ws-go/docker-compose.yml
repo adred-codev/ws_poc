@@ -43,6 +43,9 @@ services:
       nofile:
         soft: 200000
         hard: 200000
+    sysctls:
+      - net.core.somaxconn=16384
+      - net.ipv4.tcp_max_syn_backlog=16384
 
   promtail:
     image: grafana/promtail:3.3.2
@@ -58,4 +61,3 @@ services:
         limits:
           cpus: "1.0"
           memory: 512M # Increased for better log shipping performance
-

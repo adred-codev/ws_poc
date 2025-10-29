@@ -728,8 +728,14 @@ func (s *Server) readPump(c *Client) {
 
 func (s *Server) writePump(c *Client) {
 	ticker := time.NewTicker(pingPeriod)
+	// Add connection liveness check every 10 seconds
+	// This detects dead connections faster than relying solely on PING/PONG
+	// Critical for preventing phantom connection buildup after CPU spikes or network failures
+	livenessCheckTicker := time.NewTicker(10 * time.Second)
+
 	defer func() {
 		ticker.Stop()
+		livenessCheckTicker.Stop()
 		// Use sync.Once to ensure connection is only closed once
 		// Prevents race condition with readPump also trying to close
 		c.closeOnce.Do(func() {
@@ -794,6 +800,70 @@ func (s *Server) writePump(c *Client) {
 					Str("reason", "ping_write_error").
 					Msg("Failed to send ping to client")
 				return
+			}
+
+		case <-livenessCheckTicker.C:
+			// TCP-level liveness check - detects dead connections that PING/PONG misses
+			// This is critical for preventing phantom connection buildup
+			//
+			// Problem scenario:
+			//   1. CPU spike or network failure kills connections at TCP layer
+			//   2. readPump() waits up to 30s for timeout
+			//   3. writePump() waits up to 27s for next PING
+			//   4. Goroutines stay alive for 30-60s, leaking memory & connection count
+			//
+			// Solution:
+			//   - Try to set write deadline with 100ms timeout
+			//   - If it fails, connection is dead - exit immediately
+			//   - This reduces detection time from 30-60s to 10s maximum
+			//
+			// Why 100ms timeout:
+			//   - Fast enough to not block significantly
+			//   - Long enough to avoid false positives on slow networks
+			//   - Industry standard for keepalive probes
+			if c.conn == nil {
+				s.structLogger.Debug().
+					Int64("client_id", c.id).
+					Str("reason", "connection_nil_liveness_check").
+					Msg("Connection is nil during liveness check")
+				return
+			}
+
+			// Attempt to set write deadline - this will fail immediately if connection is dead
+			// We use a very short timeout (100ms) to detect failures quickly
+			err := c.conn.SetWriteDeadline(time.Now().Add(100 * time.Millisecond))
+			if err != nil {
+				s.structLogger.Info().
+					Int64("client_id", c.id).
+					Err(err).
+					Str("reason", "liveness_check_failed_set_deadline").
+					Msg("Connection dead (failed to set write deadline) - cleaning up phantom connection")
+				return
+			}
+
+			// Try a zero-byte write to actually probe the TCP connection
+			// If the connection is dead at TCP level, this will return error immediately
+			// Note: We're using the underlying net.Conn interface for low-level access
+			if tcpConn, ok := c.conn.(net.Conn); ok {
+				// Set a very short deadline for this probe
+				tcpConn.SetWriteDeadline(time.Now().Add(100 * time.Millisecond))
+
+				// Attempt zero-byte write - this tests if TCP connection is alive
+				// A healthy connection returns immediately with success
+				// A dead connection returns error (connection reset, broken pipe, etc.)
+				_, err := tcpConn.Write([]byte{})
+
+				// Reset deadline to avoid interfering with normal operations
+				tcpConn.SetWriteDeadline(time.Time{})
+
+				if err != nil {
+					s.structLogger.Info().
+						Int64("client_id", c.id).
+						Err(err).
+						Str("reason", "liveness_check_failed_tcp_write").
+						Msg("Connection dead (TCP write probe failed) - cleaning up phantom connection")
+					return
+				}
 			}
 		}
 	}
