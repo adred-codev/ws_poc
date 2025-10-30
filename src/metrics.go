@@ -197,7 +197,7 @@ func NewMetricsCollector(server *Server) *MetricsCollector {
 // Start begins collecting metrics periodically
 func (m *MetricsCollector) Start() {
 	// Set static metrics
-	connectionsMax.Set(float64(2184)) // From our memory calculation
+	connectionsMax.Set(float64(m.server.config.MaxConnections))
 
 	// Get memory limit from cgroup
 	memLimit, err := getMemoryLimit()
