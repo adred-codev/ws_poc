@@ -88,7 +88,7 @@ type Server struct {
 	connections       *ConnectionPool
 	clients           sync.Map // map[*Client]bool
 	clientCount       int64
-	connectionsSem    chan struct{} // Semaphore for max connections
+	connectionsSem    chan struct{}      // Semaphore for max connections
 	subscriptionIndex *SubscriptionIndex // Fast lookup: channel → subscribers (93% CPU savings!)
 
 	// Performance optimization
@@ -957,11 +957,15 @@ func (s *Server) broadcast(subject string, message []byte) {
 			// - Too low (1-2): False positives from brief network hiccups
 			// - Too high (5+): Slow client wastes resources too long
 			if attempts >= 3 {
-				s.logger.Printf("❌ Disconnecting client %d (too slow: %d consecutive send failures)", client.id, attempts)
+				// CRITICAL FIX: Capture client ID before any operations that might trigger cleanup
+				// Prevents race condition where Put() resets client.id to 0 before logging
+				clientID := client.id
+
+				s.logger.Printf("❌ Disconnecting client %d (too slow: %d consecutive send failures)", clientID, attempts)
 
 				// Audit log slow client disconnection
 				s.auditLogger.Warning("SlowClientDisconnected", "Client disconnected for being too slow", map[string]any{
-					"clientID":         client.id,
+					"clientID":         clientID,
 					"consecutiveFails": attempts,
 				})
 

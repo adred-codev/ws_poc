@@ -9,8 +9,8 @@ services:
     image: nats:2.12-alpine
     container_name: odin-nats
     ports:
-      - "0.0.0.0:4222:4222"    # Exposed for remote ws-go connection
-      - "127.0.0.1:8222:8222"  # Monitoring (local only)
+      - "0.0.0.0:4222:4222" # Exposed for remote ws-go connection
+      - "127.0.0.1:8222:8222" # Monitoring (local only)
     command:
       - "--jetstream"
       - "--store_dir=/data"
@@ -50,6 +50,7 @@ services:
       - "127.0.0.1:9091:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./alert-rules.yml:/etc/prometheus/alert-rules.yml
       - prometheus_data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
@@ -87,7 +88,7 @@ services:
     image: grafana/loki:3.3.2
     container_name: odin-loki
     ports:
-      - "0.0.0.0:3100:3100"  # Exposed for remote Promtail (ws-go instance)
+      - "0.0.0.0:3100:3100" # Exposed for remote Promtail (ws-go instance)
     volumes:
       - ./loki-config.yml:/etc/loki/loki-config.yml
       - loki_data:/loki

@@ -1,0 +1,81 @@
+groups:
+  - name: websocket_broadcast_alerts
+    interval: 30s
+    rules:
+      # Warning: Moderate broadcast drop rate
+      - alert: HighBroadcastDropRate
+        expr: rate(ws_dropped_broadcasts_total[5m]) > 1
+        for: 5m
+        labels:
+          severity: warning
+          component: worker_pool
+        annotations:
+          summary: "Worker pool dropping broadcasts ({{ $value | humanize }} drops/sec)"
+          description: "The worker pool is dropping {{ $value | humanize }} broadcasts per second over the last 5 minutes. This indicates the system is approaching capacity limits. Dropped broadcasts are redelivered by NATS within 30 seconds, but users may experience delays.\n\nCurrent drop rate: {{ $value | humanize }}/sec\nRecommendation: Monitor queue utilization and consider scaling CPU cores if sustained."
+          dashboard: "http://grafana:3010/d/websocket"
+
+      # Critical: High broadcast drop rate
+      - alert: CriticalBroadcastDropRate
+        expr: rate(ws_dropped_broadcasts_total[2m]) > 10
+        for: 2m
+        labels:
+          severity: critical
+          component: worker_pool
+        annotations:
+          summary: "CRITICAL: {{ $value | humanize }} broadcasts/sec dropped"
+          description: "The worker pool is dropping {{ $value | humanize }} broadcasts per second. This is a critical rate that may overwhelm NATS redelivery mechanisms.\n\nImmediate action required:\n1. Check CPU usage (may be throttled)\n2. Check worker queue depth (likely at 100%)\n3. Scale CPU cores or reduce connections\n\nUsers experiencing significant delays (up to 30 seconds)."
+          dashboard: "http://grafana:3010/d/websocket"
+
+      # Warning: Worker queue filling up (leading indicator)
+      - alert: WorkerQueueNearCapacity
+        expr: ws_worker_queue_utilization_percent > 80
+        for: 3m
+        labels:
+          severity: warning
+          component: worker_pool
+        annotations:
+          summary: "Worker queue at {{ $value | humanize }}% capacity"
+          description: "The worker pool queue is {{ $value | humanize }}% full. This is a leading indicator of imminent broadcast drops.\n\nQueue depth: {{ query \"ws_worker_queue_depth\" | first | value | humanize }} tasks\nQueue capacity: {{ query \"ws_worker_queue_capacity\" | first | value | humanize }} tasks\n\nAction: Prepare to scale CPU cores if utilization continues to rise."
+          dashboard: "http://grafana:3010/d/websocket"
+
+      # Critical: Worker queue saturated
+      - alert: WorkerQueueSaturated
+        expr: ws_worker_queue_utilization_percent > 95
+        for: 1m
+        labels:
+          severity: critical
+          component: worker_pool
+        annotations:
+          summary: "Worker queue SATURATED at {{ $value | humanize }}%"
+          description: "The worker pool queue is {{ $value | humanize }}% full. Broadcast drops are occurring or imminent.\n\nImmediate actions:\n1. Check if broadcasts are being dropped (ws_dropped_broadcasts_total)\n2. Increase CPU cores immediately\n3. Consider reducing connection count as temporary measure\n\nThis is an emergency condition."
+          dashboard: "http://grafana:3010/d/websocket"
+
+      # Warning: High percentage of broadcasts dropped
+      - alert: HighBroadcastDropPercentage
+        expr: |
+          (
+            rate(ws_dropped_broadcasts_total[5m]) /
+            (rate(ws_nats_messages_received_total[5m]) + rate(ws_dropped_broadcasts_total[5m]))
+          ) * 100 > 10
+        for: 5m
+        labels:
+          severity: warning
+          component: worker_pool
+        annotations:
+          summary: "{{ $value | humanize }}% of broadcasts being dropped"
+          description: "{{ $value | humanize }}% of all broadcasts are being dropped. While NATS redelivers these messages, this indicates severe capacity constraints.\n\nDrop percentage: {{ $value | humanize }}%\nRecommendation: This sustained drop rate suggests you need to:\n- Scale to 2-3 CPU cores, OR\n- Reduce connection count to 12K, OR\n- Accept 0-30 second message delays"
+          dashboard: "http://grafana:3010/d/websocket"
+
+  - name: websocket_capacity_alerts
+    interval: 30s
+    rules:
+      # Info: Worker pool capacity baseline
+      - alert: WorkerPoolMetricsAvailable
+        expr: ws_worker_queue_capacity > 0
+        for: 1m
+        labels:
+          severity: info
+          component: monitoring
+        annotations:
+          summary: "Worker pool metrics available"
+          description: "Worker pool monitoring is active. Queue capacity: {{ $value | humanize }} tasks"

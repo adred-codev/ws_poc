@@ -1,4 +1,4 @@
-version: '3'
+version: "3"
 
 # Isolated Three-Instance Setup
 # Based on docs/INSTANCE_ISOLATION_PLAN.md
@@ -126,9 +126,9 @@ tasks:
       - gcloud compute firewall-rules list --filter="name~'isolated'"
       - echo "✅ Firewall rules configured"
 
-# ============================================================================
-# INFRASTRUCTURE - CREATE INSTANCES
-# ============================================================================
+  # ============================================================================
+  # INFRASTRUCTURE - CREATE INSTANCES
+  # ============================================================================
 
   create:ws-go:
     desc: Create dedicated ws-go instance (e2-small)
@@ -277,9 +277,9 @@ tasks:
       - echo "🎉 All instances created!"
       - task: info:all
 
-# ============================================================================
-# DEPLOYMENT - COPY FILES & START SERVICES
-# ============================================================================
+  # ============================================================================
+  # DEPLOYMENT - COPY FILES & START SERVICES
+  # ============================================================================
 
   deploy:ws-go:
     desc: Deploy ws-go service to dedicated instance
@@ -397,9 +397,9 @@ tasks:
       - gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo docker build -t ws-test-runner-go /home/deploy/test-runner-go'
       - echo "✅ Go test runner deployed and built"
 
-# ============================================================================
-# HEALTH & STATUS
-# ============================================================================
+  # ============================================================================
+  # HEALTH & STATUS
+  # ============================================================================
 
   health:ws-go:
     desc: Check ws-go health
@@ -506,9 +506,9 @@ tasks:
       - echo "📡 Publisher:"
       - echo "http://{{.BACKEND_EXTERNAL_IP}}:3003"
 
-# ============================================================================
-# SSH & LOGS
-# ============================================================================
+  # ============================================================================
+  # SSH & LOGS
+  # ============================================================================
 
   ssh:ws-go:
     desc: SSH into ws-go instance
@@ -540,9 +540,9 @@ tasks:
     cmds:
       - gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo docker logs -f odin-prometheus'
 
-# ============================================================================
-# PUBLISHER CONTROL
-# ============================================================================
+  # ============================================================================
+  # PUBLISHER CONTROL
+  # ============================================================================
 
   publisher:health:
     desc: Check publisher health
@@ -585,9 +585,9 @@ tasks:
       - echo ""
       - echo "✅ Publisher started (50 messages/sec - high rate)"
 
-# ============================================================================
-# TESTING
-# ============================================================================
+  # ============================================================================
+  # TESTING
+  # ============================================================================
 
   test:connection:
     desc: Test WebSocket connection
@@ -647,7 +647,7 @@ tasks:
           ws-test-runner-go'
 
   test:remote:capacity:
-    desc: Production capacity test (12,000 connections - target, 3600s) - runs remotely with Go test runner
+    desc: Production capacity test (15,000 connections - target, 3600s) - runs remotely with Go test runner
     cmds:
       - echo "🧪 Running production capacity test remotely (Go)..."
       - |
@@ -655,8 +655,8 @@ tasks:
           --ulimit nofile=200000:200000 \
           -e WS_URL=ws://{{.WS_GO_INTERNAL_IP}}:3004/ws \
           -e HEALTH_URL=http://{{.WS_GO_INTERNAL_IP}}:3004/health \
-          -e WS_MAX_CONNECTIONS=12000 \
-          -e TARGET_CONNECTIONS=12000 \
+          -e WS_MAX_CONNECTIONS=15000 \
+          -e TARGET_CONNECTIONS=15000 \
           -e DURATION=3600 \
           ws-test-runner-go'
 
@@ -762,9 +762,9 @@ tasks:
           -e DURATION=600 \
           ws-test-runner node test-connection-rate.cjs'
 
-# ============================================================================
-# RESTART & UPDATE
-# ============================================================================
+  # ============================================================================
+  # RESTART & UPDATE
+  # ============================================================================
 
   restart:ws-go:
     desc: Restart ws-go service
@@ -811,9 +811,9 @@ tasks:
       - echo "📝 Updating ws-go configuration..."
       - task: deploy:ws-go
 
-# ============================================================================
-# CLEANUP
-# ============================================================================
+  # ============================================================================
+  # CLEANUP
+  # ============================================================================
 
   stop:ws-go:
     desc: Stop ws-go service (keep instance running)

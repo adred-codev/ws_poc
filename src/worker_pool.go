@@ -200,3 +200,30 @@ func (wp *WorkerPool) Stop() {
 func (wp *WorkerPool) GetDroppedTasks() int64 {
 	return atomic.LoadInt64(&wp.droppedTasks)
 }
+
+// GetQueueDepth returns the current number of tasks waiting in the queue.
+// This is a leading indicator of worker pool saturation.
+//
+// Queue depth interpretation:
+//   - 0-50%: Healthy - workers keeping up with load
+//   - 50-80%: Warning - approaching capacity
+//   - 80-95%: Critical - very close to dropping tasks
+//   - 95-100%: Emergency - drops imminent or occurring
+//
+// Use for:
+//   - Grafana monitoring (real-time queue depth graph)
+//   - Auto-scaling triggers (scale up when > 80%)
+//   - Capacity planning (trending over time)
+//
+// Thread safety: Safe for concurrent use (channel len is atomic operation).
+func (wp *WorkerPool) GetQueueDepth() int {
+	return len(wp.taskQueue)
+}
+
+// GetQueueCapacity returns the maximum queue size.
+// Used with GetQueueDepth() to calculate utilization percentage.
+//
+// Thread safety: Safe for concurrent use (channel cap is immutable).
+func (wp *WorkerPool) GetQueueCapacity() int {
+	return cap(wp.taskQueue)
+}

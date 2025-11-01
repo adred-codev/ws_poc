@@ -12,6 +12,10 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+# Alert rules
+rule_files:
+  - "/etc/prometheus/alert-rules.yml"
+
 scrape_configs:
   # WebSocket server (remote instance)
   - job_name: "ws-go"
