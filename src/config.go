@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"runtime"
 	"time"
 
 	"github.com/caarlos0/env/v11"
@@ -16,6 +17,10 @@ import (
 //	envDefault: Default value if not set
 //	required: Must be provided (no default)
 type Config struct {
+	// Architecture mode: "monolithic" or "sharded"
+	Mode      string `env:"WS_MODE" envDefault:"monolithic"`
+	NumShards int    `env:"WS_NUM_SHARDS" envDefault:"0"` // 0 = auto (2x CPU cores)
+
 	// Server basics
 	Addr    string `env:"WS_ADDR" envDefault:":3002"`
 	NATSUrl string `env:"NATS_URL" envDefault:""`
@@ -165,6 +170,16 @@ func (c *Config) Validate() error {
 // For production, use LogConfig() with structured logging
 func (c *Config) Print() {
 	fmt.Println("=== Server Configuration ===")
+	fmt.Printf("Architecture:    %s", c.Mode)
+	if c.Mode == "sharded" {
+		shards := c.NumShards
+		if shards == 0 {
+			shards = runtime.NumCPU() * 2
+		}
+		fmt.Printf(" (%d shards)\n", shards)
+	} else {
+		fmt.Println()
+	}
 	fmt.Printf("Environment:     %s\n", c.Environment)
 	fmt.Printf("Address:         %s\n", c.Addr)
 	fmt.Printf("NATS URL:        %s\n", c.NATSUrl)

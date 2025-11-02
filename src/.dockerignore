@@ -1,0 +1,9 @@
+# Exclude test utilities from Docker build (they have their own main() functions)
+# These files are kept in repo for local development: go run nats-publisher.go
+nats-publisher.go
+test-client.go
+
+# Exclude development files from Docker build
+*.md
+.git
+.gitignore

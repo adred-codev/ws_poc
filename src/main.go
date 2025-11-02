@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"flag"
+	"go-server-2/sharded"
 	"log"
 	"os"
 	"os/signal"
 	"runtime"
 	"syscall"
+	"time"
 
 	_ "go.uber.org/automaxprocs"
 )
@@ -41,61 +44,116 @@ func main() {
 	// Print human-readable config for startup logs
 	cfg.Print()
 
-	// Create and configure server with loaded configuration
-	serverConfig := ServerConfig{
-		Addr:            cfg.Addr,
-		NATSUrl:         cfg.NATSUrl,
-		MaxConnections:  cfg.MaxConnections,
-		BufferSize:      4096, // Constant
-		WorkerCount:     cfg.WorkerPoolSize,
-		WorkerQueueSize: cfg.WorkerQueueSize,
-
-		// Static resource limits (explicit from config)
-		CPULimit:    cfg.CPULimit,
-		MemoryLimit: cfg.MemoryLimit,
-
-		// Rate limiting (CRITICAL - prevents overload)
-		MaxNATSMessagesPerSec: cfg.MaxNATSRate,
-		MaxBroadcastsPerSec:   cfg.MaxBroadcastRate,
-		MaxGoroutines:         cfg.MaxGoroutines,
-
-		// Safety thresholds (emergency brakes)
-		CPURejectThreshold: cfg.CPURejectThreshold,
-		CPUPauseThreshold:  cfg.CPUPauseThreshold,
-
-		// JetStream configuration
-		JSStreamMaxAge:    cfg.JSStreamMaxAge,
-		JSStreamMaxMsgs:   cfg.JSStreamMaxMsgs,
-		JSStreamMaxBytes:  cfg.JSStreamMaxBytes,
-		JSConsumerAckWait: cfg.JSConsumerAckWait,
-		JSStreamName:      cfg.JSStreamName,
-		JSConsumerName:    cfg.JSConsumerName,
-
-		// Monitoring intervals
-		MetricsInterval: cfg.MetricsInterval,
-
-		// Logging configuration
-		LogLevel:  LogLevel(cfg.LogLevel),
-		LogFormat: LogFormat(cfg.LogFormat),
+	// Validate mode
+	if cfg.Mode != "monolithic" && cfg.Mode != "sharded" {
+		logger.Fatalf("Invalid WS_MODE: %s (must be 'monolithic' or 'sharded')", cfg.Mode)
 	}
 
-	server, err := NewServer(serverConfig, logger)
-	if err != nil {
-		logger.Fatalf("Failed to create server: %v", err)
-	}
-
-	// Start server
-	if err := server.Start(); err != nil {
-		logger.Fatalf("Failed to start server: %v", err)
-	}
-
-	// Wait for interrupt signal
+	// Wait for interrupt signal (setup early)
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
-	<-sigCh
 
-	logger.Println("Shutting down server...")
-	if err := server.Shutdown(); err != nil {
-		logger.Printf("Error during shutdown: %v", err)
+	// Start server based on architecture mode
+	if cfg.Mode == "sharded" {
+		// ===== SHARDED MODE =====
+		logger.Printf("Starting in SHARDED mode...")
+
+		// Create sharded server configuration
+		shardedConfig := sharded.ShardedServerConfig{
+			Addr:           cfg.Addr,
+			NATSUrl:        cfg.NATSUrl,
+			MaxConnections: cfg.MaxConnections,
+			NumShards:      cfg.NumShards, // 0 = auto (2x CPU cores)
+
+			// JetStream configuration (same as monolithic)
+			JSStreamName:      cfg.JSStreamName,
+			JSConsumerName:    cfg.JSConsumerName,
+			JSStreamMaxAge:    cfg.JSStreamMaxAge,
+			JSStreamMaxMsgs:   cfg.JSStreamMaxMsgs,
+			JSStreamMaxBytes:  cfg.JSStreamMaxBytes,
+			JSConsumerAckWait: cfg.JSConsumerAckWait,
+		}
+
+		shardedServer, err := sharded.NewShardedServer(shardedConfig)
+		if err != nil {
+			logger.Fatalf("Failed to create sharded server: %v", err)
+		}
+
+		// Start sharded server
+		if err := shardedServer.Start(); err != nil {
+			logger.Fatalf("Failed to start sharded server: %v", err)
+		}
+
+		// Wait for interrupt signal
+		<-sigCh
+		logger.Println("Shutting down sharded server...")
+
+		// Graceful shutdown with 10 second timeout
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		if err := shardedServer.Shutdown(shutdownCtx); err != nil {
+			logger.Printf("Error during sharded server shutdown: %v", err)
+		}
+
+	} else {
+		// ===== MONOLITHIC MODE =====
+		logger.Printf("Starting in MONOLITHIC mode...")
+
+		// Create and configure server with loaded configuration
+		serverConfig := ServerConfig{
+			Addr:            cfg.Addr,
+			NATSUrl:         cfg.NATSUrl,
+			MaxConnections:  cfg.MaxConnections,
+			BufferSize:      4096, // Constant
+			WorkerCount:     cfg.WorkerPoolSize,
+			WorkerQueueSize: cfg.WorkerQueueSize,
+
+			// Static resource limits (explicit from config)
+			CPULimit:    cfg.CPULimit,
+			MemoryLimit: cfg.MemoryLimit,
+
+			// Rate limiting (CRITICAL - prevents overload)
+			MaxNATSMessagesPerSec: cfg.MaxNATSRate,
+			MaxBroadcastsPerSec:   cfg.MaxBroadcastRate,
+			MaxGoroutines:         cfg.MaxGoroutines,
+
+			// Safety thresholds (emergency brakes)
+			CPURejectThreshold: cfg.CPURejectThreshold,
+			CPUPauseThreshold:  cfg.CPUPauseThreshold,
+
+			// JetStream configuration
+			JSStreamMaxAge:    cfg.JSStreamMaxAge,
+			JSStreamMaxMsgs:   cfg.JSStreamMaxMsgs,
+			JSStreamMaxBytes:  cfg.JSStreamMaxBytes,
+			JSConsumerAckWait: cfg.JSConsumerAckWait,
+			JSStreamName:      cfg.JSStreamName,
+			JSConsumerName:    cfg.JSConsumerName,
+
+			// Monitoring intervals
+			MetricsInterval: cfg.MetricsInterval,
+
+			// Logging configuration
+			LogLevel:  LogLevel(cfg.LogLevel),
+			LogFormat: LogFormat(cfg.LogFormat),
+		}
+
+		server, err := NewServer(serverConfig, logger)
+		if err != nil {
+			logger.Fatalf("Failed to create server: %v", err)
+		}
+
+		// Start server
+		if err := server.Start(); err != nil {
+			logger.Fatalf("Failed to start server: %v", err)
+		}
+
+		// Wait for interrupt signal
+		<-sigCh
+		logger.Println("Shutting down monolithic server...")
+
+		if err := server.Shutdown(); err != nil {
+			logger.Printf("Error during monolithic server shutdown: %v", err)
+		}
 	}
 }
