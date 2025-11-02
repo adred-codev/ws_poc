@@ -129,6 +129,7 @@ type Stats struct {
 	SlowClientsDisconnected int64 // Count of clients disconnected for being too slow
 	RateLimitedMessages     int64 // Count of messages dropped due to rate limiting
 	MessageReplayRequests   int64 // Count of replay requests served (gap recovery)
+	DroppedReplayEvents     int64 // Count of replay events dropped (channel full - very rare)
 }
 
 func NewServer(config ServerConfig, logger *log.Logger) (*Server, error) {
@@ -149,7 +150,7 @@ func NewServer(config ServerConfig, logger *log.Logger) (*Server, error) {
 		ctx:               ctx,
 		cancel:            cancel,
 		bufferPool:        bufferPool,
-		connections:       NewConnectionPool(config.MaxConnections, bufferPool),
+		connections:       NewConnectionPool(config.MaxConnections, bufferPool, config.WorkerCount),
 		connectionsSem:    make(chan struct{}, config.MaxConnections),
 		subscriptionIndex: NewSubscriptionIndex(), // Fast channel → subscribers lookup
 		workerPool:        NewWorkerPool(config.WorkerCount, config.WorkerQueueSize, structLogger),
@@ -622,6 +623,11 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Update Prometheus metrics
 	UpdateConnectionMetrics(s)
 
+	// Start lock-free replay buffer worker (single-writer pattern)
+	// This goroutine is the ONLY writer to client.replayBuffer
+	// Eliminates mutex contention on multi-core systems
+	go client.replayBufferWorker()
+
 	go s.writePump(client)
 	go s.readPump(client)
 }
@@ -640,6 +646,10 @@ func (s *Server) readPump(c *Client) {
 
 		// Remove client from subscription index (cleanup to prevent memory leak)
 		s.subscriptionIndex.RemoveClient(c)
+
+		// Close replay events channel to stop replayBufferWorker goroutine
+		// This triggers graceful shutdown of the worker
+		close(c.replayEvents)
 
 		s.connections.Put(c)
 		<-s.connectionsSem // Release connection slot
@@ -910,10 +920,23 @@ func (s *Server) broadcast(subject string, message []byte) {
 			continue // Skip to next client
 		}
 
-		// Add to replay buffer BEFORE sending
-		// Critical: If send fails, client can request replay
-		// If we added AFTER send, failed sends wouldn't be replayable
-		client.replayBuffer.Add(envelope)
+		// Send to replay buffer worker (lock-free via channel)
+		// This replaces the old client.replayBuffer.Add(envelope) which used mutex
+		//
+		// Lock-free multi-core scaling:
+		//   - Old: client.replayBuffer.Add() → mutex lock → contention on 3+ cores
+		//   - New: Send to channel → dedicated worker writes → zero contention
+		//
+		// Non-blocking send to prevent slow replay worker from blocking broadcast
+		select {
+		case client.replayEvents <- envelope:
+			// Success - replay worker will process
+		default:
+			// Replay channel full (very rare - indicates system overload)
+			// Worker can't keep up processing events
+			// This should never happen with 256 buffer and single writer
+			atomic.AddInt64(&s.stats.DroppedReplayEvents, 1)
+		}
 
 		// Serialize envelope to JSON for WebSocket transmission
 		data, err := envelope.Serialize()

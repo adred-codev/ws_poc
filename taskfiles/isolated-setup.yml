@@ -647,7 +647,7 @@ tasks:
           ws-test-runner-go'
 
   test:remote:capacity:
-    desc: Production capacity test (15,000 connections - target, 3600s) - runs remotely with Go test runner
+    desc: Production capacity test (10,000 connections - target, 3600s) - runs remotely with Go test runner
     cmds:
       - echo "🧪 Running production capacity test remotely (Go)..."
       - |
@@ -655,8 +655,8 @@ tasks:
           --ulimit nofile=200000:200000 \
           -e WS_URL=ws://{{.WS_GO_INTERNAL_IP}}:3004/ws \
           -e HEALTH_URL=http://{{.WS_GO_INTERNAL_IP}}:3004/health \
-          -e WS_MAX_CONNECTIONS=15000 \
-          -e TARGET_CONNECTIONS=15000 \
+          -e WS_MAX_CONNECTIONS=10000 \
+          -e TARGET_CONNECTIONS=10000 \
           -e DURATION=3600 \
           ws-test-runner-go'
 

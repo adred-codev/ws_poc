@@ -12,9 +12,9 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
-# Alert rules
-rule_files:
-  - "/etc/prometheus/alert-rules.yml"
+# Alert rules (temporarily disabled - alert-rules.yml was deployed as directory)
+# rule_files:
+#   - "/etc/prometheus/alert-rules.yml"
 
 scrape_configs:
   # WebSocket server (remote instance)

@@ -53,6 +53,14 @@ type Client struct {
 	// Tradeoff: Shorter buffer = less recovery, but more clients fit in memory
 	replayBuffer *ReplayBuffer
 
+	// Lock-free replay buffer updates (multi-core scaling)
+	// Channel for sending replay events to dedicated worker goroutine
+	// Buffer size: 256 messages (handles burst when 512 workers send simultaneously)
+	// Memory cost: 256 slots × 8 bytes = 2KB per client = 30MB for 15K clients
+	// Why needed: Eliminates mutex contention between broadcast workers on multiple cores
+	// Single-writer pattern: Only replayBufferWorker() reads from this channel
+	replayEvents chan *MessageEnvelope
+
 	// Slow client detection fields
 	// Purpose: One slow client shouldn't block messages to 10,000 fast clients
 	// Detection: If send blocks for >100ms, increment failure counter
@@ -94,13 +102,32 @@ type Client struct {
 
 // ConnectionPool manages a pool of reusable client objects
 type ConnectionPool struct {
-	pool       sync.Pool
-	maxSize    int
-	bufferPool *BufferPool
+	pool              sync.Pool
+	maxSize           int
+	bufferPool        *BufferPool
+	replayChannelSize int // Buffer size for replay events channel (derived from worker pool size)
 }
 
-func NewConnectionPool(maxSize int, bufferPool *BufferPool) *ConnectionPool {
-	cp := &ConnectionPool{maxSize: maxSize, bufferPool: bufferPool}
+func NewConnectionPool(maxSize int, bufferPool *BufferPool, workerCount int) *ConnectionPool {
+	// Derive replay channel buffer size from worker pool size
+	// Formula: workerCount / 2 (handle burst when ~50% of workers broadcast simultaneously)
+	// Min: 64 (small deployments), No upper limit (scales with vertical scaling)
+	// Memory cost scales naturally: channelSize × 8 bytes per client
+	//   - 256 buffer: 2KB per client = 30MB for 15K clients
+	//   - 512 buffer: 4KB per client = 60MB for 15K clients
+	//   - 1024 buffer: 8KB per client = 120MB for 15K clients
+	//   - 2048 buffer: 16KB per client = 240MB for 15K clients
+	// ResourceGuard monitors memory and prevents OOM - no artificial cap needed
+	replayChannelSize := workerCount / 2
+	if replayChannelSize < 64 {
+		replayChannelSize = 64
+	}
+
+	cp := &ConnectionPool{
+		maxSize:           maxSize,
+		bufferPool:        bufferPool,
+		replayChannelSize: replayChannelSize,
+	}
 
 	cp.pool = sync.Pool{
 		New: func() interface{} {
@@ -117,6 +144,12 @@ func NewConnectionPool(maxSize int, bufferPool *BufferPool) *ConnectionPool {
 			}
 
 			client.replayBuffer = NewReplayBuffer(100, bufferPool)
+
+			// Initialize lock-free replay events channel
+			// Buffer size derived from worker pool size (workerCount/2)
+			// Handles burst when ~50% of workers broadcast simultaneously
+			client.replayEvents = make(chan *MessageEnvelope, cp.replayChannelSize)
+
 			return client
 		},
 	}
@@ -156,6 +189,12 @@ func (p *ConnectionPool) Get() *Client {
 			}
 			client.replayBuffer.Clear()
 		}
+
+		// Initialize or reset lock-free replay events channel
+		// CRITICAL: Always create fresh channel (old one was closed on disconnect)
+		// Reusing closed channel causes replayBufferWorker to immediately exit
+		// and broadcasts to panic on send-to-closed-channel
+		client.replayEvents = make(chan *MessageEnvelope, p.replayChannelSize)
 
 		// Initialize slow client detection fields
 		client.lastMessageSentAt = time.Now()
@@ -475,4 +514,60 @@ func (idx *SubscriptionIndex) Count(channel string) int {
 		return 0
 	}
 	return len(subscribers)
+}
+
+// =============================================================================
+// LOCK-FREE REPLAY BUFFER WORKER
+// =============================================================================
+
+// replayBufferWorker is a dedicated goroutine that processes replay events
+// for a single client. This implements the single-writer pattern for lock-free
+// multi-core scaling.
+//
+// Key Design:
+//   - ONLY this goroutine writes to client.replayBuffer
+//   - Broadcast workers send events to client.replayEvents channel
+//   - Zero mutex contention between workers
+//
+// Why This Solves Mutex Contention:
+//
+//	Before: 512 workers on 3 cores → all compete for same client mutex → blocking
+//	After: Workers send to channel (lock-free) → single goroutine writes → zero contention
+//
+// Lifecycle:
+//   - Started when client connects (in handleWebSocket)
+//   - Stops when client.replayEvents channel is closed (on disconnect)
+//   - Automatic cleanup via channel close
+//
+// Performance:
+//   - Channel send: ~10ns (vs 20ns mutex lock)
+//   - No contention: Workers never block on same client
+//   - Memory: 2KB per client (256 slot channel)
+//
+// Error Handling:
+//   - Panic recovery: Logs error but doesn't crash server
+//   - Channel closed: Goroutine exits cleanly
+//   - Invalid envelope: Skipped, continues processing
+func (c *Client) replayBufferWorker() {
+	defer func() {
+		if r := recover(); r != nil {
+			if c.server != nil {
+				c.server.structLogger.Error().
+					Int64("client_id", c.id).
+					Interface("panic", r).
+					Msg("Replay buffer worker panic")
+			}
+		}
+	}()
+
+	// Process replay events until channel is closed
+	for envelope := range c.replayEvents {
+		if envelope == nil {
+			continue
+		}
+
+		// Single-writer guarantee: ONLY this goroutine writes to buffer
+		// No mutex needed - guaranteed no concurrent access
+		c.replayBuffer.AddUnsafe(envelope)
+	}
 }
