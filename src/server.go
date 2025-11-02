@@ -908,12 +908,16 @@ func (s *Server) broadcast(subject string, message []byte) {
 	totalCount := len(subscribers)
 	successCount := 0
 
+	// PERFORMANCE: Get timestamp ONCE for entire broadcast (not per-client)
+	// Saves ~860 time.Now() syscalls per broadcast at 860 clients
+	timestamp := time.Now().UnixMilli()
+
 	// Iterate ONLY subscribed clients (not all clients!)
 	for _, client := range subscribers {
 		// Wrap raw NATS message in envelope with sequence number
 		// Message type: "price:update" (could be parsed from NATS subject)
 		// Priority: HIGH (trading data is critical but not life-or-death)
-		envelope, err := WrapMessage(message, "price:update", PRIORITY_HIGH, client.seqGen)
+		envelope, err := WrapMessage(message, "price:update", PRIORITY_HIGH, client.seqGen, timestamp)
 		if err != nil {
 			RecordBroadcastError(ErrorSeverityWarning)
 			s.logger.Printf("❌ Failed to wrap message for client %d: %v", client.id, err)
