@@ -203,8 +203,8 @@ func (s *ShardedServer) handleNATSMessage(msg *nats.Msg) {
 }
 
 // extractChannelFromSubject extracts channel name from NATS subject
-// Example: "odin.token.BTC" → "BTC", "odin.token.ETH" → "ETH"
-// Format: odin.token.{SYMBOL} where SYMBOL can contain slashes (e.g., BTC/USD)
+// Example: "odin.token.BTC.trade" → "BTC", "odin.token.ETH.trade" → "ETH"
+// Format: odin.token.{SYMBOL}.trade where SYMBOL is the channel name
 func extractChannelFromSubject(subject string) string {
 	// Find "odin.token." prefix and extract everything after
 	prefix := "odin.token."
@@ -219,8 +219,29 @@ func extractChannelFromSubject(subject string) string {
 		}
 	}
 
-	// Return everything after "odin.token."
-	return subject[len(prefix):]
+	// Extract everything after "odin.token."
+	channel := subject[len(prefix):]
+
+	// Strip ".trade" suffix if present
+	// Format: BTC.trade → BTC
+	tradeSuffix := ".trade"
+	if len(channel) > len(tradeSuffix) {
+		// Check if channel ends with ".trade"
+		suffixStart := len(channel) - len(tradeSuffix)
+		matches := true
+		for i := 0; i < len(tradeSuffix); i++ {
+			if channel[suffixStart+i] != tradeSuffix[i] {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			// Strip the ".trade" suffix
+			channel = channel[:suffixStart]
+		}
+	}
+
+	return channel
 }
 
 // startHTTPServer starts the HTTP server for WebSocket connections
