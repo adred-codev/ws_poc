@@ -71,12 +71,13 @@ interface MarketStats {
 
 class TokenPricePublisher {
   private nats: NatsConnection | null = null;
+  private js: any = null; // JetStream context
   private tokens: Map<string, TokenData> = new Map();
   private publishingIntervals: Map<string, NodeJS.Timeout> = new Map();
   private stats: PublisherStats = {
     messagesPublished: 0,
     startTime: Date.now(),
-    errors: 0
+    errors: 0,
   };
   private app!: express.Application;
   private httpServer: any;
@@ -98,21 +99,25 @@ class TokenPricePublisher {
         servers: [config.nats.url],
         reconnect: true,
         maxReconnectAttempts: 10,
-        reconnectTimeWait: 2000
+        reconnectTimeWait: 2000,
       });
       console.log('✅ Connected to NATS server');
 
       // Initialize JetStream for guaranteed delivery
-      const js = this.nats.jetstream();
+      this.js = this.nats.jetstream();
       const jsm = await this.nats.jetstreamManager();
 
       // Ensure stream exists (server creates it, but publisher can verify)
       try {
-        const streamInfo = await jsm.streams.info("ODIN_TOKENS");
-        console.log(`✅ JetStream stream exists: ODIN_TOKENS (${streamInfo.state.messages} messages)`);
+        const streamInfo = await jsm.streams.info('ODIN_TOKENS');
+        console.log(
+          `✅ JetStream stream exists: ODIN_TOKENS (${streamInfo.state.messages} messages)`
+        );
       } catch (err) {
         // Stream doesn't exist, server will create it
-        console.log('ℹ️  JetStream stream will be created by server on first connection');
+        console.log(
+          'ℹ️  JetStream stream will be created by server on first connection'
+        );
       }
 
       console.log('✅ JetStream initialized for reliable publishing');
@@ -124,19 +129,22 @@ class TokenPricePublisher {
 
   private initializeTokenData(): void {
     // Initialize with realistic starting prices and volumes
-    const tokenDefaults: Record<string, { price: number; volume24h: number; marketCap: number }> = {
-      'BTC': { price: 43250.00, volume24h: 125000000, marketCap: 850000000000 },
-      'ETH': { price: 2580.50, volume24h: 85000000, marketCap: 310000000000 },
-      'ODIN': { price: 0.125, volume24h: 2500000, marketCap: 125000000 },
-      'SOL': { price: 98.75, volume24h: 15000000, marketCap: 42000000000 },
-      'DOGE': { price: 0.078, volume24h: 8500000, marketCap: 11000000000 }
+    const tokenDefaults: Record<
+      string,
+      { price: number; volume24h: number; marketCap: number }
+    > = {
+      BTC: { price: 43250.0, volume24h: 125000000, marketCap: 850000000000 },
+      ETH: { price: 2580.5, volume24h: 85000000, marketCap: 310000000000 },
+      ODIN: { price: 0.125, volume24h: 2500000, marketCap: 125000000 },
+      SOL: { price: 98.75, volume24h: 15000000, marketCap: 42000000000 },
+      DOGE: { price: 0.078, volume24h: 8500000, marketCap: 11000000000 },
     };
 
     config.simulation.tokens.forEach(tokenId => {
       const defaults = tokenDefaults[tokenId] || {
         price: Math.random() * 100,
         volume24h: Math.random() * 1000000,
-        marketCap: Math.random() * 1000000000
+        marketCap: Math.random() * 1000000000,
       };
 
       this.tokens.set(tokenId, {
@@ -147,7 +155,7 @@ class TokenPricePublisher {
         priceChange24h: 0,
         lastUpdate: Date.now(),
         trend: 'neutral',
-        volatility: Math.random() * 0.1 + 0.02 // 2-12% volatility
+        volatility: Math.random() * 0.1 + 0.02, // 2-12% volatility
       });
     });
 
@@ -160,9 +168,15 @@ class TokenPricePublisher {
     this.app.use(express.json());
 
     // Control endpoint for stress testing
-    this.app.post('/control', (req: Request<{}, ControlAPIResponse, ControlAPIRequest>, res: Response<ControlAPIResponse>) => {
-      this.handleControlRequest(req, res);
-    });
+    this.app.post(
+      '/control',
+      (
+        req: Request<{}, ControlAPIResponse, ControlAPIRequest>,
+        res: Response<ControlAPIResponse>
+      ) => {
+        this.handleControlRequest(req, res);
+      }
+    );
 
     // Stats endpoint
     this.app.get('/stats', (req: Request, res: Response) => {
@@ -174,8 +188,8 @@ class TokenPricePublisher {
         configuration: {
           connections: this.targetConnections,
           messagesPerSecond: this.targetMessagesPerSecond,
-          tokens: Array.from(this.tokens.keys())
-        }
+          tokens: Array.from(this.tokens.keys()),
+        },
       });
     });
 
@@ -185,7 +199,7 @@ class TokenPricePublisher {
         status: 'healthy',
         nats: this.nats?.isClosed() ? 'disconnected' : 'connected',
         publishing: this.isPublishing,
-        uptime: Date.now() - this.stats.startTime
+        uptime: Date.now() - this.stats.startTime,
       });
     });
 
@@ -197,8 +211,12 @@ class TokenPricePublisher {
     });
   }
 
-  private handleControlRequest(req: Request<{}, ControlAPIResponse, ControlAPIRequest>, res: Response<ControlAPIResponse>): void {
-    const { action, connections, messagesPerSecond, duration, tokens } = req.body;
+  private handleControlRequest(
+    req: Request<{}, ControlAPIResponse, ControlAPIRequest>,
+    res: Response<ControlAPIResponse>
+  ): void {
+    const { action, connections, messagesPerSecond, duration, tokens } =
+      req.body;
 
     try {
       switch (action) {
@@ -225,7 +243,7 @@ class TokenPricePublisher {
                 priceChange24h: 0,
                 lastUpdate: Date.now(),
                 trend: 'neutral',
-                volatility: Math.random() * 0.1 + 0.02
+                volatility: Math.random() * 0.1 + 0.02,
               });
             });
           }
@@ -244,7 +262,7 @@ class TokenPricePublisher {
             success: true,
             message: `Started publishing with ${this.targetMessagesPerSecond} msg/sec for ${this.tokens.size} tokens`,
             stats: this.stats,
-            activeTokens: Array.from(this.tokens.keys())
+            activeTokens: Array.from(this.tokens.keys()),
           });
           break;
 
@@ -258,13 +276,14 @@ class TokenPricePublisher {
           res.json({
             success: true,
             message: 'Publishing stopped',
-            stats: this.stats
+            stats: this.stats,
           });
           break;
 
         case 'configure':
           this.targetConnections = connections || this.targetConnections;
-          this.targetMessagesPerSecond = messagesPerSecond || this.targetMessagesPerSecond;
+          this.targetMessagesPerSecond =
+            messagesPerSecond || this.targetMessagesPerSecond;
 
           if (tokens && tokens.length > 0) {
             // Update tokens without restarting
@@ -278,7 +297,7 @@ class TokenPricePublisher {
                 priceChange24h: 0,
                 lastUpdate: Date.now(),
                 trend: 'neutral',
-                volatility: Math.random() * 0.1 + 0.02
+                volatility: Math.random() * 0.1 + 0.02,
               });
             });
           }
@@ -289,13 +308,16 @@ class TokenPricePublisher {
             configuration: {
               connections: this.targetConnections,
               messagesPerSecond: this.targetMessagesPerSecond,
-              tokens: Array.from(this.tokens.keys())
-            }
+              tokens: Array.from(this.tokens.keys()),
+            },
           });
           break;
 
         default:
-          res.json({ success: false, message: 'Invalid action. Use start, stop, or configure' });
+          res.json({
+            success: false,
+            message: 'Invalid action. Use start, stop, or configure',
+          });
       }
     } catch (error) {
       console.error('❌ Control API error:', error);
@@ -313,7 +335,9 @@ class TokenPricePublisher {
     const targetRate = messagesPerSecond || this.targetMessagesPerSecond || 10;
     const intervalMs = Math.max(100, 1000 / (targetRate / this.tokens.size)); // Min 100ms interval
 
-    console.log(`▶️  Starting publishing at ${targetRate} msg/sec (${intervalMs}ms interval per token)`);
+    console.log(
+      `▶️  Starting publishing at ${targetRate} msg/sec (${intervalMs}ms interval per token)`
+    );
 
     this.tokens.forEach((_, tokenId) => {
       const interval = setInterval(() => {
@@ -355,16 +379,16 @@ class TokenPricePublisher {
   private getUpdateInterval(tokenId: string): number {
     // Simulate different update frequencies
     const intervals: Record<string, number> = {
-      'BTC': 1000,  // 1 second (most active)
-      'ETH': 1500,  // 1.5 seconds
-      'ODIN': 2000, // 2 seconds
-      'SOL': 2500,  // 2.5 seconds
-      'DOGE': 3000  // 3 seconds
+      BTC: 1000, // 1 second (most active)
+      ETH: 1500, // 1.5 seconds
+      ODIN: 2000, // 2 seconds
+      SOL: 2500, // 2.5 seconds
+      DOGE: 3000, // 3 seconds
     };
     return intervals[tokenId] || config.simulation.tradeFrequency;
   }
 
-  private publishPriceUpdate(tokenId: string): void {
+  private async publishPriceUpdate(tokenId: string): Promise<void> {
     const token = this.tokens.get(tokenId);
     if (!token || !this.nats) return;
 
@@ -376,10 +400,10 @@ class TokenPricePublisher {
 
       // Calculate 24h change percentage
       const changePercent = ((token.price - oldPrice) / oldPrice) * 100;
-      token.priceChange24h = (token.priceChange24h * 0.9) + (changePercent * 0.1); // Smooth the change
+      token.priceChange24h = token.priceChange24h * 0.9 + changePercent * 0.1; // Smooth the change
 
       // Update volume (simulate trading activity)
-      token.volume24h *= (0.95 + Math.random() * 0.1); // ±5% volume change
+      token.volume24h *= 0.95 + Math.random() * 0.1; // ±5% volume change
 
       // Update market cap
       token.marketCap = token.price * 1000000; // Simplified market cap calculation
@@ -397,21 +421,22 @@ class TokenPricePublisher {
         priceChange24h: Number(token.priceChange24h.toFixed(2)),
         timestamp: token.lastUpdate,
         source: 'simulator',
-        nonce: this.generateNonce()
+        nonce: this.generateNonce(),
       };
 
-      // Publish to NATS using hierarchical subject format
+      // Publish to JetStream using hierarchical subject format
       // Format: odin.token.{SYMBOL}.trade (e.g., odin.token.BTC.trade)
       const subject = subjects.tokenTrade(tokenId);
-      this.nats.publish(subject, sc.encode(JSON.stringify(priceUpdate)));
+      await this.js.publish(subject, sc.encode(JSON.stringify(priceUpdate)));
 
       this.stats.messagesPublished++;
 
       // Log occasional updates
       if (this.stats.messagesPublished % 20 === 0) {
-        console.log(`📊 Published update for ${tokenId}: $${priceUpdate.price} (${priceUpdate.priceChange24h.toFixed(2)}%)`);
+        console.log(
+          `📊 Published update for ${tokenId}: $${priceUpdate.price} (${priceUpdate.priceChange24h.toFixed(2)}%)`
+        );
       }
-
     } catch (error) {
       console.error(`❌ Error publishing ${tokenId} update:`, error);
       this.stats.errors++;
@@ -426,14 +451,16 @@ class TokenPricePublisher {
 
     // Add some trend persistence
     if (token.trend === 'up') {
-      return randomChange + (Math.random() * token.price * 0.001);
+      return randomChange + Math.random() * token.price * 0.001;
     } else if (token.trend === 'down') {
-      return randomChange - (Math.random() * token.price * 0.001);
+      return randomChange - Math.random() * token.price * 0.001;
     }
 
     // Randomly change trend
-    if (Math.random() < 0.05) { // 5% chance to change trend
-      token.trend = Math.random() < 0.4 ? 'up' : Math.random() < 0.8 ? 'down' : 'neutral';
+    if (Math.random() < 0.05) {
+      // 5% chance to change trend
+      token.trend =
+        Math.random() < 0.4 ? 'up' : Math.random() < 0.8 ? 'down' : 'neutral';
     }
 
     return randomChange;
@@ -443,11 +470,15 @@ class TokenPricePublisher {
     if (!this.nats) return;
 
     try {
-      const totalMarketCap = Array.from(this.tokens.values())
-        .reduce((sum, token) => sum + token.marketCap, 0);
+      const totalMarketCap = Array.from(this.tokens.values()).reduce(
+        (sum, token) => sum + token.marketCap,
+        0
+      );
 
-      const totalVolume = Array.from(this.tokens.values())
-        .reduce((sum, token) => sum + token.volume24h, 0);
+      const totalVolume = Array.from(this.tokens.values()).reduce(
+        (sum, token) => sum + token.volume24h,
+        0
+      );
 
       const marketStats: MarketStats = {
         type: 'market:statistics',
@@ -456,12 +487,16 @@ class TokenPricePublisher {
         activeTokens: this.tokens.size,
         timestamp: Date.now(),
         topTokens: this.getTopTokens(3),
-        nonce: this.generateNonce()
+        nonce: this.generateNonce(),
       };
 
-      this.nats.publish(subjects.marketStats, sc.encode(JSON.stringify(marketStats)));
-      console.log(`📈 Published market stats: $${(totalMarketCap / 1e9).toFixed(1)}B market cap`);
-
+      this.nats.publish(
+        subjects.marketStats,
+        sc.encode(JSON.stringify(marketStats))
+      );
+      console.log(
+        `📈 Published market stats: $${(totalMarketCap / 1e9).toFixed(1)}B market cap`
+      );
     } catch (error) {
       console.error('❌ Error publishing market stats:', error);
       this.stats.errors++;
@@ -481,7 +516,7 @@ class TokenPricePublisher {
         tokenId: token.id,
         price: Number(token.price.toFixed(6)),
         marketCap: Math.floor(token.marketCap),
-        priceChange24h: Number(token.priceChange24h.toFixed(2))
+        priceChange24h: Number(token.priceChange24h.toFixed(2)),
       }));
   }
 
@@ -542,7 +577,7 @@ setInterval(() => {
 }, 30000);
 
 // Initialize publisher
-publisher.initialize().catch((error) => {
+publisher.initialize().catch(error => {
   console.error('❌ Failed to start publisher:', error);
   process.exit(1);
 });
