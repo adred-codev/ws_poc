@@ -374,18 +374,24 @@ func (s *ShardedServer) handleClientMessage(client *Client, data []byte) {
 }
 
 // cleanupClient removes client from server
+// CRITICAL: This is called from both readPump and writePump when client disconnects
+// Use sync.Once to ensure cleanup only happens once
 func (s *ShardedServer) cleanupClient(client *Client) {
 	client.CloseOnce.Do(func() {
+		// Close connection and channel
 		if client.Conn != nil {
 			client.Conn.Close()
 		}
 		close(client.Send)
+
+		// Unregister from shard (must be inside CloseOnce to prevent double-decrement!)
+		s.router.UnregisterClient(client)
+
+		// Release connection slot
+		<-s.connectionsSem
+
+		s.logger.Printf("Client disconnected: %d", client.ID)
 	})
-
-	s.router.UnregisterClient(client)
-	<-s.connectionsSem
-
-	s.logger.Printf("Client disconnected: %d", client.ID)
 }
 
 // collectMetrics collects CPU and memory metrics
