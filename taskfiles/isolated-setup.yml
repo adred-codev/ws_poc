@@ -289,15 +289,18 @@ tasks:
       - echo "⚡ Fast deploying via git pull..."
       - echo "   Branch → {{.GIT_BRANCH}}"
       - echo ""
-      - echo "📦 Deploying to ws-go..."
+      - echo "📦 Deploying to backend (NATS must start first)..."
+      - gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --command="cd /home/deploy/ws_poc && git fetch origin && git checkout {{.GIT_BRANCH}} && git reset --hard origin/{{.GIT_BRANCH}} && rm -rf isolated/backend/publisher isolated/backend/grafana && ln -s ../../publisher isolated/backend/publisher && ln -s ../../grafana isolated/backend/grafana && sudo docker ps -q --filter name=odin- | xargs -r sudo docker stop 2>/dev/null || true && sudo docker ps -aq --filter name=odin- | xargs -r sudo docker rm 2>/dev/null || true && cd isolated/backend && sudo docker compose build && sudo docker compose up -d"
+      - echo ""
+      - echo "⏳ Waiting for NATS to be ready..."
+      - sleep 15
+      - echo ""
+      - echo "📦 Deploying to ws-go (after NATS is stable)..."
       - |
         gcloud compute ssh {{.WS_GO_INSTANCE}} --zone={{.GCP_ZONE}} --command="cd /home/deploy/ws_poc && git fetch origin && git checkout . && git checkout {{.GIT_BRANCH}} && git reset --hard origin/{{.GIT_BRANCH}} && rm -rf isolated/ws-go/src && ln -s ../../src isolated/ws-go/src && sudo docker stop odin-ws-go odin-ws-promtail 2>/dev/null || true && sudo docker rm odin-ws-go odin-ws-promtail 2>/dev/null || true && cd isolated/ws-go && cp .env.production .env.production.backup && export BACKEND_INTERNAL_IP={{.BACKEND_INTERNAL_IP}} && envsubst < .env.production.backup > .env.production && sudo docker compose build && sudo docker compose up -d"
       - echo ""
-      - echo "📦 Deploying to backend..."
-      - gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --command="cd /home/deploy/ws_poc && git fetch origin && git checkout {{.GIT_BRANCH}} && git reset --hard origin/{{.GIT_BRANCH}} && rm -rf isolated/backend/publisher isolated/backend/grafana && ln -s ../../publisher isolated/backend/publisher && ln -s ../../grafana isolated/backend/grafana && sudo docker ps -q --filter name=odin- | xargs -r sudo docker stop 2>/dev/null || true && sudo docker ps -aq --filter name=odin- | xargs -r sudo docker rm 2>/dev/null || true && cd isolated/backend && sudo docker compose build && sudo docker compose up -d"
-      - echo ""
-      - echo "⏳ Waiting for services to restart..."
-      - sleep 10
+      - echo "⏳ Waiting for ws-go to create JetStream stream..."
+      - sleep 5
       - echo "✅ Fast deploy complete! Services restarting..."
 
   deploy:ws-go:
