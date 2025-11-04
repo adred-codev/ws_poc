@@ -106,6 +106,22 @@ var (
 		Buckets: []float64{1, 2, 3, 4, 5, 10, 20},
 	})
 
+	// Worker pool metrics
+	workerQueueDepth = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "ws_worker_queue_depth",
+		Help: "Current number of tasks waiting in worker pool queue",
+	})
+
+	workerQueueCapacity = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "ws_worker_queue_capacity",
+		Help: "Maximum capacity of worker pool queue",
+	})
+
+	workerQueueUtilization = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "ws_worker_queue_utilization_percent",
+		Help: "Worker pool queue utilization percentage (0-100)",
+	})
+
 	// System metrics
 	memoryUsageBytes = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "ws_memory_bytes",
@@ -193,6 +209,10 @@ func init() {
 	prometheus.MustRegister(clientSendBufferSize)
 	prometheus.MustRegister(slowClientAttempts)
 
+	prometheus.MustRegister(workerQueueDepth)
+	prometheus.MustRegister(workerQueueCapacity)
+	prometheus.MustRegister(workerQueueUtilization)
+
 	prometheus.MustRegister(memoryUsageBytes)
 	prometheus.MustRegister(memoryLimitBytes)
 	prometheus.MustRegister(cpuUsagePercent)
@@ -278,6 +298,19 @@ func (m *MetricsCollector) collect() {
 
 	// Worker pool metrics
 	droppedBroadcasts.Set(float64(m.server.workerPool.GetDroppedTasks()))
+
+	// Worker pool queue metrics
+	queueDepth := m.server.workerPool.GetQueueDepth()
+	queueCapacity := m.server.workerPool.GetQueueCapacity()
+	workerQueueDepth.Set(float64(queueDepth))
+	workerQueueCapacity.Set(float64(queueCapacity))
+
+	// Calculate queue utilization percentage
+	var utilization float64
+	if queueCapacity > 0 {
+		utilization = (float64(queueDepth) / float64(queueCapacity)) * 100
+	}
+	workerQueueUtilization.Set(utilization)
 
 	// NATS status
 	if m.server.natsConn != nil && m.server.natsConn.IsConnected() {

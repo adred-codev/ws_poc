@@ -200,3 +200,13 @@ func (wp *WorkerPool) Stop() {
 func (wp *WorkerPool) GetDroppedTasks() int64 {
 	return atomic.LoadInt64(&wp.droppedTasks)
 }
+
+// GetQueueDepth returns the current number of tasks waiting in the queue
+func (wp *WorkerPool) GetQueueDepth() int {
+	return len(wp.taskQueue)
+}
+
+// GetQueueCapacity returns the maximum capacity of the task queue
+func (wp *WorkerPool) GetQueueCapacity() int {
+	return cap(wp.taskQueue)
+}
