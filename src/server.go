@@ -137,6 +137,9 @@ type Stats struct {
 	disconnectsMu              sync.RWMutex     // Protects DisconnectsByReason map
 	dropsMu                    sync.RWMutex     // Protects DroppedBroadcastsByChannel map
 	buffersMu                  sync.RWMutex     // Protects BufferSaturationSamples slice
+
+	// Phase 4 logging counters
+	DroppedBroadcastLogCounter int64 // Counter for sampled logging (every 100th drop)
 }
 
 func NewServer(config ServerConfig, logger *log.Logger) (*Server, error) {
@@ -590,6 +593,7 @@ func (s *Server) sampleClientBuffers() {
 			// This gives statistically significant buffer saturation data without overhead
 			samplesCollected := 0
 			maxSamples := 100
+			highSaturationCount := 0 // Track clients near capacity
 
 			s.clients.Range(func(key, value interface{}) bool {
 				if samplesCollected >= maxSamples {
@@ -604,11 +608,38 @@ func (s *Server) sampleClientBuffers() {
 				// Record buffer usage (both Prometheus and Stats)
 				bufferLen := len(client.send)
 				bufferCap := cap(client.send)
+				usagePercent := float64(bufferLen) / float64(bufferCap) * 100
 				RecordClientBufferSizeWithStats(s.stats, bufferLen, bufferCap)
+
+				// Phase 4: Track high saturation clients
+				if usagePercent >= 90 {
+					highSaturationCount++
+				}
 
 				samplesCollected++
 				return true // Continue iteration
 			})
+
+			// Phase 4: Log warning if many clients are near buffer capacity
+			if samplesCollected > 0 {
+				highSaturationPercent := float64(highSaturationCount) / float64(samplesCollected) * 100
+				if highSaturationPercent >= 25 {
+					// Warning: 25%+ of sampled clients are at >90% buffer capacity
+					s.structLogger.Warn().
+						Int("high_saturation_count", highSaturationCount).
+						Int("total_sampled", samplesCollected).
+						Float64("high_saturation_pct", highSaturationPercent).
+						Int64("current_connections", atomic.LoadInt64(&s.stats.CurrentConnections)).
+						Msg("High buffer saturation detected across client population")
+
+					s.auditLogger.Warning("HighBufferSaturation", "Many clients near buffer capacity", map[string]any{
+						"high_saturation_count": highSaturationCount,
+						"total_sampled":         samplesCollected,
+						"saturation_percent":    highSaturationPercent,
+						"current_connections":   atomic.LoadInt64(&s.stats.CurrentConnections),
+					})
+				}
+			}
 		}
 	}
 }
@@ -691,7 +722,11 @@ func (s *Server) disconnectClient(c *Client, reason, initiatedBy string) {
 	// Record disconnect metrics (both Prometheus and Stats)
 	RecordDisconnectWithStats(s.stats, reason, initiatedBy, duration)
 
-	// Log disconnect with context
+	// Log disconnect with enhanced context (Phase 4: Structured logging)
+	bufferLen := len(c.send)
+	bufferCap := cap(c.send)
+	bufferUsagePercent := float64(bufferLen) / float64(bufferCap) * 100
+
 	s.structLogger.Info().
 		Int64("client_id", c.id).
 		Str("reason", reason).
@@ -699,6 +734,11 @@ func (s *Server) disconnectClient(c *Client, reason, initiatedBy string) {
 		Dur("connection_duration", duration).
 		Int("subscriptions_count", c.subscriptions.Count()).
 		Int64("sequence_number", atomic.LoadInt64(&c.seqGen.counter)).
+		Int("send_buffer_len", bufferLen).
+		Int("send_buffer_cap", bufferCap).
+		Float64("send_buffer_usage_pct", bufferUsagePercent).
+		Int32("send_attempts", atomic.LoadInt32(&c.sendAttempts)).
+		Time("connected_at", c.connectedAt).
 		Msg("Client disconnected")
 
 	// Use sync.Once to ensure connection is only closed once
@@ -1033,6 +1073,23 @@ func (s *Server) broadcast(subject string, message []byte) {
 
 			// Track dropped broadcast with channel and reason (both Prometheus and Stats)
 			RecordDroppedBroadcastWithStats(s.stats, channel, DropReasonBufferFull)
+
+			// Phase 4: Sampled structured logging (every 100th drop to avoid log spam)
+			dropCount := atomic.AddInt64(&s.stats.DroppedBroadcastLogCounter, 1)
+			if dropCount%100 == 0 {
+				bufferLen := len(client.send)
+				bufferCap := cap(client.send)
+				s.structLogger.Warn().
+					Int64("client_id", client.id).
+					Str("channel", channel).
+					Str("reason", DropReasonBufferFull).
+					Int32("attempts", attempts).
+					Int("buffer_len", bufferLen).
+					Int("buffer_cap", bufferCap).
+					Float64("buffer_usage_pct", float64(bufferLen)/float64(bufferCap)*100).
+					Int64("total_drops", dropCount).
+					Msg("Broadcast dropped (sampled: every 100th)")
+			}
 
 			// Log warning on first failure (avoid spam)
 			// Use atomic CompareAndSwap to avoid race condition
