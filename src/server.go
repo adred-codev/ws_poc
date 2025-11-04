@@ -88,7 +88,7 @@ type Server struct {
 	connections       *ConnectionPool
 	clients           sync.Map // map[*Client]bool
 	clientCount       int64
-	connectionsSem    chan struct{} // Semaphore for max connections
+	connectionsSem    chan struct{}      // Semaphore for max connections
 	subscriptionIndex *SubscriptionIndex // Fast lookup: channel → subscribers (93% CPU savings!)
 
 	// Performance optimization
@@ -626,27 +626,59 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	go s.readPump(client)
 }
 
+// disconnectClient handles client disconnect with proper instrumentation
+// Centralizes all disconnect logic to ensure consistent metrics and logging
+func (s *Server) disconnectClient(c *Client, reason, initiatedBy string) {
+	// Calculate connection duration for metrics
+	duration := time.Since(c.connectedAt)
+
+	// Record disconnect metrics
+	RecordDisconnect(reason, initiatedBy, duration)
+
+	// Log disconnect with context
+	s.structLogger.Info().
+		Int64("client_id", c.id).
+		Str("reason", reason).
+		Str("initiated_by", initiatedBy).
+		Dur("connection_duration", duration).
+		Int("subscriptions_count", c.subscriptions.Count()).
+		Int64("sequence_number", atomic.LoadInt64(&c.seqGen.counter)).
+		Msg("Client disconnected")
+
+	// Use sync.Once to ensure connection is only closed once
+	// Prevents race condition with multiple goroutines trying to close
+	c.closeOnce.Do(func() {
+		if c.conn != nil {
+			c.conn.Close()
+		}
+	})
+
+	// Cleanup resources
+	s.clients.Delete(c)
+	atomic.AddInt64(&s.stats.CurrentConnections, -1)
+
+	// Remove client from subscription index (prevent memory leak)
+	s.subscriptionIndex.RemoveClient(c)
+
+	// Return client to pool for reuse
+	s.connections.Put(c)
+	<-s.connectionsSem // Release connection slot
+
+	// Clean up rate limiter state
+	s.rateLimiter.RemoveClient(c.id)
+}
+
 func (s *Server) readPump(c *Client) {
+	var disconnectReason string
+	var initiatedBy string
+
 	defer func() {
-		// Use sync.Once to ensure connection is only closed once
-		// Prevents race condition with writePump also trying to close
-		c.closeOnce.Do(func() {
-			if c.conn != nil {
-				c.conn.Close()
-			}
-		})
-		s.clients.Delete(c)
-		atomic.AddInt64(&s.stats.CurrentConnections, -1)
-
-		// Remove client from subscription index (cleanup to prevent memory leak)
-		s.subscriptionIndex.RemoveClient(c)
-
-		s.connections.Put(c)
-		<-s.connectionsSem // Release connection slot
-
-		// Clean up rate limiter state
-		// Important for memory management - prevents leak
-		s.rateLimiter.RemoveClient(c.id)
+		// Determine disconnect reason if not already set
+		if disconnectReason == "" {
+			disconnectReason = DisconnectReasonReadError
+			initiatedBy = DisconnectInitiatedByClient
+		}
+		s.disconnectClient(c, disconnectReason, initiatedBy)
 	}()
 
 	c.conn.SetReadDeadline(time.Now().Add(pongWait))
@@ -654,12 +686,9 @@ func (s *Server) readPump(c *Client) {
 	for {
 		msg, op, err := wsutil.ReadClientData(c.conn)
 		if err != nil {
-			// Log disconnection reason for visibility
-			s.structLogger.Debug().
-				Int64("client_id", c.id).
-				Err(err).
-				Str("reason", "read_error").
-				Msg("Client disconnected from readPump")
+			// All read errors treated as client-initiated disconnect
+			disconnectReason = DisconnectReasonReadError
+			initiatedBy = DisconnectInitiatedByClient
 			break
 		}
 
@@ -959,10 +988,17 @@ func (s *Server) broadcast(subject string, message []byte) {
 			if attempts >= 3 {
 				s.logger.Printf("❌ Disconnecting client %d (too slow: %d consecutive send failures)", client.id, attempts)
 
+				// Record disconnect metrics with proper categorization
+				duration := time.Since(client.connectedAt)
+				RecordDisconnect(DisconnectReasonWriteTimeout, DisconnectInitiatedByServer, duration)
+
 				// Audit log slow client disconnection
 				s.auditLogger.Warning("SlowClientDisconnected", "Client disconnected for being too slow", map[string]any{
-					"clientID":         client.id,
-					"consecutiveFails": attempts,
+					"clientID":           client.id,
+					"consecutiveFails":   attempts,
+					"connectionDuration": duration.Seconds(),
+					"subscriptionsCount": client.subscriptions.Count(),
+					"sequenceNumber":     atomic.LoadInt64(&client.seqGen.counter),
 				})
 
 				// Send WebSocket close frame with reason code
@@ -1492,9 +1528,13 @@ func (s *Server) Shutdown() error {
 	}
 
 forceClose:
-	// Force close all remaining connections
+	// Force close all remaining connections with proper metrics
 	s.clients.Range(func(key, value interface{}) bool {
 		if client, ok := key.(*Client); ok {
+			// Record shutdown disconnect
+			duration := time.Since(client.connectedAt)
+			RecordDisconnect(DisconnectReasonServerShutdown, DisconnectInitiatedByServer, duration)
+
 			close(client.send)
 		}
 		return true

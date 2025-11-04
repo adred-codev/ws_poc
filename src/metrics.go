@@ -34,6 +34,18 @@ var (
 		Help: "Total number of failed connection attempts",
 	})
 
+	// Disconnect tracking with categorization
+	disconnectsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "ws_disconnects_total",
+		Help: "Total disconnections by reason and who initiated",
+	}, []string{"reason", "initiated_by"})
+
+	connectionDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "ws_connection_duration_seconds",
+		Help:    "Connection duration before disconnect",
+		Buckets: []float64{1, 5, 10, 30, 60, 300, 600, 1800, 3600}, // 1s to 1hr
+	}, []string{"reason"})
+
 	// Message metrics
 	messagesSent = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "ws_messages_sent_total",
@@ -147,6 +159,8 @@ func init() {
 	prometheus.MustRegister(connectionsActive)
 	prometheus.MustRegister(connectionsMax)
 	prometheus.MustRegister(connectionsFailed)
+	prometheus.MustRegister(disconnectsTotal)
+	prometheus.MustRegister(connectionDuration)
 
 	prometheus.MustRegister(messagesSent)
 	prometheus.MustRegister(messagesReceived)
@@ -374,6 +388,30 @@ func RecordSerializationError(severity string) {
 // RecordConnectionError tracks connection errors
 func RecordConnectionError(severity string) {
 	errorsTotal.WithLabelValues(ErrorTypeConnection, severity).Inc()
+}
+
+// Disconnect reasons - standardized constants for categorization
+const (
+	DisconnectReasonReadError         = "read_error"          // Client stopped reading (network issue, crash)
+	DisconnectReasonWriteTimeout      = "write_timeout"       // Slow client (send buffer full)
+	DisconnectReasonPingTimeout       = "ping_timeout"        // Client didn't respond to ping
+	DisconnectReasonRateLimitExceeded = "rate_limit_exceeded" // Client sent too many messages
+	DisconnectReasonServerShutdown    = "server_shutdown"     // Graceful shutdown
+	DisconnectReasonClientInitiated   = "client_initiated"    // Normal close from client
+	DisconnectReasonSubscriptionError = "subscription_error"  // Invalid subscription
+	DisconnectReasonSendChannelClosed = "send_channel_closed" // Server closed send channel
+)
+
+// Who initiated the disconnect
+const (
+	DisconnectInitiatedByClient = "client"
+	DisconnectInitiatedByServer = "server"
+)
+
+// RecordDisconnect tracks a disconnect with reason, initiator, and duration
+func RecordDisconnect(reason, initiatedBy string, duration time.Duration) {
+	disconnectsTotal.WithLabelValues(reason, initiatedBy).Inc()
+	connectionDuration.WithLabelValues(reason).Observe(duration.Seconds())
 }
 
 // handleMetrics serves Prometheus metrics at /metrics endpoint

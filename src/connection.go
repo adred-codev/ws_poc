@@ -76,6 +76,7 @@ type Client struct {
 	lastMessageSentAt time.Time // Timestamp of last successful send
 	sendAttempts      int32     // Consecutive failed send attempts (atomic for thread-safety)
 	slowClientWarned  int32     // Flag to avoid log spam (warn once) - atomic: 0 = not warned, 1 = warned
+	connectedAt       time.Time // Timestamp when client connected (for disconnect duration tracking)
 
 	// Subscription filtering fields
 	// Purpose: Only send messages to clients subscribed to specific channels
@@ -161,6 +162,7 @@ func (p *ConnectionPool) Get() *Client {
 		client.lastMessageSentAt = time.Now()
 		atomic.StoreInt32(&client.sendAttempts, 0)
 		atomic.StoreInt32(&client.slowClientWarned, 0) // 0 = not warned
+		client.connectedAt = time.Now()                // Track connection start time for metrics
 
 		// Initialize subscription set
 		// Each new connection starts with no subscriptions
