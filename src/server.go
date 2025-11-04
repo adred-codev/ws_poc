@@ -129,6 +129,14 @@ type Stats struct {
 	SlowClientsDisconnected int64 // Count of clients disconnected for being too slow
 	RateLimitedMessages     int64 // Count of messages dropped due to rate limiting
 	MessageReplayRequests   int64 // Count of replay requests served (gap recovery)
+
+	// Phase 2 observability metrics
+	DisconnectsByReason        map[string]int64 // Disconnect counts by reason (read_error, write_timeout, etc.)
+	DroppedBroadcastsByChannel map[string]int64 // Dropped broadcast counts by channel
+	BufferSaturationSamples    []int            // Recent buffer saturation samples (last 100)
+	disconnectsMu              sync.RWMutex     // Protects DisconnectsByReason map
+	dropsMu                    sync.RWMutex     // Protects DroppedBroadcastsByChannel map
+	buffersMu                  sync.RWMutex     // Protects BufferSaturationSamples slice
 }
 
 func NewServer(config ServerConfig, logger *log.Logger) (*Server, error) {
@@ -155,7 +163,10 @@ func NewServer(config ServerConfig, logger *log.Logger) (*Server, error) {
 		workerPool:        NewWorkerPool(config.WorkerCount, config.WorkerQueueSize, structLogger),
 		rateLimiter:       NewRateLimiter(),
 		stats: &Stats{
-			StartTime: time.Now(),
+			StartTime:                  time.Now(),
+			DisconnectsByReason:        make(map[string]int64),
+			DroppedBroadcastsByChannel: make(map[string]int64),
+			BufferSaturationSamples:    make([]int, 0, 100),
 		},
 	}
 
@@ -590,10 +601,10 @@ func (s *Server) sampleClientBuffers() {
 					return true // Skip invalid entry
 				}
 
-				// Record buffer usage
+				// Record buffer usage (both Prometheus and Stats)
 				bufferLen := len(client.send)
 				bufferCap := cap(client.send)
-				RecordClientBufferSize(bufferLen, bufferCap)
+				RecordClientBufferSizeWithStats(s.stats, bufferLen, bufferCap)
 
 				samplesCollected++
 				return true // Continue iteration
@@ -677,8 +688,8 @@ func (s *Server) disconnectClient(c *Client, reason, initiatedBy string) {
 	// Calculate connection duration for metrics
 	duration := time.Since(c.connectedAt)
 
-	// Record disconnect metrics
-	RecordDisconnect(reason, initiatedBy, duration)
+	// Record disconnect metrics (both Prometheus and Stats)
+	RecordDisconnectWithStats(s.stats, reason, initiatedBy, duration)
 
 	// Log disconnect with context
 	s.structLogger.Info().
@@ -1020,8 +1031,8 @@ func (s *Server) broadcast(subject string, message []byte) {
 			// This keeps broadcast fast (~1-2ms) regardless of slow clients.
 			attempts := atomic.AddInt32(&client.sendAttempts, 1)
 
-			// Track dropped broadcast with channel and reason
-			RecordDroppedBroadcast(channel, DropReasonBufferFull)
+			// Track dropped broadcast with channel and reason (both Prometheus and Stats)
+			RecordDroppedBroadcastWithStats(s.stats, channel, DropReasonBufferFull)
 
 			// Log warning on first failure (avoid spam)
 			// Use atomic CompareAndSwap to avoid race condition
@@ -1036,9 +1047,9 @@ func (s *Server) broadcast(subject string, message []byte) {
 			if attempts >= 3 {
 				s.logger.Printf("❌ Disconnecting client %d (too slow: %d consecutive send failures)", client.id, attempts)
 
-				// Record disconnect metrics with proper categorization
+				// Record disconnect metrics with proper categorization (both Prometheus and Stats)
 				duration := time.Since(client.connectedAt)
-				RecordDisconnect(DisconnectReasonWriteTimeout, DisconnectInitiatedByServer, duration)
+				RecordDisconnectWithStats(s.stats, DisconnectReasonWriteTimeout, DisconnectInitiatedByServer, duration)
 
 				// Record how many attempts it took before disconnect (for histogram analysis)
 				RecordSlowClientAttempt(int(attempts))
@@ -1521,10 +1532,103 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 				"worker_pool_size": resourceStats["worker_pool_size"],
 			},
 		},
-		"warnings": warnings,
-		"errors":   errors,
-		"uptime":   time.Since(s.stats.StartTime).Seconds(),
+		"observability": s.getObservabilityStats(),
+		"warnings":      warnings,
+		"errors":        errors,
+		"uptime":        time.Since(s.stats.StartTime).Seconds(),
 	})
+}
+
+// getObservabilityStats returns Phase 2 observability metrics for /health endpoint
+func (s *Server) getObservabilityStats() map[string]any {
+	// Get disconnect stats
+	s.stats.disconnectsMu.RLock()
+	disconnects := make(map[string]int64)
+	totalDisconnects := int64(0)
+	for reason, count := range s.stats.DisconnectsByReason {
+		disconnects[reason] = count
+		totalDisconnects += count
+	}
+	s.stats.disconnectsMu.RUnlock()
+
+	// Get dropped broadcast stats
+	s.stats.dropsMu.RLock()
+	droppedBroadcasts := make(map[string]int64)
+	totalDropped := int64(0)
+	for channel, count := range s.stats.DroppedBroadcastsByChannel {
+		droppedBroadcasts[channel] = count
+		totalDropped += count
+	}
+	s.stats.dropsMu.RUnlock()
+
+	// Calculate buffer saturation statistics
+	s.stats.buffersMu.RLock()
+	bufferStats := calculateBufferStats(s.stats.BufferSaturationSamples)
+	s.stats.buffersMu.RUnlock()
+
+	return map[string]any{
+		"disconnects": map[string]any{
+			"total":     totalDisconnects,
+			"by_reason": disconnects,
+		},
+		"dropped_broadcasts": map[string]any{
+			"total":      totalDropped,
+			"by_channel": droppedBroadcasts,
+		},
+		"buffer_saturation": bufferStats,
+	}
+}
+
+// calculateBufferStats computes statistics from buffer saturation samples
+func calculateBufferStats(samples []int) map[string]any {
+	if len(samples) == 0 {
+		return map[string]any{
+			"samples": 0,
+			"avg":     0,
+			"p50":     0,
+			"p95":     0,
+			"p99":     0,
+			"max":     0,
+		}
+	}
+
+	// Sort for percentile calculation
+	sorted := make([]int, len(samples))
+	copy(sorted, samples)
+
+	// Simple bubble sort for small arrays (max 100 elements)
+	for i := 0; i < len(sorted); i++ {
+		for j := i + 1; j < len(sorted); j++ {
+			if sorted[i] > sorted[j] {
+				sorted[i], sorted[j] = sorted[j], sorted[i]
+			}
+		}
+	}
+
+	// Calculate average
+	sum := 0
+	max := 0
+	for _, v := range sorted {
+		sum += v
+		if v > max {
+			max = v
+		}
+	}
+	avg := float64(sum) / float64(len(sorted))
+
+	// Calculate percentiles
+	p50idx := int(float64(len(sorted)) * 0.50)
+	p95idx := int(float64(len(sorted)) * 0.95)
+	p99idx := int(float64(len(sorted)) * 0.99)
+
+	return map[string]any{
+		"samples": len(samples),
+		"avg":     avg,
+		"p50":     sorted[p50idx],
+		"p95":     sorted[p95idx],
+		"p99":     sorted[p99idx],
+		"max":     max,
+	}
 }
 
 func (s *Server) Shutdown() error {
@@ -1582,9 +1686,9 @@ forceClose:
 	// Force close all remaining connections with proper metrics
 	s.clients.Range(func(key, value interface{}) bool {
 		if client, ok := key.(*Client); ok {
-			// Record shutdown disconnect
+			// Record shutdown disconnect (both Prometheus and Stats)
 			duration := time.Since(client.connectedAt)
-			RecordDisconnect(DisconnectReasonServerShutdown, DisconnectInitiatedByServer, duration)
+			RecordDisconnectWithStats(s.stats, DisconnectReasonServerShutdown, DisconnectInitiatedByServer, duration)
 
 			close(client.send)
 		}

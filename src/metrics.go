@@ -443,9 +443,32 @@ func RecordDisconnect(reason, initiatedBy string, duration time.Duration) {
 	connectionDuration.WithLabelValues(reason).Observe(duration.Seconds())
 }
 
+// RecordDisconnectWithStats tracks a disconnect and updates both Prometheus and Stats
+func RecordDisconnectWithStats(stats *Stats, reason, initiatedBy string, duration time.Duration) {
+	// Update Prometheus metrics
+	disconnectsTotal.WithLabelValues(reason, initiatedBy).Inc()
+	connectionDuration.WithLabelValues(reason).Observe(duration.Seconds())
+
+	// Update Stats struct for /health endpoint
+	stats.disconnectsMu.Lock()
+	stats.DisconnectsByReason[reason]++
+	stats.disconnectsMu.Unlock()
+}
+
 // RecordDroppedBroadcast tracks a dropped broadcast message with channel and reason
 func RecordDroppedBroadcast(channel, reason string) {
 	droppedBroadcastsDetailed.WithLabelValues(channel, reason).Inc()
+}
+
+// RecordDroppedBroadcastWithStats tracks a dropped broadcast and updates both Prometheus and Stats
+func RecordDroppedBroadcastWithStats(stats *Stats, channel, reason string) {
+	// Update Prometheus metrics
+	droppedBroadcastsDetailed.WithLabelValues(channel, reason).Inc()
+
+	// Update Stats struct for /health endpoint
+	stats.dropsMu.Lock()
+	stats.DroppedBroadcastsByChannel[channel]++
+	stats.dropsMu.Unlock()
 }
 
 // RecordSlowClientAttempt records the number of send attempts before slow client disconnect
@@ -455,21 +478,22 @@ func RecordSlowClientAttempt(attempts int) {
 
 // RecordClientBufferSize samples a client's send buffer usage
 func RecordClientBufferSize(bufferLen, bufferCap int) {
-	// Calculate percentile category
-	percentile := "p50" // default
-	usage := float64(bufferLen) / float64(bufferCap) * 100
+	clientSendBufferSize.WithLabelValues("all").Observe(float64(bufferLen))
+}
 
-	if usage >= 99 {
-		percentile = "p99"
-	} else if usage >= 95 {
-		percentile = "p95"
-	} else if usage >= 90 {
-		percentile = "p90"
-	} else if usage >= 75 {
-		percentile = "p75"
+// RecordClientBufferSizeWithStats samples a client's send buffer and updates both Prometheus and Stats
+func RecordClientBufferSizeWithStats(stats *Stats, bufferLen, bufferCap int) {
+	// Update Prometheus metrics
+	clientSendBufferSize.WithLabelValues("all").Observe(float64(bufferLen))
+
+	// Update Stats struct for /health endpoint (keep last 100 samples)
+	usagePercent := int(float64(bufferLen) / float64(bufferCap) * 100)
+	stats.buffersMu.Lock()
+	stats.BufferSaturationSamples = append(stats.BufferSaturationSamples, usagePercent)
+	if len(stats.BufferSaturationSamples) > 100 {
+		stats.BufferSaturationSamples = stats.BufferSaturationSamples[1:]
 	}
-
-	clientSendBufferSize.WithLabelValues(percentile).Observe(float64(bufferLen))
+	stats.buffersMu.Unlock()
 }
 
 // handleMetrics serves Prometheus metrics at /metrics endpoint
