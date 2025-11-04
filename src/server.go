@@ -391,6 +391,10 @@ func (s *Server) Start() error {
 	s.wg.Add(1)
 	go s.monitorMemory()
 
+	// Start buffer saturation sampling
+	s.wg.Add(1)
+	go s.sampleClientBuffers()
+
 	// Start ResourceGuard monitoring (static limits with safety checks)
 	s.resourceGuard.StartMonitoring(s.ctx, s.config.MetricsInterval)
 
@@ -553,6 +557,47 @@ func (s *Server) monitorMemory() {
 					"connections":     currentConns,
 				})
 			}
+		}
+	}
+}
+
+// sampleClientBuffers periodically samples client send buffer usage for saturation metrics
+// Samples a subset of clients to avoid expensive iteration over all connections
+func (s *Server) sampleClientBuffers() {
+	defer s.wg.Done()
+
+	// Sample every 10 seconds (balance between granularity and overhead)
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-ticker.C:
+			// Sample up to 100 random clients to avoid iterating all connections
+			// This gives statistically significant buffer saturation data without overhead
+			samplesCollected := 0
+			maxSamples := 100
+
+			s.clients.Range(func(key, value interface{}) bool {
+				if samplesCollected >= maxSamples {
+					return false // Stop iteration
+				}
+
+				client, ok := key.(*Client)
+				if !ok {
+					return true // Skip invalid entry
+				}
+
+				// Record buffer usage
+				bufferLen := len(client.send)
+				bufferCap := cap(client.send)
+				RecordClientBufferSize(bufferLen, bufferCap)
+
+				samplesCollected++
+				return true // Continue iteration
+			})
 		}
 	}
 }
@@ -975,6 +1020,9 @@ func (s *Server) broadcast(subject string, message []byte) {
 			// This keeps broadcast fast (~1-2ms) regardless of slow clients.
 			attempts := atomic.AddInt32(&client.sendAttempts, 1)
 
+			// Track dropped broadcast with channel and reason
+			RecordDroppedBroadcast(channel, DropReasonBufferFull)
+
 			// Log warning on first failure (avoid spam)
 			// Use atomic CompareAndSwap to avoid race condition
 			if attempts == 1 && atomic.CompareAndSwapInt32(&client.slowClientWarned, 0, 1) {
@@ -991,6 +1039,9 @@ func (s *Server) broadcast(subject string, message []byte) {
 				// Record disconnect metrics with proper categorization
 				duration := time.Since(client.connectedAt)
 				RecordDisconnect(DisconnectReasonWriteTimeout, DisconnectInitiatedByServer, duration)
+
+				// Record how many attempts it took before disconnect (for histogram analysis)
+				RecordSlowClientAttempt(int(attempts))
 
 				// Audit log slow client disconnection
 				s.auditLogger.Warning("SlowClientDisconnected", "Client disconnected for being too slow", map[string]any{

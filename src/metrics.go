@@ -88,6 +88,24 @@ var (
 		Help: "Total number of broadcast tasks dropped when worker pool queue full",
 	})
 
+	// Enhanced drop tracking with categorization
+	droppedBroadcastsDetailed = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "ws_dropped_broadcasts_detailed_total",
+		Help: "Total broadcast messages dropped by channel and reason",
+	}, []string{"channel", "reason"})
+
+	clientSendBufferSize = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "ws_client_send_buffer_size",
+		Help:    "Distribution of client send buffer usage",
+		Buckets: []float64{0, 64, 128, 256, 384, 448, 480, 496, 504, 510, 511, 512}, // Track saturation
+	}, []string{"percentile"})
+
+	slowClientAttempts = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "ws_slow_client_attempts_before_disconnect",
+		Help:    "Distribution of send attempts before slow client disconnect",
+		Buckets: []float64{1, 2, 3, 4, 5, 10, 20},
+	})
+
 	// System metrics
 	memoryUsageBytes = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "ws_memory_bytes",
@@ -171,6 +189,9 @@ func init() {
 	prometheus.MustRegister(rateLimitedMessages)
 	prometheus.MustRegister(replayRequests)
 	prometheus.MustRegister(droppedBroadcasts)
+	prometheus.MustRegister(droppedBroadcastsDetailed)
+	prometheus.MustRegister(clientSendBufferSize)
+	prometheus.MustRegister(slowClientAttempts)
 
 	prometheus.MustRegister(memoryUsageBytes)
 	prometheus.MustRegister(memoryLimitBytes)
@@ -408,10 +429,47 @@ const (
 	DisconnectInitiatedByServer = "server"
 )
 
+// Drop reasons - why broadcast messages were dropped
+const (
+	DropReasonSendTimeout        = "send_timeout"        // Timed out trying to send to client
+	DropReasonBufferFull         = "buffer_full"         // Client send buffer is full
+	DropReasonWorkerQueueFull    = "worker_queue_full"   // Worker pool queue full
+	DropReasonClientDisconnected = "client_disconnected" // Client already disconnected
+)
+
 // RecordDisconnect tracks a disconnect with reason, initiator, and duration
 func RecordDisconnect(reason, initiatedBy string, duration time.Duration) {
 	disconnectsTotal.WithLabelValues(reason, initiatedBy).Inc()
 	connectionDuration.WithLabelValues(reason).Observe(duration.Seconds())
+}
+
+// RecordDroppedBroadcast tracks a dropped broadcast message with channel and reason
+func RecordDroppedBroadcast(channel, reason string) {
+	droppedBroadcastsDetailed.WithLabelValues(channel, reason).Inc()
+}
+
+// RecordSlowClientAttempt records the number of send attempts before slow client disconnect
+func RecordSlowClientAttempt(attempts int) {
+	slowClientAttempts.Observe(float64(attempts))
+}
+
+// RecordClientBufferSize samples a client's send buffer usage
+func RecordClientBufferSize(bufferLen, bufferCap int) {
+	// Calculate percentile category
+	percentile := "p50" // default
+	usage := float64(bufferLen) / float64(bufferCap) * 100
+
+	if usage >= 99 {
+		percentile = "p99"
+	} else if usage >= 95 {
+		percentile = "p95"
+	} else if usage >= 90 {
+		percentile = "p90"
+	} else if usage >= 75 {
+		percentile = "p75"
+	}
+
+	clientSendBufferSize.WithLabelValues(percentile).Observe(float64(bufferLen))
 }
 
 // handleMetrics serves Prometheus metrics at /metrics endpoint
