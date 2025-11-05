@@ -732,7 +732,7 @@
       },
       "targets": [
         {
-          "expr": "rate(ws_disconnects_total[5m]) or vector(0)",
+          "expr": "increase(ws_disconnects_total[5m]) or vector(0)",
           "legendFormat": "{{reason}} ({{initiated_by}})",
           "refId": "A"
         }
@@ -741,14 +741,15 @@
         "defaults": {
           "custom": {
             "drawStyle": "line",
-            "lineWidth": 1,
-            "fillOpacity": 10,
-            "showPoints": "never"
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "showPoints": "auto"
           },
           "color": {
             "mode": "palette-classic"
           },
-          "unit": "ops"
+          "unit": "short",
+          "decimals": 0
         }
       },
       "options": {
@@ -775,7 +776,7 @@
       },
       "targets": [
         {
-          "expr": "rate(ws_dropped_broadcasts_detailed_total[5m]) or vector(0)",
+          "expr": "increase(ws_dropped_broadcasts_detailed_total[5m]) or vector(0)",
           "legendFormat": "{{channel}} - {{reason}}",
           "refId": "A"
         }
@@ -784,14 +785,15 @@
         "defaults": {
           "custom": {
             "drawStyle": "line",
-            "lineWidth": 1,
-            "fillOpacity": 10,
-            "showPoints": "never"
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "showPoints": "auto"
           },
           "color": {
             "mode": "palette-classic"
           },
-          "unit": "ops"
+          "unit": "short",
+          "decimals": 0
         }
       },
       "options": {
