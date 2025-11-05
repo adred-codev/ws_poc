@@ -1,0 +1,244 @@
+services:
+  # NATS Message Broker
+  nats:
+    image: nats:2.12-alpine
+    container_name: odin-nats
+    ports:
+      - "4222:4222" # Client connections
+      - "8222:8222" # HTTP monitoring
+      - "6222:6222" # Cluster routing
+    command:
+      - "--jetstream"
+      - "--store_dir=/data"
+      - "--http_port=8222"
+    volumes:
+      - nats_data:/data
+    networks:
+      - odin-network
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--quiet",
+          "--tries=1",
+          "--spider",
+          "http://localhost:8222/healthz",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25" # Reduced for ws-server priority
+          memory: 128M
+        reservations:
+          cpus: "0.25"
+          memory: 128M
+
+  # Go WebSocket Server (Production)
+  ws-go:
+    build:
+      context: ../../ws
+      dockerfile: Dockerfile
+    container_name: odin-ws-go
+    ports:
+      - "3004:3002" # WebSocket + Metrics port
+    command: ["./odin-ws-server"]
+    environment:
+      # Server configuration
+      - WS_ADDR=:3002
+      - NATS_URL=nats://nats:4222
+      # Static resource configuration (explicit limits)
+      - WS_CPU_LIMIT=1.5 # Must match deploy.resources.limits.cpus below
+      - WS_MEMORY_LIMIT=805306368 # 768MB in bytes
+      - WS_MAX_CONNECTIONS=2000
+      # Worker pool sizing:
+      #   Formula: max(32, connections/16)
+      #   Calculation: max(32, 2000/16) = 128 workers
+      #   Reason: Workers spend most time blocked on network writes, not CPU
+      #   Load per worker: (2000 conns × 20 broadcasts/sec) / 128 = 313 items/sec
+      #   Tradeoff: More workers = better broadcast throughput, more context switching
+      - WS_WORKER_POOL_SIZE=128
+      - WS_WORKER_QUEUE_SIZE=12800 # 100x worker count
+      # Rate limiting (prevent overload) - FIXED VALUES
+      - WS_MAX_NATS_RATE=20 # Max NATS messages/sec (fixed, does not scale)
+      - WS_MAX_BROADCAST_RATE=20 # Max broadcasts/sec (fixed, does not scale)
+      # Goroutine limit calculation:
+      #   Formula: ((MAX_CONNECTIONS × 2) + STATIC + OVERHEAD) × 1.2
+      #   Per connection: 2 goroutines (readPump + writePump)
+      #   Static: workers(128) + monitors(5) + runtime(8) = 141
+      #   Calculation: ((2000 × 2) + 141) × 1.2 = 4,969 → 5000
+      #   Memory cost: 5,000 × 8KB = 40MB (5.2% of 768MB RAM)
+      #   CPU cost: Only active goroutines use CPU (most idle on I/O)
+      - WS_MAX_GOROUTINES=5000 # Must sync with WS_MAX_CONNECTIONS
+      # Safety thresholds
+      - WS_CPU_REJECT_THRESHOLD=75.0
+      - WS_CPU_PAUSE_THRESHOLD=80.0
+      # Logging
+      - LOG_LEVEL=info # debug, info, warn, error
+      - LOG_FORMAT=json # json for Loki
+    networks:
+      - odin-network
+    depends_on:
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5" # 75% of e2-micro
+          memory: 768M # 75% of RAM
+          pids: 1000
+        reservations:
+          cpus: "1.5"
+          memory: 768M
+    ulimits:
+      nofile:
+        soft: 200000
+        hard: 200000
+      nproc:
+        soft: 32768
+        hard: 32768
+
+  # NATS Publisher Service
+  publisher:
+    build:
+      context: ../../publisher
+      dockerfile: Dockerfile
+    container_name: odin-publisher
+    ports:
+      - "3003:3003" # HTTP control API
+    environment:
+      - NATS_URL=nats://nats:4222
+      - PORT=3003
+      - NODE_ENV=production
+      - TOKENS=BTC,ETH,ODIN,SOL,DOGE
+    networks:
+      - odin-network
+    depends_on:
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.1"
+          memory: 64M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+
+  # Prometheus (Metrics Collection)
+  prometheus:
+    image: prom/prometheus:v3.6.0
+    container_name: odin-prometheus
+    ports:
+      - "9091:9090" # Prometheus UI
+    volumes:
+      - ./configs/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=7d" # 7d retention (e2-small)
+      - "--web.console.libraries=/etc/prometheus/console_libraries"
+      - "--web.console.templates=/etc/prometheus/consoles"
+    networks:
+      - odin-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.15"
+          memory: 128M # Increased from 64M for e2-small
+        reservations:
+          cpus: "0.15"
+          memory: 128M
+
+  # Grafana (Visualization)
+  grafana:
+    image: grafana/grafana:12.2.0
+    container_name: odin-grafana
+    ports:
+      - "3010:3000" # Grafana UI
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    networks:
+      - odin-network
+    depends_on:
+      - prometheus
+      - loki
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.1"
+          memory: 256M # Increased from 128M (memory starvation at 98.77%)
+        reservations:
+          cpus: "0.1"
+          memory: 256M
+
+  # Loki (Log Aggregation)
+  loki:
+    image: grafana/loki:3.3.2
+    container_name: odin-loki
+    ports:
+      - "3101:3100" # Loki API
+    volumes:
+      - ./configs/loki-config.yml:/etc/loki/loki-config.yml
+      - loki_data:/loki
+    command: -config.file=/etc/loki/loki-config.yml
+    networks:
+      - odin-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.1"
+          memory: 128M # Increased from 32M (was OOM killed at 96MB)
+        reservations:
+          cpus: "0.1"
+          memory: 128M
+
+  # Promtail (Log Collector)
+  promtail:
+    image: grafana/promtail:3.3.2
+    container_name: odin-promtail
+    volumes:
+      - ./configs/promtail-config.yml:/etc/promtail/promtail-config.yml
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: -config.file=/etc/promtail/promtail-config.yml
+    networks:
+      - odin-network
+    depends_on:
+      - loki
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.1"
+          memory: 64M # Increased from 16M (was OOM killed at 71MB)
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+
+networks:
+  odin-network:
+    driver: bridge
+    driver_opts:
+      com.docker.network.driver.mtu: 1450
+
+volumes:
+  nats_data:
+  prometheus_data:
+  grafana_data:
+  loki_data:

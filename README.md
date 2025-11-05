@@ -58,22 +58,47 @@ A high-performance WebSocket server designed for real-time data streaming with e
 ## 📁 Project Structure
 
 ```
-├── /src/                 # Go WebSocket server (production)
-├── /publisher/           # Node.js NATS publisher service
-├── /node-server/         # Node.js WebSocket server (alternative implementation)
-├── /scripts/             # Testing and utility scripts
-├── /docs/                # Complete documentation
-│   ├── /architecture/    # System design documents
-│   ├── /deployment/      # Deployment guides
-│   ├── /monitoring/      # Monitoring guides
-│   └── /development/     # Development guides
-├── /grafana/             # Grafana dashboard provisioning
-├── /taskfiles/           # Modular task definitions
-├── docker-compose.yml    # Docker orchestration
-├── docker-compose.prod.yml # Production overrides
-├── Taskfile.yml          # Main task orchestrator
-└── prometheus.yml        # Prometheus configuration
+├── /cmd/
+│   └── /ws-server/       # Main application entry point
+├── /internal/            # Private application packages
+│   ├── /audit/          # Audit logging and alerting
+│   ├── /client/         # WebSocket client management
+│   ├── /config/         # Configuration loading
+│   ├── /limiter/        # Rate limiting (token bucket)
+│   ├── /logger/         # Structured logging
+│   ├── /message/        # Message envelopes and sequencing
+│   ├── /metrics/        # Prometheus metrics collection
+│   ├── /pool/           # Buffer and worker pools
+│   ├── /replay/         # Message replay buffers
+│   ├── /resource/       # Resource limit management
+│   ├── /server/         # HTTP/WebSocket server core
+│   └── /subscription/   # Channel subscription management
+├── /publisher/          # Node.js NATS publisher service
+├── /node-server/        # Node.js WebSocket server (alternative)
+├── /scripts/            # Testing and utility scripts
+├── /docs/               # Complete documentation
+│   ├── /architecture/   # System design documents
+│   ├── /deployment/     # Deployment guides
+│   ├── /monitoring/     # Monitoring guides
+│   └── /development/    # Development guides
+├── /grafana/            # Grafana dashboard provisioning
+├── /taskfiles/          # Modular task definitions
+├── docker-compose.yml   # Docker orchestration
+├── Dockerfile           # Multi-stage Docker build
+├── Taskfile.yml         # Main task orchestrator
+└── prometheus.yml       # Prometheus configuration
 ```
+
+### Architecture (Go Server)
+
+The Go server follows idiomatic Go project structure:
+
+- **`cmd/ws-server/`** - Application entry point with graceful shutdown
+- **`internal/`** - Private packages (not importable by external projects)
+  - **Domain-focused packages** - Organized by business domain (client, server, metrics)
+  - **Interface-based design** - Minimal interfaces to break circular dependencies
+  - **Dependency injection** - All dependencies passed via constructors
+  - **Thread-safe** - Atomic operations and fine-grained locking
 
 ## 🚀 Quick Start
 

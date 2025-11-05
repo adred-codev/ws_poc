@@ -1,12 +1,12 @@
-version: '3'
+version: "3"
 
-# Isolated Three-Instance Setup
+# Isolated Three-Instance Setup (GCP Distributed Deployment)
 # Based on docs/INSTANCE_ISOLATION_PLAN.md
 #
 # Docker Compose manifests located in:
-#   - isolated/ws-go/docker-compose.yml
-#   - isolated/backend/docker-compose.yml
-#   - isolated/backend/prometheus.yml
+#   - deployments/gcp-distributed/ws-server/docker-compose.yml
+#   - deployments/gcp-distributed/backend/docker-compose.yml
+#   - deployments/gcp-distributed/backend/prometheus.yml
 #
 # Architecture:
 #   - odin-ws-go (e2-small): WebSocket server only
@@ -126,9 +126,9 @@ tasks:
       - gcloud compute firewall-rules list --filter="name~'isolated'"
       - echo "✅ Firewall rules configured"
 
-# ============================================================================
-# INFRASTRUCTURE - CREATE INSTANCES
-# ============================================================================
+  # ============================================================================
+  # INFRASTRUCTURE - CREATE INSTANCES
+  # ============================================================================
 
   create:ws-go:
     desc: Create dedicated ws-go instance (e2-small)
@@ -277,22 +277,22 @@ tasks:
       - echo "🎉 All instances created!"
       - task: info:all
 
-# ============================================================================
-# DEPLOYMENT - COPY FILES & START SERVICES
-# ============================================================================
+  # ============================================================================
+  # DEPLOYMENT - COPY FILES & START SERVICES
+  # ============================================================================
 
   deploy:ws-go:
     desc: Deploy ws-go service to dedicated instance
     cmds:
       - echo "📦 Deploying ws-go..."
 
-      # Copy source code and manifest to deploy user's home
-      - echo "📤 Copying source files and manifest..."
+      # Copy source code (self-contained ws/ directory with go.mod, Dockerfile)
+      - echo "📤 Copying ws-server source files..."
       - gcloud compute ssh {{.WS_GO_INSTANCE}} --zone={{.GCP_ZONE}} --command='rm -rf /tmp/ws_poc_deploy && mkdir -p /tmp/ws_poc_deploy'
-      - gcloud compute scp --recurse {{.USER_WORKING_DIR}}/src {{.WS_GO_INSTANCE}}:/tmp/ws_poc_deploy/ --zone={{.GCP_ZONE}}
-      - gcloud compute scp {{.USER_WORKING_DIR}}/isolated/ws-go/docker-compose.yml {{.WS_GO_INSTANCE}}:/tmp/ws_poc_deploy/docker-compose.template.yml --zone={{.GCP_ZONE}}
-      - gcloud compute scp {{.USER_WORKING_DIR}}/isolated/ws-go/promtail-config.yml {{.WS_GO_INSTANCE}}:/tmp/ws_poc_deploy/promtail-config.template.yml --zone={{.GCP_ZONE}}
-      - gcloud compute scp {{.USER_WORKING_DIR}}/isolated/ws-go/.env.production {{.WS_GO_INSTANCE}}:/tmp/ws_poc_deploy/.env.production --zone={{.GCP_ZONE}}
+      - gcloud compute scp --recurse {{.USER_WORKING_DIR}}/ws {{.WS_GO_INSTANCE}}:/tmp/ws_poc_deploy/ --zone={{.GCP_ZONE}}
+      - gcloud compute scp {{.USER_WORKING_DIR}}/deployments/gcp-distributed/ws-server/docker-compose.yml {{.WS_GO_INSTANCE}}:/tmp/ws_poc_deploy/docker-compose.template.yml --zone={{.GCP_ZONE}}
+      - gcloud compute scp {{.USER_WORKING_DIR}}/deployments/gcp-distributed/ws-server/promtail-config.yml {{.WS_GO_INSTANCE}}:/tmp/ws_poc_deploy/promtail-config.template.yml --zone={{.GCP_ZONE}}
+      - gcloud compute scp {{.USER_WORKING_DIR}}/deployments/gcp-distributed/ws-server/.env.production {{.WS_GO_INSTANCE}}:/tmp/ws_poc_deploy/.env.production --zone={{.GCP_ZONE}}
       - gcloud compute ssh {{.WS_GO_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo rm -rf /home/deploy/ws_poc && sudo mkdir -p /home/deploy/ws_poc && sudo sh -c "mv /tmp/ws_poc_deploy/* /tmp/ws_poc_deploy/.[!.]* /home/deploy/ws_poc/ 2>/dev/null || true" && sudo chown -R deploy:deploy /home/deploy/ws_poc'
 
       # Substitute variables and deploy
@@ -319,11 +319,11 @@ tasks:
       # Copy manifests and configs to deploy user's home
       - echo "📤 Copying manifests and configuration files..."
       - gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --command='rm -rf /tmp/ws_poc_deploy && mkdir -p /tmp/ws_poc_deploy'
-      - gcloud compute scp {{.USER_WORKING_DIR}}/isolated/backend/docker-compose.yml {{.BACKEND_INSTANCE}}:/tmp/ws_poc_deploy/docker-compose.yml --zone={{.GCP_ZONE}}
-      - gcloud compute scp {{.USER_WORKING_DIR}}/isolated/backend/prometheus.yml {{.BACKEND_INSTANCE}}:/tmp/ws_poc_deploy/prometheus.template.yml --zone={{.GCP_ZONE}}
-      - gcloud compute scp {{.USER_WORKING_DIR}}/loki-config.yml {{.BACKEND_INSTANCE}}:/tmp/ws_poc_deploy/loki-config.yml --zone={{.GCP_ZONE}}
-      - gcloud compute scp {{.USER_WORKING_DIR}}/promtail-config.yml {{.BACKEND_INSTANCE}}:/tmp/ws_poc_deploy/promtail-config.yml --zone={{.GCP_ZONE}}
-      - gcloud compute scp --recurse {{.USER_WORKING_DIR}}/grafana {{.BACKEND_INSTANCE}}:/tmp/ws_poc_deploy/ --zone={{.GCP_ZONE}}
+      - gcloud compute scp {{.USER_WORKING_DIR}}/deployments/gcp-distributed/backend/docker-compose.yml {{.BACKEND_INSTANCE}}:/tmp/ws_poc_deploy/docker-compose.yml --zone={{.GCP_ZONE}}
+      - gcloud compute scp {{.USER_WORKING_DIR}}/deployments/gcp-distributed/backend/prometheus.yml {{.BACKEND_INSTANCE}}:/tmp/ws_poc_deploy/prometheus.template.yml --zone={{.GCP_ZONE}}
+      - gcloud compute scp {{.USER_WORKING_DIR}}/deployments/local/configs/loki-config.yml {{.BACKEND_INSTANCE}}:/tmp/ws_poc_deploy/loki-config.yml --zone={{.GCP_ZONE}}
+      - gcloud compute scp {{.USER_WORKING_DIR}}/deployments/local/configs/promtail-config.yml {{.BACKEND_INSTANCE}}:/tmp/ws_poc_deploy/promtail-config.yml --zone={{.GCP_ZONE}}
+      - gcloud compute scp --recurse {{.USER_WORKING_DIR}}/deployments/local/grafana {{.BACKEND_INSTANCE}}:/tmp/ws_poc_deploy/ --zone={{.GCP_ZONE}}
       - gcloud compute scp --recurse {{.USER_WORKING_DIR}}/publisher {{.BACKEND_INSTANCE}}:/tmp/ws_poc_deploy/ --zone={{.GCP_ZONE}}
       - gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo rm -rf /home/deploy/ws_poc && sudo mkdir -p /home/deploy/ws_poc && sudo mv /tmp/ws_poc_deploy/* /home/deploy/ws_poc/ && sudo chown -R deploy:deploy /home/deploy/ws_poc'
 
@@ -365,7 +365,7 @@ tasks:
       - gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command='rm -rf /tmp/test_runner_deploy && mkdir -p /tmp/test_runner_deploy'
 
       # Copy test runner files to temp
-      - gcloud compute scp {{.USER_WORKING_DIR}}/isolated/test-runner/Dockerfile {{.TEST_RUNNER_INSTANCE}}:/tmp/test_runner_deploy/ --zone={{.GCP_ZONE}}
+      - gcloud compute scp {{.USER_WORKING_DIR}}/deployments/gcp-distributed/test-runner/Dockerfile {{.TEST_RUNNER_INSTANCE}}:/tmp/test_runner_deploy/ --zone={{.GCP_ZONE}}
       - gcloud compute scp {{.USER_WORKING_DIR}}/scripts/sustained-load-test.cjs {{.TEST_RUNNER_INSTANCE}}:/tmp/test_runner_deploy/ --zone={{.GCP_ZONE}}
       - gcloud compute scp {{.USER_WORKING_DIR}}/scripts/test-connection-rate.cjs {{.TEST_RUNNER_INSTANCE}}:/tmp/test_runner_deploy/ --zone={{.GCP_ZONE}}
       - gcloud compute scp {{.USER_WORKING_DIR}}/scripts/test-message-throughput.cjs {{.TEST_RUNNER_INSTANCE}}:/tmp/test_runner_deploy/ --zone={{.GCP_ZONE}}
@@ -384,22 +384,19 @@ tasks:
       # Prepare directories
       - gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command='rm -rf /tmp/test_runner_go_deploy && mkdir -p /tmp/test_runner_go_deploy'
 
-      # Copy Go test runner files
-      - echo "📤 Copying Go test runner files..."
-      - gcloud compute scp {{.USER_WORKING_DIR}}/isolated/test-runner-go/Dockerfile {{.TEST_RUNNER_INSTANCE}}:/tmp/test_runner_go_deploy/ --zone={{.GCP_ZONE}}
-      - gcloud compute scp {{.USER_WORKING_DIR}}/scripts/sustained-load-test.go {{.TEST_RUNNER_INSTANCE}}:/tmp/test_runner_go_deploy/ --zone={{.GCP_ZONE}}
-      - gcloud compute scp {{.USER_WORKING_DIR}}/scripts/go.mod {{.TEST_RUNNER_INSTANCE}}:/tmp/test_runner_go_deploy/ --zone={{.GCP_ZONE}}
-      - gcloud compute scp {{.USER_WORKING_DIR}}/scripts/go.sum {{.TEST_RUNNER_INSTANCE}}:/tmp/test_runner_go_deploy/ --zone={{.GCP_ZONE}} 2>/dev/null || echo "⚠️  No go.sum file (will be generated during build)"
+      # Copy Go test runner files (self-contained loadtest directory)
+      - echo "📤 Copying loadtest tool..."
+      - gcloud compute scp --recurse {{.USER_WORKING_DIR}}/loadtest {{.TEST_RUNNER_INSTANCE}}:/tmp/test_runner_go_deploy/ --zone={{.GCP_ZONE}}
 
       # Move to deploy user's home and build
-      - gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo rm -rf /home/deploy/test-runner-go && sudo mkdir -p /home/deploy/test-runner-go && sudo mv /tmp/test_runner_go_deploy/* /home/deploy/test-runner-go/ && sudo chown -R deploy:deploy /home/deploy/test-runner-go'
-      - echo "🔨 Building Go test runner image (goroutine-based, no event loop bottleneck)..."
-      - gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo docker build -t ws-test-runner-go /home/deploy/test-runner-go'
+      - gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo rm -rf /home/deploy/loadtest && sudo mkdir -p /home/deploy/loadtest && sudo mv /tmp/test_runner_go_deploy/loadtest/* /home/deploy/loadtest/ && sudo chown -R deploy:deploy /home/deploy/loadtest'
+      - echo "🔨 Building loadtest image (goroutine-based, no event loop bottleneck)..."
+      - gcloud compute ssh {{.TEST_RUNNER_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo docker build -t loadtest /home/deploy/loadtest'
       - echo "✅ Go test runner deployed and built"
 
-# ============================================================================
-# HEALTH & STATUS
-# ============================================================================
+  # ============================================================================
+  # HEALTH & STATUS
+  # ============================================================================
 
   health:ws-go:
     desc: Check ws-go health
@@ -506,9 +503,9 @@ tasks:
       - echo "📡 Publisher:"
       - echo "http://{{.BACKEND_EXTERNAL_IP}}:3003"
 
-# ============================================================================
-# SSH & LOGS
-# ============================================================================
+  # ============================================================================
+  # SSH & LOGS
+  # ============================================================================
 
   ssh:ws-go:
     desc: SSH into ws-go instance
@@ -540,9 +537,9 @@ tasks:
     cmds:
       - gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --command='sudo docker logs -f odin-prometheus'
 
-# ============================================================================
-# PUBLISHER CONTROL
-# ============================================================================
+  # ============================================================================
+  # PUBLISHER CONTROL
+  # ============================================================================
 
   publisher:health:
     desc: Check publisher health
@@ -585,9 +582,9 @@ tasks:
       - echo ""
       - echo "✅ Publisher started (50 messages/sec - high rate)"
 
-# ============================================================================
-# TESTING
-# ============================================================================
+  # ============================================================================
+  # TESTING
+  # ============================================================================
 
   test:connection:
     desc: Test WebSocket connection
@@ -631,7 +628,7 @@ tasks:
           -e WS_MAX_CONNECTIONS=7000 \
           -e TARGET_CONNECTIONS=1000 \
           -e DURATION=60 \
-          ws-test-runner-go'
+          loadtest'
 
   test:remote:medium:
     desc: Medium load test (5,000 connections, 300s) - runs remotely with Go test runner
@@ -644,7 +641,7 @@ tasks:
           -e WS_MAX_CONNECTIONS=7000 \
           -e TARGET_CONNECTIONS=5000 \
           -e DURATION=300 \
-          ws-test-runner-go'
+          loadtest'
 
   test:remote:capacity:
     desc: Production capacity test (12,000 connections - target, 3600s) - runs remotely with Go test runner
@@ -658,7 +655,7 @@ tasks:
           -e WS_MAX_CONNECTIONS=12000 \
           -e TARGET_CONNECTIONS=12000 \
           -e DURATION=3600 \
-          ws-test-runner-go'
+          loadtest'
 
   test:remote:overload:
     desc: Overload test (10,000 connections - should reject excess, 300s) - runs remotely with Go test runner
@@ -672,7 +669,7 @@ tasks:
           -e WS_MAX_CONNECTIONS=7000 \
           -e TARGET_CONNECTIONS=10000 \
           -e DURATION=300 \
-          ws-test-runner-go'
+          loadtest'
 
   # ============================================================================
   # SPLIT TESTING STRATEGY - Isolate connection capacity from message throughput
@@ -762,9 +759,9 @@ tasks:
           -e DURATION=600 \
           ws-test-runner node test-connection-rate.cjs'
 
-# ============================================================================
-# RESTART & UPDATE
-# ============================================================================
+  # ============================================================================
+  # RESTART & UPDATE
+  # ============================================================================
 
   restart:ws-go:
     desc: Restart ws-go service
@@ -811,9 +808,9 @@ tasks:
       - echo "📝 Updating ws-go configuration..."
       - task: deploy:ws-go
 
-# ============================================================================
-# CLEANUP
-# ============================================================================
+  # ============================================================================
+  # CLEANUP
+  # ============================================================================
 
   stop:ws-go:
     desc: Stop ws-go service (keep instance running)
