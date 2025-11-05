@@ -35,16 +35,17 @@
               },
               {
                 "color": "yellow",
-                "value": 14400
+                "value": 9600
               },
               {
                 "color": "red",
-                "value": 16200
+                "value": 10800
               }
             ]
           },
           "unit": "short",
-          "max": 18000
+          "max": 12000,
+          "decimals": 2
         }
       },
       "gridPos": {
@@ -57,9 +58,7 @@
       "options": {
         "orientation": "auto",
         "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "fields": "",
           "values": false
         },
@@ -702,9 +701,7 @@
       "options": {
         "orientation": "auto",
         "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
+          "calcs": ["lastNotNull"],
           "fields": "",
           "values": false
         },
@@ -735,7 +732,7 @@
       },
       "targets": [
         {
-          "expr": "rate(ws_disconnects_total[5m])",
+          "expr": "rate(ws_disconnects_total[5m]) or vector(0)",
           "legendFormat": "{{reason}} ({{initiated_by}})",
           "refId": "A"
         }
@@ -761,10 +758,7 @@
         "legend": {
           "displayMode": "table",
           "placement": "bottom",
-          "calcs": [
-            "lastNotNull",
-            "mean"
-          ]
+          "calcs": ["lastNotNull", "mean"]
         }
       }
     },
@@ -781,7 +775,7 @@
       },
       "targets": [
         {
-          "expr": "rate(ws_dropped_broadcasts_detailed_total[5m])",
+          "expr": "rate(ws_dropped_broadcasts_detailed_total[5m]) or vector(0)",
           "legendFormat": "{{channel}} - {{reason}}",
           "refId": "A"
         }
@@ -807,10 +801,7 @@
         "legend": {
           "displayMode": "table",
           "placement": "bottom",
-          "calcs": [
-            "lastNotNull",
-            "sum"
-          ]
+          "calcs": ["lastNotNull", "sum"]
         }
       }
     },
@@ -881,10 +872,7 @@
         "legend": {
           "displayMode": "table",
           "placement": "bottom",
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
+          "calcs": ["lastNotNull", "max"]
         }
       }
     },
@@ -901,12 +889,12 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.90, rate(ws_slow_client_attempts_before_disconnect_bucket[5m]))",
+          "expr": "histogram_quantile(0.90, rate(ws_slow_client_attempts_before_disconnect_bucket[5m])) or vector(0)",
           "legendFormat": "p90 attempts",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.99, rate(ws_slow_client_attempts_before_disconnect_bucket[5m]))",
+          "expr": "histogram_quantile(0.99, rate(ws_slow_client_attempts_before_disconnect_bucket[5m])) or vector(0)",
           "legendFormat": "p99 attempts",
           "refId": "B"
         }
@@ -933,10 +921,7 @@
         "legend": {
           "displayMode": "table",
           "placement": "bottom",
-          "calcs": [
-            "lastNotNull",
-            "mean"
-          ]
+          "calcs": ["lastNotNull", "mean"]
         }
       }
     },
@@ -962,6 +947,7 @@
           "unit": "percent",
           "min": 0,
           "max": 100,
+          "decimals": 1,
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -971,7 +957,7 @@
               },
               {
                 "color": "yellow",
-                "value": 50
+                "value": 70
               },
               {
                 "color": "red",
@@ -1007,7 +993,8 @@
         "defaults": {
           "unit": "short",
           "min": 0,
-          "max": 3200,
+          "max": 19200,
+          "decimals": 2,
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -1017,11 +1004,11 @@
               },
               {
                 "color": "yellow",
-                "value": 1600
+                "value": 13440
               },
               {
                 "color": "red",
-                "value": 2880
+                "value": 17280
               }
             ]
           }
@@ -1114,11 +1101,7 @@
         "legend": {
           "displayMode": "table",
           "placement": "bottom",
-          "calcs": [
-            "lastNotNull",
-            "mean",
-            "max"
-          ]
+          "calcs": ["lastNotNull", "mean", "max"]
         }
       }
     }
@@ -1126,10 +1109,7 @@
   "refresh": "15s",
   "schemaVersion": 27,
   "style": "dark",
-  "tags": [
-    "websocket",
-    "monitoring"
-  ],
+  "tags": ["websocket", "monitoring"],
   "templating": {
     "list": []
   },
