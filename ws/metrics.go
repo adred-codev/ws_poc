@@ -143,20 +143,20 @@ var (
 		Help: "Current number of active goroutines",
 	})
 
-	// NATS metrics
-	natsConnected = prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "ws_nats_connected",
-		Help: "NATS connection status (1=connected, 0=disconnected)",
+	// Kafka metrics
+	kafkaConnected = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "ws_kafka_connected",
+		Help: "Kafka consumer status (1=running, 0=stopped)",
 	})
 
-	natsMessagesReceived = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "ws_nats_messages_received_total",
-		Help: "Total number of messages received from NATS",
+	kafkaMessagesReceived = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "ws_kafka_messages_received_total",
+		Help: "Total number of messages received from Kafka",
 	})
 
-	natsMessagesDropped = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "ws_nats_messages_dropped_total",
-		Help: "Total number of NATS messages dropped due to backpressure",
+	kafkaMessagesDropped = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "ws_kafka_messages_dropped_total",
+		Help: "Total number of Kafka messages dropped due to backpressure",
 	})
 
 	// Dynamic capacity metrics
@@ -218,9 +218,9 @@ func init() {
 	prometheus.MustRegister(cpuUsagePercent)
 	prometheus.MustRegister(goroutinesActive)
 
-	prometheus.MustRegister(natsConnected)
-	prometheus.MustRegister(natsMessagesReceived)
-	prometheus.MustRegister(natsMessagesDropped)
+	prometheus.MustRegister(kafkaConnected)
+	prometheus.MustRegister(kafkaMessagesReceived)
+	prometheus.MustRegister(kafkaMessagesDropped)
 
 	prometheus.MustRegister(capacityMaxConnections)
 	prometheus.MustRegister(capacityCPUThreshold)
@@ -312,11 +312,11 @@ func (m *MetricsCollector) collect() {
 	}
 	workerQueueUtilization.Set(utilization)
 
-	// NATS status
-	if m.server.natsConn != nil && m.server.natsConn.IsConnected() {
-		natsConnected.Set(1)
+	// Kafka status
+	if m.server.kafkaConsumer != nil {
+		kafkaConnected.Set(1)
 	} else {
-		natsConnected.Set(0)
+		kafkaConnected.Set(0)
 	}
 }
 
@@ -370,14 +370,14 @@ func IncrementReplayRequests() {
 	replayRequests.Inc()
 }
 
-// IncrementNATSMessages increments NATS message counter
-func IncrementNATSMessages() {
-	natsMessagesReceived.Inc()
+// IncrementKafkaMessages increments Kafka message counter
+func IncrementKafkaMessages() {
+	kafkaMessagesReceived.Inc()
 }
 
-// IncrementNATSDropped increments dropped NATS message counter
-func IncrementNATSDropped() {
-	natsMessagesDropped.Inc()
+// IncrementKafkaDropped increments dropped Kafka message counter
+func IncrementKafkaDropped() {
+	kafkaMessagesDropped.Inc()
 }
 
 // UpdateCapacityMetrics updates dynamic capacity metrics
@@ -406,8 +406,7 @@ const (
 
 // Error types for categorization
 const (
-	ErrorTypeNATS          = "nats"
-	ErrorTypeJetStream     = "jetstream"
+	ErrorTypeKafka         = "kafka"
 	ErrorTypeBroadcast     = "broadcast"
 	ErrorTypeSerialization = "serialization"
 	ErrorTypeConnection    = "connection"
@@ -419,14 +418,9 @@ func RecordError(errorType, severity string) {
 	errorsTotal.WithLabelValues(errorType, severity).Inc()
 }
 
-// RecordNATSError tracks NATS-related errors
-func RecordNATSError(severity string) {
-	errorsTotal.WithLabelValues(ErrorTypeNATS, severity).Inc()
-}
-
-// RecordJetStreamError tracks JetStream-related errors
-func RecordJetStreamError(severity string) {
-	errorsTotal.WithLabelValues(ErrorTypeJetStream, severity).Inc()
+// RecordKafkaError tracks Kafka-related errors
+func RecordKafkaError(severity string) {
+	errorsTotal.WithLabelValues(ErrorTypeKafka, severity).Inc()
 }
 
 // RecordBroadcastError tracks broadcast-related errors

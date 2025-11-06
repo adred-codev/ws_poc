@@ -17,8 +17,9 @@ import (
 //	required: Must be provided (no default)
 type Config struct {
 	// Server basics
-	Addr    string `env:"WS_ADDR" envDefault:":3002"`
-	NATSUrl string `env:"NATS_URL" envDefault:""`
+	Addr          string `env:"WS_ADDR" envDefault:":3002"`
+	KafkaBrokers  string `env:"KAFKA_BROKERS" envDefault:"localhost:19092"`
+	ConsumerGroup string `env:"KAFKA_CONSUMER_GROUP" envDefault:"ws-server-group"`
 
 	// Resource limits (from container)
 	CPULimit    float64 `env:"WS_CPU_LIMIT" envDefault:"1.0"`
@@ -32,21 +33,13 @@ type Config struct {
 	WorkerQueueSize int `env:"WS_WORKER_QUEUE_SIZE" envDefault:"0"` // 0 = auto-calculate
 
 	// Rate limiting
-	MaxNATSRate      int `env:"WS_MAX_NATS_RATE" envDefault:"20"`
+	MaxKafkaRate     int `env:"WS_MAX_KAFKA_RATE" envDefault:"1000"` // Kafka message consumption rate
 	MaxBroadcastRate int `env:"WS_MAX_BROADCAST_RATE" envDefault:"20"`
 	MaxGoroutines    int `env:"WS_MAX_GOROUTINES" envDefault:"1000"`
 
 	// Safety thresholds
 	CPURejectThreshold float64 `env:"WS_CPU_REJECT_THRESHOLD" envDefault:"75.0"`
 	CPUPauseThreshold  float64 `env:"WS_CPU_PAUSE_THRESHOLD" envDefault:"80.0"`
-
-	// JetStream
-	JSStreamMaxAge    time.Duration `env:"JS_STREAM_MAX_AGE" envDefault:"30s"`
-	JSStreamMaxMsgs   int64         `env:"JS_STREAM_MAX_MSGS" envDefault:"100000"`
-	JSStreamMaxBytes  int64         `env:"JS_STREAM_MAX_BYTES" envDefault:"52428800"` // 50MB
-	JSConsumerAckWait time.Duration `env:"JS_CONSUMER_ACK_WAIT" envDefault:"30s"`
-	JSStreamName      string        `env:"JS_STREAM_NAME" envDefault:"ODIN_TOKENS"`
-	JSConsumerName    string        `env:"JS_CONSUMER_NAME" envDefault:"ws-server"`
 
 	// Monitoring
 	MetricsInterval time.Duration `env:"METRICS_INTERVAL" envDefault:"15s"`
@@ -167,7 +160,8 @@ func (c *Config) Print() {
 	fmt.Println("=== Server Configuration ===")
 	fmt.Printf("Environment:     %s\n", c.Environment)
 	fmt.Printf("Address:         %s\n", c.Addr)
-	fmt.Printf("NATS URL:        %s\n", c.NATSUrl)
+	fmt.Printf("Kafka Brokers:   %s\n", c.KafkaBrokers)
+	fmt.Printf("Consumer Group:  %s\n", c.ConsumerGroup)
 	fmt.Println("\n=== Resource Limits ===")
 	fmt.Printf("CPU Limit:       %.1f cores\n", c.CPULimit)
 	fmt.Printf("Memory Limit:    %d MB\n", c.MemoryLimit/(1024*1024))
@@ -176,18 +170,12 @@ func (c *Config) Print() {
 	fmt.Printf("Workers:         %d\n", c.WorkerPoolSize)
 	fmt.Printf("Queue Size:      %d\n", c.WorkerQueueSize)
 	fmt.Println("\n=== Rate Limits ===")
-	fmt.Printf("NATS Messages:   %d/sec\n", c.MaxNATSRate)
+	fmt.Printf("Kafka Messages:  %d/sec\n", c.MaxKafkaRate)
 	fmt.Printf("Broadcasts:      %d/sec\n", c.MaxBroadcastRate)
 	fmt.Printf("Max Goroutines:  %d\n", c.MaxGoroutines)
 	fmt.Println("\n=== Safety Thresholds ===")
 	fmt.Printf("CPU Reject:      %.1f%%\n", c.CPURejectThreshold)
 	fmt.Printf("CPU Pause:       %.1f%%\n", c.CPUPauseThreshold)
-	fmt.Println("\n=== JetStream ===")
-	fmt.Printf("Stream:          %s\n", c.JSStreamName)
-	fmt.Printf("Consumer:        %s\n", c.JSConsumerName)
-	fmt.Printf("Max Age:         %s\n", c.JSStreamMaxAge)
-	fmt.Printf("Max Messages:    %d\n", c.JSStreamMaxMsgs)
-	fmt.Printf("Max Bytes:       %d MB\n", c.JSStreamMaxBytes/(1024*1024))
 	fmt.Println("\n=== Logging ===")
 	fmt.Printf("Level:           %s\n", c.LogLevel)
 	fmt.Printf("Format:          %s\n", c.LogFormat)
@@ -199,23 +187,18 @@ func (c *Config) LogConfig(logger zerolog.Logger) {
 	logger.Info().
 		Str("environment", c.Environment).
 		Str("addr", c.Addr).
-		Str("nats_url", c.NATSUrl).
+		Str("kafka_brokers", c.KafkaBrokers).
+		Str("consumer_group", c.ConsumerGroup).
 		Float64("cpu_limit", c.CPULimit).
 		Int64("memory_limit_mb", c.MemoryLimit/(1024*1024)).
 		Int("max_connections", c.MaxConnections).
 		Int("worker_pool_size", c.WorkerPoolSize).
 		Int("worker_queue_size", c.WorkerQueueSize).
-		Int("max_nats_rate", c.MaxNATSRate).
+		Int("max_kafka_rate", c.MaxKafkaRate).
 		Int("max_broadcast_rate", c.MaxBroadcastRate).
 		Int("max_goroutines", c.MaxGoroutines).
 		Float64("cpu_reject_threshold", c.CPURejectThreshold).
 		Float64("cpu_pause_threshold", c.CPUPauseThreshold).
-		Str("js_stream_name", c.JSStreamName).
-		Str("js_consumer_name", c.JSConsumerName).
-		Dur("js_stream_max_age", c.JSStreamMaxAge).
-		Int64("js_stream_max_msgs", c.JSStreamMaxMsgs).
-		Int64("js_stream_max_bytes_mb", c.JSStreamMaxBytes/(1024*1024)).
-		Dur("js_consumer_ack_wait", c.JSConsumerAckWait).
 		Dur("metrics_interval", c.MetricsInterval).
 		Str("log_level", c.LogLevel).
 		Str("log_format", c.LogFormat).

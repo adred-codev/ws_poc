@@ -1,80 +1,126 @@
-version: '3'
+version: "3"
 
 # Main Taskfile - Orchestrates all sub-taskfiles
-# Run 'task --list' to see all available tasks
+# Run 'task' or 'task --list' to see available commands
 
 includes:
-  build:
-    taskfile: ./taskfiles/build.yml
-    dir: .
-  docker:
-    taskfile: ./taskfiles/docker.yml
-    dir: .
-  dev:
-    taskfile: ./taskfiles/dev.yml
-    dir: .
-  test:
-    taskfile: ./taskfiles/test.yml
-    dir: .
-  monitor:
-    taskfile: ./taskfiles/monitor.yml
-    dir: .
-  publisher:
-    taskfile: ./taskfiles/publisher.yml
-    dir: .
-  utils:
-    taskfile: ./taskfiles/utils.yml
-    dir: .
-  gcp:
-    taskfile: ./taskfiles/deploy-gcp.yml
-    dir: .
-  gcp2:
-    taskfile: ./taskfiles/isolated-setup.yml
+  # Version management
+  version:
+    taskfile: ./taskfiles/version.yml
     dir: .
 
-# === COMBINED WORKFLOWS ===
-# Common task combinations for quick access
+  # Local deployment (Kafka/Redpanda) - v1
+  local:
+    taskfile: ./taskfiles/v1/local/services.yml
+    dir: .
+  local:health:
+    taskfile: ./taskfiles/v1/local/health.yml
+    dir: .
+  local:deploy:
+    taskfile: ./taskfiles/v1/local/deployment.yml
+    dir: .
+  local:test:
+    taskfile: ./taskfiles/v1/local/load-test.yml
+    dir: .
+  local:stats:
+    taskfile: ./taskfiles/v1/local/stats.yml
+    dir: .
 
 tasks:
   default:
-    desc: Show available task categories
+    desc: Show available commands
+    silent: true
     cmds:
-      - echo "📋 Available task categories:"
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - echo "📋 ODIN WEBSOCKET SERVER - TASK COMMANDS"
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
       - echo ""
-      - echo "  build:*      - Build Go server and TypeScript publisher"
-      - echo "  docker:*     - Docker container management"
-      - echo "  dev:*        - Local development tasks"
-      - echo "  test:*       - Stress testing and load testing"
-      - echo "  monitor:*    - Health checks and monitoring"
-      - echo "  publisher:*  - Publisher control (start/stop/configure)"
-      - echo "  utils:*      - Install, format, clean utilities"
-      - echo "  gcp:*        - GCP deployment and management"
+      - echo "📦 VERSION MANAGEMENT"
+      - echo "  task version:info              - Show current version"
+      - echo "  task version:check             - Validate version consistency"
+      - echo "  task version:build:images      - Build Docker images"
+      - echo "  task version:help              - Version management help"
       - echo ""
-      - echo "  setup        - Complete local setup (install → build → start)"
-      - echo "  quick-start  - Quick start for testing (docker:up → test:light)"
-      - echo "  full-test    - Full test workflow (docker:up → test:medium → stats)"
+      - echo "🏠 LOCAL DEPLOYMENT"
+      - echo "  task up                        - Quick start deployment"
+      - echo "  task down                      - Quick stop deployment"
+      - echo "  task health                    - Quick health check"
+      - echo "  task test                      - Quick load test"
       - echo ""
-      - echo "Run 'task --list-all' to see all available tasks"
+      - echo "📦 DEPLOYMENT WORKFLOWS"
+      - echo "  task local:deploy:setup        - Complete setup from scratch"
+      - echo "  task local:deploy:reset        - Delete all & redeploy"
+      - echo "  task local:deploy:quick-start  - Quick start (assumes setup)"
+      - echo "  task local:deploy:stop         - Stop all services"
+      - echo "  task local:deploy:rebuild-code - Rebuild after code changes"
+      - echo ""
+      - echo "🔧 SERVICE CONTROL (Individual)"
+      - echo "  task local:start:redpanda      - Start Redpanda"
+      - echo "  task local:start:publisher     - Start Publisher"
+      - echo "  task local:start:ws            - Start WS server"
+      - echo "  task local:restart:ws          - Restart WS server"
+      - echo "  task local:rebuild:ws          - Rebuild WS server"
+      - echo "  task local:logs:ws             - Tail WS server logs"
+      - echo ""
+      - echo "🔧 SERVICE CONTROL (Aggregate)"
+      - echo "  task local:start:all           - Start all services"
+      - echo "  task local:delete:all          - Delete all (nuclear)"
+      - echo "  task local:restart:all         - Restart all services"
+      - echo "  task local:rebuild:all         - Rebuild all services"
+      - echo "  task local:logs:all            - Tail all logs"
+      - echo "  task local:status              - Show service status"
+      - echo ""
+      - echo "🏥 HEALTH CHECKS"
+      - echo "  task local:health:all          - Check all services"
+      - echo "  task local:health:detailed     - Detailed health (JSON)"
+      - echo "  task local:health:redpanda     - Check Redpanda only"
+      - echo "  task local:health:publisher    - Check Publisher only"
+      - echo "  task local:health:ws           - Check WS server only"
+      - echo ""
+      - echo "🧪 LOAD TESTING"
+      - echo "  task local:test:sustained      - Sustained capacity test"
+      - echo "  task local:test:stop           - Stop load test"
+      - echo "  task local:test:status         - Check test status"
+      - echo ""
+      - echo "📊 STATS & MONITORING"
+      - echo "  task local:stats:all           - Show all stats"
+      - echo "  task local:stats:publisher     - Publisher stats"
+      - echo "  task local:stats:ws            - WS server stats"
+      - echo "  task local:stats:ips           - Container IP addresses"
+      - echo "  task local:stats:topics        - List Kafka topics"
+      - echo "  task local:stats:consume       - Consume messages (TOPIC=... NUM=...)"
+      - echo ""
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - echo ""
+      - echo "💡 TIP - Run task --list-all to see all available tasks"
+      - echo "💡 TIP - Run task TASKNAME --summary for task description"
+      - echo ""
 
-  setup:
-    desc: Complete setup (install → build → start)
-    cmds:
-      - task: utils:install
-      - task: build:docker
-      - task: docker:up
+  # ============================================================================
+  # QUICK SHORTCUTS
+  # ============================================================================
 
-  quick-start:
-    desc: Quick start for testing (docker:up → test:light)
+  up:
+    desc: Quick start local deployment
     cmds:
-      - task: docker:up
-      - sleep 5
-      - task: test:light
+      - task: local:deploy:setup
 
-  full-test:
-    desc: Full test workflow (docker:up → test:medium → stats)
+  down:
+    desc: Quick stop local deployment
     cmds:
-      - task: docker:up
-      - sleep 5
-      - task: test:medium
-      - task: monitor:health
-      - task: monitor:publisher:stats
+      - task: local:deploy:stop
+
+  health:
+    desc: Quick health check
+    cmds:
+      - task: local:health:all
+
+  test:
+    desc: Quick sustained load test
+    cmds:
+      - task: local:test:sustained
+
+  stats:
+    desc: Quick stats overview
+    cmds:
+      - task: local:stats:all

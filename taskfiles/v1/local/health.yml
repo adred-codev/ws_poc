@@ -1,0 +1,114 @@
+version: '3'
+
+# Local Health Check Tasks
+# Individual health checks that compose into aggregate health check
+
+tasks:
+  redpanda:
+    desc: Check Redpanda cluster health
+    cmds:
+      - |
+        echo -n "🔍 Redpanda: "
+        if docker exec redpanda-local rpk cluster health 2>/dev/null | grep -q "Healthy:.*true"; then
+          echo "✅ Healthy"
+          exit 0
+        else
+          echo "❌ Unhealthy"
+          exit 1
+        fi
+
+  publisher:
+    desc: Check Publisher health
+    cmds:
+      - |
+        echo -n "🔍 Publisher: "
+        if curl -sf http://localhost:3006/health > /dev/null 2>&1; then
+          echo "✅ Healthy"
+          exit 0
+        else
+          echo "❌ Unhealthy"
+          exit 1
+        fi
+
+  ws:
+    desc: Check WS server health
+    cmds:
+      - |
+        echo -n "🔍 WS Server: "
+        RESPONSE=$(curl -sf http://localhost:3005/health 2>/dev/null)
+        if echo "$RESPONSE" | jq -e '.healthy == true' > /dev/null 2>&1; then
+          echo "✅ Healthy"
+          exit 0
+        else
+          echo "❌ Unhealthy"
+          exit 1
+        fi
+
+  prometheus:
+    desc: Check Prometheus health
+    cmds:
+      - |
+        echo -n "🔍 Prometheus: "
+        if curl -sf http://localhost:9092/-/healthy > /dev/null 2>&1; then
+          echo "✅ Healthy"
+          exit 0
+        else
+          echo "❌ Unhealthy"
+          exit 1
+        fi
+
+  grafana:
+    desc: Check Grafana health
+    cmds:
+      - |
+        echo -n "🔍 Grafana: "
+        if curl -sf http://localhost:3011/api/health > /dev/null 2>&1; then
+          echo "✅ Healthy"
+          exit 0
+        else
+          echo "❌ Unhealthy"
+          exit 1
+        fi
+
+  loki:
+    desc: Check Loki health
+    cmds:
+      - |
+        echo -n "🔍 Loki: "
+        if curl -sf http://localhost:3102/ready > /dev/null 2>&1; then
+          echo "✅ Healthy"
+          exit 0
+        else
+          echo "❌ Unhealthy"
+          exit 1
+        fi
+
+  all:
+    desc: Check health of all services (composed)
+    cmds:
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - echo "🏥 HEALTH CHECK - LOCAL DEPLOYMENT"
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - task: redpanda
+      - task: publisher
+      - task: ws
+      - task: prometheus
+      - task: grafana
+      - task: loki
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  detailed:
+    desc: Detailed health check with full JSON responses
+    cmds:
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - echo "📊 DETAILED HEALTH CHECK"
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - echo ""
+      - echo "📡 Publisher Health:"
+      - curl -s http://localhost:3006/health | jq '.' || echo "❌ Not responding"
+      - echo ""
+      - echo "🌐 WS Server Health:"
+      - curl -s http://localhost:3005/health | jq '.' || echo "❌ Not responding"
+      - echo ""
+      - echo "🔍 Redpanda Cluster:"
+      - docker exec redpanda-local rpk cluster health 2>/dev/null || echo "❌ Not responding"

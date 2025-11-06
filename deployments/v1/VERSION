@@ -1,0 +1,24 @@
+version: v1.0.0
+deployment_structure: v1
+config_schema: v1
+
+description: |
+  Kafka-based WebSocket deployment with 3-tier configuration hierarchy.
+  Supports local development and GCP production deployments.
+
+directories:
+  - shared/      # Common configuration (base.env, kafka-topics.env, ports.env)
+  - local/       # Local development deployment
+  - gcp/         # GCP production deployment
+
+features:
+  - "3-tier configuration hierarchy"
+  - "Kafka/Redpanda messaging (8 topics, 12 partitions each)"
+  - "Docker Compose multi-service orchestration"
+  - "Prometheus + Grafana + Loki monitoring stack"
+  - "Local: 1K connections, GCP: 12K connections"
+
+compatibility:
+  ws-server: v1.0.0
+  publisher: v2.0.0
+  redpanda: v24.2.11

@@ -18,7 +18,7 @@ type Task func()
 //
 // Purpose:
 //   - Limit concurrent goroutines to prevent resource exhaustion
-//   - Process NATS messages and broadcast to clients without blocking
+//   - Process Kafka messages and broadcast to clients without blocking
 //   - Provides backpressure when system is overloaded
 //
 // Design:
@@ -59,7 +59,7 @@ type WorkerPool struct {
 // Queue sizing:
 //   - Buffer capacity: Configurable via queueSize parameter
 //   - Example: 32 workers, 3200 queue
-//   - Reasoning: Handles burst of NATS messages during traffic spikes
+//   - Reasoning: Handles burst of Kafka messages during traffic spikes
 //
 // Recommended workerCount values:
 //   - Development: runtime.NumCPU()

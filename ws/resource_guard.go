@@ -27,7 +27,7 @@ import (
 //
 // ResourceGuard DOES:
 //   - Enforce configured limits strictly
-//   - Rate limit NATS consumption
+//   - Rate limit Kafka consumption
 //   - Rate limit broadcasts
 //   - Provide safety checks (CPU, memory, goroutines)
 //   - Log all decisions to Loki
@@ -37,7 +37,7 @@ type ResourceGuard struct {
 	logger zerolog.Logger
 
 	// Rate limiters
-	natsLimiter      *rate.Limiter // Limits NATS message consumption
+	kafkaLimiter     *rate.Limiter // Limits Kafka message consumption
 	broadcastLimiter *rate.Limiter // Limits broadcast operations
 
 	// Goroutine limiter
@@ -102,12 +102,12 @@ func (gl *GoroutineLimiter) Max() int {
 //
 //	guard := NewResourceGuard(config, logger, &server.stats.CurrentConnections)
 func NewResourceGuard(config ServerConfig, logger zerolog.Logger, currentConns *int64) *ResourceGuard {
-	// Create NATS rate limiter
-	// Limit: MaxNATSMessagesPerSec per second
+	// Create Kafka rate limiter
+	// Limit: MaxKafkaMessagesPerSec per second
 	// Burst: Allow up to 2x the rate in bursts (for traffic spikes)
-	natsLimiter := rate.NewLimiter(
-		rate.Limit(config.MaxNATSMessagesPerSec),
-		config.MaxNATSMessagesPerSec*2, // Burst capacity
+	kafkaLimiter := rate.NewLimiter(
+		rate.Limit(config.MaxKafkaMessagesPerSec),
+		config.MaxKafkaMessagesPerSec*2, // Burst capacity
 	)
 
 	// Create broadcast rate limiter
@@ -122,7 +122,7 @@ func NewResourceGuard(config ServerConfig, logger zerolog.Logger, currentConns *
 	rg := &ResourceGuard{
 		config:           config,
 		logger:           logger,
-		natsLimiter:      natsLimiter,
+		kafkaLimiter:     kafkaLimiter,
 		broadcastLimiter: broadcastLimiter,
 		goroutineLimiter: goroutineLimiter,
 		currentConns:     currentConns,
@@ -136,7 +136,7 @@ func NewResourceGuard(config ServerConfig, logger zerolog.Logger, currentConns *
 		Float64("cpu_limit", config.CPULimit).
 		Int64("memory_limit", config.MemoryLimit).
 		Int("max_connections", config.MaxConnections).
-		Int("max_nats_rate", config.MaxNATSMessagesPerSec).
+		Int("max_kafka_rate", config.MaxKafkaMessagesPerSec).
 		Int("max_broadcast_rate", config.MaxBroadcastsPerSec).
 		Int("max_goroutines", config.MaxGoroutines).
 		Msg("ResourceGuard initialized with static configuration")
@@ -211,28 +211,28 @@ func (rg *ResourceGuard) ShouldAcceptConnection() (accept bool, reason string) {
 	return true, "OK"
 }
 
-// ShouldPauseNATS checks if NATS consumption should be paused
+// ShouldPauseKafka checks if Kafka consumption should be paused
 //
 // This provides backpressure when CPU is critically high.
-// Messages are NAK'd and will be redelivered by JetStream.
-func (rg *ResourceGuard) ShouldPauseNATS() bool {
+// Consumer will pause partition consumption temporarily.
+func (rg *ResourceGuard) ShouldPauseKafka() bool {
 	currentCPU := rg.currentCPU.Load().(float64)
 	return currentCPU > rg.config.CPUPauseThreshold
 }
 
-// AllowNATSMessage checks if a NATS message should be processed (rate limiting)
+// AllowKafkaMessage checks if a Kafka message should be processed (rate limiting)
 //
-// This prevents NATS from flooding the server with more work than it can handle.
+// This prevents Kafka from flooding the server with more work than it can handle.
 //
 // Returns:
 //   - allow: true if message should be processed
 //   - waitDuration: how long caller should wait before retrying (if blocked)
-func (rg *ResourceGuard) AllowNATSMessage(ctx context.Context) (allow bool, waitDuration time.Duration) {
+func (rg *ResourceGuard) AllowKafkaMessage(ctx context.Context) (allow bool, waitDuration time.Duration) {
 	// Non-blocking check
-	reservation := rg.natsLimiter.Reserve()
+	reservation := rg.kafkaLimiter.Reserve()
 	if !reservation.OK() {
 		// Rate limit exceeded
-		rg.logger.Warn().Msg("NATS rate limit exceeded")
+		rg.logger.Warn().Msg("Kafka rate limit exceeded")
 		return false, 0
 	}
 
@@ -367,7 +367,7 @@ func (rg *ResourceGuard) GetStats() map[string]any {
 		"memory_limit_bytes":   rg.config.MemoryLimit,
 		"goroutines_current":   runtime.NumGoroutine(),
 		"goroutines_limit":     rg.config.MaxGoroutines,
-		"nats_rate_limit":      rg.config.MaxNATSMessagesPerSec,
+		"kafka_rate_limit":     rg.config.MaxKafkaMessagesPerSec,
 		"broadcast_rate_limit": rg.config.MaxBroadcastsPerSec,
 		"worker_pool_size":     rg.config.WorkerCount,
 		"worker_pool_queue":    rg.config.WorkerQueueSize,

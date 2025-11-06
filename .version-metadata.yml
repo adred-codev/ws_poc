@@ -1,0 +1,222 @@
+# Version Compatibility and Migration Metadata
+# This file tracks all versions, their compatibility, and migration paths
+
+versions:
+  v1.0.0:
+    release_date: 2025-11-06
+    status: stable
+    components:
+      ws-server: v1.0.0
+      publisher: v2.0.0
+      config-schema: v1
+      deployment-manifests: v1
+    config_files:
+      - deployments/v1/shared/base.env
+      - deployments/v1/shared/kafka-topics.env
+      - deployments/v1/shared/ports.env
+      - deployments/v1/local/overrides.env
+      - deployments/v1/gcp/distributed/ws-server/overrides.env
+    breaking_changes:
+      - "Initial Kafka-based version (migrated from NATS)"
+      - "New 3-tier configuration hierarchy"
+      - "Changed Prometheus metrics naming (kafka_* instead of nats_*)"
+    migration_from: null
+    migration_guide: null
+    docker_images:
+      ws-server:
+        - odin-ws-server:v1.0.0
+        - odin-ws-server:v1.0
+        - odin-ws-server:v1
+        - odin-ws-server:latest
+      publisher:
+        - odin-publisher:v2.0.0
+        - odin-publisher:v2.0
+        - odin-publisher:v2
+        - odin-publisher:latest
+
+  # Example future version (template)
+  v1.1.0:
+    release_date: TBD
+    status: planned
+    components:
+      ws-server: v1.1.0
+      publisher: v2.1.0
+      config-schema: v1 # No breaking config changes
+      deployment-manifests: v1
+    config_files:
+      - deployments/v1/shared/base.env # Same config structure
+    breaking_changes: []
+    new_features:
+      - "Enhanced metrics dashboard with additional panels"
+      - "New health check endpoint with detailed resource info"
+      - "Improved error handling and retry logic"
+    migration_from: v1.0.0
+    migration_guide: docs/v1/MIGRATION_v1.0_to_v1.1.md
+    backward_compatible: true
+
+  # Example major version (template)
+  v2.0.0:
+    release_date: TBD
+    status: planned
+    components:
+      ws-server: v2.0.0
+      publisher: v3.0.0
+      config-schema: v2 # BREAKING: New config format
+      deployment-manifests: v2
+    config_files:
+      - deployments/v2/shared/base.env # New structure
+      - deployments/v2/shared/kafka-topics-v2.env # Changed topic format
+    breaking_changes:
+      - "New Kafka topic structure (hierarchical topics with metadata)"
+      - "Changed WebSocket message format (added envelope with metadata)"
+      - "New environment variables (WS_KAFKA_CONFIG_PATH replaces multiple vars)"
+      - "Requires Redpanda v25+ (uses new features)"
+      - "Changed health check response format"
+    migration_from: v1.x.x
+    migration_guide: docs/v2/MIGRATION_v1_to_v2.md
+    backward_compatible: false
+    parallel_deployment: true # Can run alongside v1 during migration
+
+# Compatibility Matrix
+compatibility_matrix:
+  # WS Server compatibility
+  ws-server:
+    v1.0.0:
+      compatible_with:
+        publisher: ["v2.0.0"]
+        config-schema: ["v1"]
+        kafka_topics: ["v1"]
+        redpanda: ["v24.2.x"]
+    v1.1.0:
+      compatible_with:
+        publisher: ["v2.0.0", "v2.1.0"]
+        config-schema: ["v1"]
+        kafka_topics: ["v1"]
+        redpanda: ["v24.2.x"]
+    v2.0.0:
+      compatible_with:
+        publisher: ["v3.0.0"]
+        config-schema: ["v2"]
+        kafka_topics: ["v2"]
+        redpanda: ["v25.x"]
+
+  # Publisher compatibility
+  publisher:
+    v2.0.0:
+      compatible_with:
+        ws-server: ["v1.0.0", "v1.1.0"]
+        config-schema: ["v1"]
+        kafka_topics: ["v1"]
+    v2.1.0:
+      compatible_with:
+        ws-server: ["v1.1.0"]
+        config-schema: ["v1"]
+        kafka_topics: ["v1"]
+    v3.0.0:
+      compatible_with:
+        ws-server: ["v2.0.0"]
+        config-schema: ["v2"]
+        kafka_topics: ["v2"]
+
+# Configuration Schema Versions
+config_schema_versions:
+  v1:
+    description: "3-tier hierarchy (base.env, overrides.env, .env.local)"
+    features:
+      - "Shared base configuration"
+      - "Environment-specific overrides"
+      - "Gitignored secrets file"
+      - "Docker Compose env_file arrays"
+    required_files:
+      - shared/base.env
+      - shared/kafka-topics.env
+      - shared/ports.env
+    optional_files:
+      - local/overrides.env
+      - gcp/distributed/ws-server/overrides.env
+
+  v2:
+    description: "Enhanced with dynamic configuration reload (planned)"
+    features:
+      - "All v1 features"
+      - "Configuration hot-reload support"
+      - "JSON/YAML config support alongside env files"
+      - "Configuration validation API"
+    breaking_changes:
+      - "New config file format for advanced features"
+      - "Some env vars renamed for consistency"
+
+# Kafka Topics Schema Versions
+kafka_topics_versions:
+  v1:
+    description: "8 topics, 12 partitions each, flat structure"
+    topics:
+      - odin.trades
+      - odin.liquidity
+      - odin.balances
+      - odin.metadata
+      - odin.social
+      - odin.community
+      - odin.creation
+      - odin.analytics
+    partitions: 12
+    replicas: 1
+
+  v2:
+    description: "Hierarchical topics with metadata (planned)"
+    topics:
+      - odin.v2.token.{symbol}.trade
+      - odin.v2.token.{symbol}.liquidity
+      - odin.v2.user.{userId}.balance
+      - odin.v2.meta.{type}
+    features:
+      - "Topic templating with variables"
+      - "Message envelopes with metadata"
+      - "Schema registry integration"
+    breaking_changes:
+      - "Complete topic restructure"
+      - "Requires migration tool"
+
+# Infrastructure Dependencies
+infrastructure_versions:
+  redpanda:
+    v24.2.x:
+      compatible_versions: ["v1.0.0", "v1.1.0"]
+      required_features: ["kafka-api", "schema-registry"]
+    v25.x:
+      compatible_versions: ["v2.0.0"]
+      required_features: ["kafka-api", "schema-registry", "tiered-storage"]
+
+  prometheus:
+    v3.6.x:
+      compatible_versions: ["v1.0.0", "v1.1.0", "v2.0.0"]
+
+  grafana:
+    v12.x:
+      compatible_versions: ["v1.0.0", "v1.1.0", "v2.0.0"]
+
+# Testing Requirements Per Version
+testing_requirements:
+  v1.0.0:
+    unit_tests: "go test ./... (ws directory)"
+    integration_tests: "docker-compose up + health checks"
+    load_tests: "1000 connections local, 12000 connections GCP"
+    smoke_tests:
+      - "Health endpoint returns 200"
+      - "Metrics endpoint has kafka_* metrics"
+      - "WebSocket connects and receives messages"
+      - "Grafana dashboards load without errors"
+
+  v2.0.0:
+    unit_tests: "go test ./... (ws directory)"
+    integration_tests: "docker-compose up + health checks"
+    load_tests: "5000 connections local, 20000 connections GCP"
+    migration_tests:
+      - "v1 to v2 migration completes successfully"
+      - "Parallel deployment (v1 + v2) works"
+      - "Rollback from v2 to v1 works"
+    smoke_tests:
+      - "Health endpoint v2 format returns 200"
+      - "Metrics endpoint has enhanced metrics"
+      - "WebSocket v2 protocol works"
+      - "Topic migration tool completes"

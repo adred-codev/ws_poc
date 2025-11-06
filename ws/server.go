@@ -13,9 +13,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/adred-codev/ws_poc/kafka"
 	"github.com/gobwas/ws"
 	"github.com/gobwas/ws/wsutil"
-	"github.com/nats-io/nats.go"
 	"github.com/rs/zerolog"
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/mem"
@@ -39,7 +39,8 @@ const (
 
 type ServerConfig struct {
 	Addr            string
-	NATSUrl         string
+	KafkaBrokers    []string
+	ConsumerGroup   string
 	MaxConnections  int
 	BufferSize      int
 	WorkerCount     int
@@ -50,21 +51,13 @@ type ServerConfig struct {
 	MemoryLimit int64   // Memory bytes available (from docker limit)
 
 	// Rate limiting (prevent overload)
-	MaxNATSMessagesPerSec int // Max NATS messages consumed per second
-	MaxBroadcastsPerSec   int // Max broadcasts per second
-	MaxGoroutines         int // Hard goroutine limit
+	MaxKafkaMessagesPerSec int // Max Kafka messages consumed per second
+	MaxBroadcastsPerSec    int // Max broadcasts per second
+	MaxGoroutines          int // Hard goroutine limit
 
 	// Safety thresholds (emergency brakes)
 	CPURejectThreshold float64 // Reject new connections above this CPU % (default: 75)
-	CPUPauseThreshold  float64 // Pause NATS consumption above this CPU % (default: 80)
-
-	// JetStream configuration
-	JSStreamMaxAge    time.Duration // Max message age in stream (default: 30s)
-	JSStreamMaxMsgs   int64         // Max messages in stream (default: 100000)
-	JSStreamMaxBytes  int64         // Max bytes in stream (default: 50MB)
-	JSConsumerAckWait time.Duration // Ack wait timeout (default: 30s)
-	JSStreamName      string        // Stream name (default: "ODIN_TOKENS")
-	JSConsumerName    string        // Consumer name (default: "ws-server")
+	CPUPauseThreshold  float64 // Pause Kafka consumption above this CPU % (default: 80)
 
 	// Monitoring intervals
 	MetricsInterval time.Duration // Metrics collection interval (default: 15s)
@@ -75,14 +68,12 @@ type ServerConfig struct {
 }
 
 type Server struct {
-	config          ServerConfig
-	logger          *log.Logger    // Old logger (for backwards compat)
-	structLogger    zerolog.Logger // New structured logger for Loki
-	listener        net.Listener
-	natsConn        *nats.Conn
-	natsJS          nats.JetStreamContext
-	natsSubcription *nats.Subscription
-	natsPaused      int32 // Atomic flag: 1 = paused, 0 = active
+	config        ServerConfig
+	logger        *log.Logger    // Old logger (for backwards compat)
+	structLogger  zerolog.Logger // New structured logger for Loki
+	listener      net.Listener
+	kafkaConsumer *kafka.Consumer
+	kafkaPaused   int32 // Atomic flag: 1 = paused, 0 = active
 
 	// Connection management
 	connections       *ConnectionPool
@@ -186,68 +177,42 @@ func NewServer(config ServerConfig, logger *log.Logger) (*Server, error) {
 		Int("max_connections", config.MaxConnections).
 		Int("worker_count", config.WorkerCount).
 		Int("worker_queue", config.WorkerQueueSize).
-		Int("nats_rate_limit", config.MaxNATSMessagesPerSec).
+		Int("kafka_rate_limit", config.MaxKafkaMessagesPerSec).
 		Int("broadcast_rate_limit", config.MaxBroadcastsPerSec).
 		Msg("Server initialized with ResourceGuard")
 
-	if config.NATSUrl != "" {
-		nc, err := nats.Connect(config.NATSUrl, nats.MaxReconnects(5), nats.ReconnectWait(2*time.Second))
-		if err != nil {
-			s.auditLogger.Critical("NATSConnectionFailed", "Failed to connect to NATS", map[string]any{
-				"url":   config.NATSUrl,
-				"error": err.Error(),
-			})
-			return nil, fmt.Errorf("failed to connect to nats: %w", err)
+	// Initialize Kafka consumer
+	if len(config.KafkaBrokers) > 0 {
+		// Create broadcast function that will be called for each Kafka message
+		broadcastFunc := func(tokenID string, eventType string, message []byte) {
+			// Format subject as: "odin.token.{tokenID}.{eventType}"
+			subject := fmt.Sprintf("odin.token.%s.%s", tokenID, eventType)
+			s.broadcast(subject, message)
 		}
-		s.natsConn = nc
-		logger.Printf("Connected to NATS at %s", config.NATSUrl)
 
-		s.auditLogger.Info("NATSConnected", "Connected to NATS successfully", map[string]any{
-			"url": config.NATSUrl,
+		consumer, err := kafka.NewConsumer(kafka.ConsumerConfig{
+			Brokers:       config.KafkaBrokers,
+			ConsumerGroup: config.ConsumerGroup,
+			Topics:        kafka.AllTopics(),
+			Logger:        &structLogger,
+			Broadcast:     broadcastFunc,
+		})
+		if err != nil {
+			s.auditLogger.Critical("KafkaConnectionFailed", "Failed to create Kafka consumer", map[string]any{
+				"brokers": config.KafkaBrokers,
+				"error":   err.Error(),
+			})
+			return nil, fmt.Errorf("failed to create kafka consumer: %w", err)
+		}
+		s.kafkaConsumer = consumer
+		logger.Printf("Created Kafka consumer for brokers: %v", config.KafkaBrokers)
+
+		s.auditLogger.Info("KafkaConsumerCreated", "Kafka consumer created successfully", map[string]any{
+			"brokers":        config.KafkaBrokers,
+			"consumer_group": config.ConsumerGroup,
+			"topics":         kafka.AllTopics(),
 		})
 
-		// Initialize JetStream
-		js, err := nc.JetStream()
-		if err != nil {
-			RecordJetStreamError(ErrorSeverityFatal)
-			s.auditLogger.Critical("JetStreamInitFailed", "Failed to initialize JetStream", map[string]any{
-				"error": err.Error(),
-			})
-			logger.Printf("❌ FATAL: JetStream init failed: %v", err)
-			return nil, fmt.Errorf("failed to initialize jetstream: %w", err)
-		}
-		s.natsJS = js
-
-		// Create or update stream for token updates
-		streamName := config.JSStreamName
-		streamInfo, err := js.StreamInfo(streamName)
-		if err != nil {
-			// Stream doesn't exist, create it
-			logger.Printf("📦 Creating JetStream stream: %s", streamName)
-			_, err = js.AddStream(&nats.StreamConfig{
-				Name:      streamName,
-				Subjects:  []string{"odin.token.>"},
-				Retention: nats.InterestPolicy,     // Delete after all subscribers ack
-				MaxAge:    config.JSStreamMaxAge,   // Configured max age
-				Storage:   nats.MemoryStorage,      // In-memory for speed
-				Replicas:  1,                       // Single replica for now
-				Discard:   nats.DiscardOld,         // Drop oldest when full
-				MaxMsgs:   config.JSStreamMaxMsgs,  // Configured max messages
-				MaxBytes:  config.JSStreamMaxBytes, // Configured max bytes
-			})
-			if err != nil {
-				RecordJetStreamError(ErrorSeverityFatal)
-				s.auditLogger.Critical("StreamCreationFailed", "Failed to create JetStream stream", map[string]any{
-					"stream": streamName,
-					"error":  err.Error(),
-				})
-				logger.Printf("❌ FATAL: Stream creation failed: %v", err)
-				return nil, fmt.Errorf("failed to create stream: %w", err)
-			}
-			logger.Printf("✅ JetStream stream created: %s", streamName)
-		} else {
-			logger.Printf("✅ JetStream stream exists: %s (messages: %d)", streamName, streamInfo.State.Msgs)
-		}
 	}
 
 	return s, nil
@@ -266,111 +231,15 @@ func (s *Server) Start() error {
 
 	s.workerPool.Start(s.ctx)
 
-	if s.natsConn != nil && s.natsJS != nil {
-		msgCount := int64(0)
-		droppedCount := int64(0)
-		ackFailCount := int64(0)
-
-		// Subscribe to JetStream with manual ack + rate limiting
-		// CRITICAL: Rate limiting prevents goroutine explosion and CPU overload
-		sub, err := s.natsJS.Subscribe("odin.token.>", func(msg *nats.Msg) {
-			count := atomic.AddInt64(&msgCount, 1)
-			if count%100 == 0 {
-				s.logger.Printf("📬 Received %d messages from JetStream", count)
-			}
-
-			// STEP 1: Rate limiting (CRITICAL - prevents overload)
-			// Check if we're allowed to process this message based on configured rate limit
-			allow, waitDuration := s.resourceGuard.AllowNATSMessage(s.ctx)
-			if !allow {
-				// Rate limit exceeded - NAK for redelivery
-				if err := msg.Nak(); err != nil {
-					RecordJetStreamError(ErrorSeverityWarning)
-					s.structLogger.Error().
-						Err(err).
-						Str("reason", "rate_limit_nak_failed").
-						Msg("Failed to NAK message during rate limiting")
-				}
-				dropped := atomic.AddInt64(&droppedCount, 1)
-				IncrementNATSDropped()
-				if dropped%100 == 0 {
-					s.structLogger.Warn().
-						Int64("dropped_count", dropped).
-						Dur("would_wait", waitDuration).
-						Int("rate_limit", s.config.MaxNATSMessagesPerSec).
-						Msg("NATS rate limit exceeded - NAK'ing messages for redelivery")
-				}
-				return
-			}
-
-			// STEP 2: CPU emergency brake
-			if s.resourceGuard.ShouldPauseNATS() {
-				// CPU critically high - NAK message for redelivery
-				if err := msg.Nak(); err != nil {
-					RecordJetStreamError(ErrorSeverityWarning)
-					s.structLogger.Error().
-						Err(err).
-						Str("reason", "cpu_brake_nak_failed").
-						Msg("Failed to NAK message during CPU emergency brake")
-				}
-				dropped := atomic.AddInt64(&droppedCount, 1)
-				IncrementNATSDropped()
-				if dropped%100 == 0 {
-					s.structLogger.Warn().
-						Int64("dropped_count", dropped).
-						Float64("cpu_threshold", s.config.CPUPauseThreshold).
-						Msg("CPU emergency brake - pausing NATS consumption")
-				}
-				return
-			}
-
-			// Track NATS message in Prometheus
-			IncrementNATSMessages()
-
-			// STEP 3: Submit to worker pool (can still drop if queue full)
-			s.workerPool.Submit(func() {
-				// CRITICAL: Pass NATS subject to broadcast for subscription filtering
-				// Subject format: "odin.token.BTC" → extracts "BTC" for filtering
-				// This reduces broadcast fanout from O(all_clients) to O(subscribed_clients)
-				// Performance gain: 10-20x CPU reduction with subscription filtering
-				s.broadcast(msg.Subject, msg.Data)
-
-				// Acknowledge message after successful broadcast
-				if err := msg.Ack(); err != nil {
-					RecordJetStreamError(ErrorSeverityWarning)
-					ackFails := atomic.AddInt64(&ackFailCount, 1)
-
-					// Log every ack failure at debug level, summary every 100 at warn level
-					s.structLogger.Debug().
-						Err(err).
-						Int64("total_ack_failures", ackFails).
-						Str("subject", msg.Subject).
-						Msg("Failed to ACK NATS message")
-
-					if ackFails%100 == 0 {
-						s.structLogger.Warn().
-							Int64("ack_failures", ackFails).
-							Err(err).
-							Msg("High NATS ACK failure rate - check NATS connection health")
-					}
-				}
+	// Start Kafka consumer
+	if s.kafkaConsumer != nil {
+		if err := s.kafkaConsumer.Start(); err != nil {
+			s.auditLogger.Critical("KafkaStartFailed", "Failed to start Kafka consumer", map[string]any{
+				"error": err.Error(),
 			})
-		}, nats.Durable(s.config.JSConsumerName), nats.ManualAck(), nats.AckWait(s.config.JSConsumerAckWait))
-
-		if err != nil {
-			RecordJetStreamError(ErrorSeverityCritical)
-			s.auditLogger.Critical("JetStreamSubscriptionFailed", "Failed to subscribe to JetStream", map[string]any{
-				"subject": "odin.token.>",
-				"error":   err.Error(),
-			})
-			return fmt.Errorf("failed to subscribe to jetstream: %w", err)
+			return fmt.Errorf("failed to start kafka consumer: %w", err)
 		}
-		s.natsSubcription = sub
-		s.logger.Printf("✅ Subscribed to JetStream: odin.token.> (durable, manual ack)")
-
-		// Monitor NATS connection status
-		s.wg.Add(1)
-		go s.monitorNATS()
+		s.logger.Printf("✅ Started Kafka consumer for all topics")
 	}
 
 	mux := http.NewServeMux()
@@ -465,71 +334,6 @@ func (s *Server) collectMetrics() {
 					s.stats.mu.Unlock()
 				}
 			}
-		}
-	}
-}
-
-func (s *Server) monitorNATS() {
-	defer s.wg.Done()
-
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	wasConnected := s.natsConn.IsConnected()
-	lastSubCheck := time.Now()
-
-	for {
-		select {
-		case <-s.ctx.Done():
-			return
-		case <-ticker.C:
-			isConnected := s.natsConn.IsConnected()
-
-			// Detect connection state changes
-			if wasConnected && !isConnected {
-				// Connection lost
-				s.auditLogger.Critical("NATSDisconnected", "Lost connection to NATS server", map[string]any{
-					"url": s.config.NATSUrl,
-				})
-				s.structLogger.Error().
-					Str("url", s.config.NATSUrl).
-					Msg("NATS connection lost")
-			} else if !wasConnected && isConnected {
-				// Connection restored
-				s.auditLogger.Info("NATSReconnected", "Reconnected to NATS server", map[string]any{
-					"url": s.config.NATSUrl,
-				})
-				s.structLogger.Info().
-					Str("url", s.config.NATSUrl).
-					Msg("NATS connection restored")
-			}
-
-			// Check subscription health every 30 seconds
-			if time.Since(lastSubCheck) >= 30*time.Second {
-				if s.natsSubcription != nil {
-					// Check if subscription is still valid
-					if !s.natsSubcription.IsValid() {
-						s.auditLogger.Critical("NATSSubscriptionInvalid", "NATS subscription is invalid", map[string]any{
-							"subject": "odin.token.>",
-						})
-						s.structLogger.Error().
-							Str("subject", "odin.token.>").
-							Msg("NATS subscription is invalid - clients will not receive updates")
-					}
-
-					// Get pending message count for monitoring
-					pending, _, err := s.natsSubcription.Pending()
-					if err == nil && pending > 1000 {
-						// High pending count indicates subscription isn't keeping up
-						s.structLogger.Warn().
-							Int("pending_messages", pending).
-							Msg("High NATS pending message count - subscription may be falling behind")
-					}
-				}
-				lastSubCheck = time.Now()
-			}
-
-			wasConnected = isConnected
 		}
 	}
 }
@@ -924,8 +728,8 @@ func (s *Server) writePump(c *Client) {
 	}
 }
 
-// extractChannel extracts the hierarchical channel identifier from a NATS subject
-// NATS subject format: "odin.token.BTC.trade" → extracts "BTC.trade"
+// extractChannel extracts the hierarchical channel identifier from a Kafka topic subject
+// Subject format: "odin.token.BTC.trade" → extracts "BTC.trade"
 //
 // Subject structure:
 // - Part 0: Namespace ("odin")
@@ -967,7 +771,7 @@ func extractChannel(subject string) string {
 // This is the critical path for message delivery in a trading platform
 //
 // Changes from basic WebSocket broadcast:
-// 1. Wraps raw NATS messages in MessageEnvelope with sequence numbers
+// 1. Wraps raw Kafka messages in MessageEnvelope with sequence numbers
 // 2. Stores in replay buffer BEFORE sending (ensures can replay if send fails)
 // 3. Detects slow clients and disconnects them (prevents head-of-line blocking)
 // 4. Never drops messages silently (either deliver or disconnect client)
@@ -981,7 +785,7 @@ func extractChannel(subject string) string {
 // Performance characteristics WITH hierarchical filtering:
 // - O(m) where m = number of subscribed clients to specific event type
 // - With 10,000 clients, 500 subscribers per channel: ~0.1ms per broadcast
-// - Called ~12 times/second from NATS subscription (varies by event type)
+// - Called ~12 times/second from Kafka consumer (varies by event type)
 // - Total CPU: ~1-2% (vs 99%+ without filtering) - 50-100x improvement!
 //
 // Example savings with hierarchical channels:
@@ -992,11 +796,11 @@ func extractChannel(subject string) string {
 // - With hierarchical filtering: 12 × 500 = 6,000 writes/sec (CPU <30%)
 // - Result: 160x reduction vs no filtering, 8x reduction vs symbol-only filtering
 func (s *Server) broadcast(subject string, message []byte) {
-	// Extract hierarchical channel from NATS subject for subscription filtering
+	// Extract hierarchical channel from subject for subscription filtering
 	// Example: "odin.token.BTC.trade" → "BTC.trade"
 	channel := extractChannel(subject)
 
-	// Edge case: If channel is empty (malformed NATS subject), skip broadcast entirely
+	// Edge case: If channel is empty (malformed subject), skip broadcast entirely
 	// Invalid subjects indicate misconfigured publisher - should never happen in production
 	if channel == "" {
 		return
@@ -1025,8 +829,8 @@ func (s *Server) broadcast(subject string, message []byte) {
 
 	// Iterate ONLY subscribed clients (not all clients!)
 	for _, client := range subscribers {
-		// Wrap raw NATS message in envelope with sequence number
-		// Message type: "price:update" (could be parsed from NATS subject)
+		// Wrap raw Kafka message in envelope with sequence number
+		// Message type: "price:update" (could be parsed from subject)
 		// Priority: HIGH (trading data is critical but not life-or-death)
 		envelope, err := WrapMessage(message, "price:update", PRIORITY_HIGH, client.seqGen)
 		if err != nil {
@@ -1179,9 +983,8 @@ func (s *Server) broadcast(subject string, message []byte) {
 //
 // Industry patterns:
 // - FIX protocol: Gap fill requests are standard
-// - NATS JetStream: Consumers can request replay by sequence
 // - Kafka: Consumers can seek to specific offsets
-// - Our implementation: Similar to NATS JetStream
+// - Our implementation: Similar to Kafka consumer offset seeking
 func (s *Server) handleClientMessage(c *Client, data []byte) {
 	// Parse outer message structure
 	var req struct {
@@ -1454,16 +1257,16 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	warnings := []string{}
 	errors := []string{}
 
-	// Check NATS (critical dependency)
-	natsStatus := "disconnected"
-	natsHealthy := false
-	if s.natsConn != nil && s.natsConn.IsConnected() {
-		natsStatus = "connected"
-		natsHealthy = true
+	// Check Kafka consumer (critical dependency)
+	kafkaStatus := "stopped"
+	kafkaHealthy := false
+	if s.kafkaConsumer != nil {
+		kafkaStatus = "running"
+		kafkaHealthy = true
 	} else {
 		isHealthy = false
-		errors = append(errors, "NATS connection lost")
-		s.structLogger.Error().Msg("Health check failed: NATS connection lost")
+		errors = append(errors, "Kafka consumer not initialized")
+		s.structLogger.Error().Msg("Health check failed: Kafka consumer not initialized")
 	}
 
 	// Check CPU (against configured reject threshold)
@@ -1552,9 +1355,9 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"status":  status,
 		"healthy": isHealthy,
 		"checks": map[string]any{
-			"nats": map[string]any{
-				"status":  natsStatus,
-				"healthy": natsHealthy,
+			"kafka": map[string]any{
+				"status":  kafkaStatus,
+				"healthy": kafkaHealthy,
 			},
 			"capacity": map[string]any{
 				"current":    currentConns,
@@ -1584,7 +1387,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 				"max_goroutines":   s.config.MaxGoroutines,
 				"cpu_threshold":    s.config.CPURejectThreshold,
 				"memory_limit_mb":  memLimitMB,
-				"nats_rate":        resourceStats["nats_rate_limit"],
+				"kafka_rate":       resourceStats["kafka_rate_limit"],
 				"broadcast_rate":   resourceStats["broadcast_rate_limit"],
 				"worker_pool_size": resourceStats["worker_pool_size"],
 			},
@@ -1700,10 +1503,12 @@ func (s *Server) Shutdown() error {
 		s.listener.Close()
 	}
 
-	// Stop receiving new messages from NATS
-	if s.natsConn != nil {
-		s.logger.Println("Closing NATS connection (no new messages)")
-		s.natsConn.Close()
+	// Stop receiving new messages from Kafka
+	if s.kafkaConsumer != nil {
+		s.logger.Println("Stopping Kafka consumer (no new messages)")
+		if err := s.kafkaConsumer.Stop(); err != nil {
+			s.logger.Printf("Error stopping Kafka consumer: %v", err)
+		}
 	}
 
 	// Count current connections

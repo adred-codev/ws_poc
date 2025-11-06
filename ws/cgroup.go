@@ -70,7 +70,7 @@ func getMemoryLimit() (int64, error) {
 //
 // Calculation example (512MB container):
 //   - Container limit: 512MB
-//   - Runtime overhead: 128MB (Go runtime, NATS client, goroutine stacks)
+//   - Runtime overhead: 128MB (Go runtime, Kafka client, goroutine stacks)
 //   - Available for connections: 384MB
 //   - Max connections: 384MB / 180KB = ~2,133 connections
 //
@@ -102,7 +102,7 @@ func calculateMaxConnections(memoryLimitBytes int64) int {
 
 	// Reserve 128MB for runtime overhead:
 	//   - Go runtime heap: ~50MB
-	//   - NATS client: ~20MB
+	//   - Kafka client: ~20MB
 	//   - Goroutine stacks: ~30MB (2KB × 15,000 goroutines)
 	//   - Buffer pools, metrics: ~10MB
 	//   - Safety margin: ~18MB

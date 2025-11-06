@@ -100,6 +100,7 @@ type Connection struct {
 	cancel              context.CancelFunc
 	writeMu             sync.Mutex
 	connectTime         time.Time
+	closeOnce           sync.Once // Ensure close() is called only once
 }
 
 var (
@@ -536,18 +537,20 @@ func (c *Connection) writePump() {
 }
 
 func (c *Connection) close() {
-	if !c.connected {
-		return
-	}
+	// Use sync.Once to ensure this only executes once, even if called from multiple goroutines
+	// This fixes the race condition where readPump and writePump both call close()
+	c.closeOnce.Do(func() {
+		c.connected = false
 
-	c.connected = false
-	atomic.AddInt64(&state.activeConnections, -1)
+		// Only decrement counter once per connection
+		atomic.AddInt64(&state.activeConnections, -1)
 
-	if c.ws != nil {
-		c.ws.Close()
-	}
+		if c.ws != nil {
+			c.ws.Close()
+		}
 
-	c.cancel()
+		c.cancel()
+	})
 }
 
 func checkServerHealth() error {

@@ -1,0 +1,103 @@
+version: "3"
+
+# Local Stats & Monitoring Tasks
+# Get statistics, IPs, and monitoring information
+
+tasks:
+  publisher:
+    desc: Get publisher statistics
+    cmds:
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - echo "📡 PUBLISHER STATISTICS"
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - curl -s http://localhost:3006/status | jq '.'
+
+  ws:
+    desc: Get WS server statistics
+    cmds:
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - echo "🌐 WS SERVER STATISTICS"
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - curl -s http://localhost:3005/health | jq '.checks'
+
+  ips:
+    desc: Get container IP addresses
+    cmds:
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - echo "🌐 SERVICE URLS"
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - |
+        # Check if containers are running
+        if ! docker ps --format '{{.Names}}' | grep -q "redpanda-local"; then
+          echo "⚠️  No containers running"
+          exit 0
+        fi
+
+        # WebSocket Server
+        if docker ps --format '{{.Names}}' | grep -q "odin-ws-local"; then
+          echo "🌐 WebSocket Server:      ws://localhost:3005"
+          echo "   Health endpoint:       http://localhost:3005/health"
+        fi
+
+        # Publisher
+        if docker ps --format '{{.Names}}' | grep -q "odin-publisher-local"; then
+          echo "📡 Publisher:             http://localhost:3006"
+          echo "   Status endpoint:       http://localhost:3006/status"
+        fi
+
+        # Redpanda Console
+        if docker ps --format '{{.Names}}' | grep -q "redpanda-console-local"; then
+          echo "🔍 Redpanda Console:      http://localhost:8080"
+        fi
+
+        # Grafana
+        if docker ps --format '{{.Names}}' | grep -q "odin-grafana-local"; then
+          echo "📊 Grafana:               http://localhost:3011"
+          echo "   Credentials:           admin / admin"
+        fi
+
+        # Prometheus
+        if docker ps --format '{{.Names}}' | grep -q "odin-prometheus-local"; then
+          echo "📈 Prometheus:            http://localhost:9092"
+        fi
+
+        # Loki
+        if docker ps --format '{{.Names}}' | grep -q "odin-loki-local"; then
+          echo "📋 Loki:                  http://localhost:3102"
+        fi
+
+        # Redpanda Kafka
+        if docker ps --format '{{.Names}}' | grep -q "redpanda-local"; then
+          echo "🔴 Redpanda (Kafka):      localhost:19092"
+          echo "   Admin API:             http://localhost:9644"
+        fi
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+  topics:
+    desc: List Kafka topics with message counts
+    cmds:
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - echo "📋 KAFKA TOPICS"
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - docker exec redpanda-local rpk topic list
+
+  consume:
+    desc: Consume messages from a topic (TOPIC=odin.trades NUM=5)
+    vars:
+      TOPIC: '{{.TOPIC | default "odin.trades"}}'
+      NUM: '{{.NUM | default "5"}}'
+    cmds:
+      - echo "📨 Consuming {{.NUM}} messages from {{.TOPIC}}..."
+      - echo ""
+      - docker exec redpanda-local rpk topic consume {{.TOPIC}} --num {{.NUM}} --format '%v\n'
+
+  all:
+    desc: Show all stats (composed)
+    cmds:
+      - task: publisher
+      - echo ""
+      - task: ws
+      - echo ""
+      - task: ips
+      - echo ""
+      - task: topics

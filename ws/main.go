@@ -6,10 +6,23 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
 
 	_ "go.uber.org/automaxprocs"
 )
+
+// Helper function to split broker string
+func splitBrokers(brokers string) []string {
+	result := []string{}
+	for _, b := range strings.Split(brokers, ",") {
+		trimmed := strings.TrimSpace(b)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
+}
 
 func main() {
 	var (
@@ -42,9 +55,16 @@ func main() {
 	cfg.Print()
 
 	// Create and configure server with loaded configuration
+	// Parse Kafka brokers from comma-separated string
+	kafkaBrokers := []string{}
+	if cfg.KafkaBrokers != "" {
+		kafkaBrokers = splitBrokers(cfg.KafkaBrokers)
+	}
+
 	serverConfig := ServerConfig{
 		Addr:            cfg.Addr,
-		NATSUrl:         cfg.NATSUrl,
+		KafkaBrokers:    kafkaBrokers,
+		ConsumerGroup:   cfg.ConsumerGroup,
 		MaxConnections:  cfg.MaxConnections,
 		BufferSize:      4096, // Constant
 		WorkerCount:     cfg.WorkerPoolSize,
@@ -55,21 +75,13 @@ func main() {
 		MemoryLimit: cfg.MemoryLimit,
 
 		// Rate limiting (CRITICAL - prevents overload)
-		MaxNATSMessagesPerSec: cfg.MaxNATSRate,
-		MaxBroadcastsPerSec:   cfg.MaxBroadcastRate,
-		MaxGoroutines:         cfg.MaxGoroutines,
+		MaxKafkaMessagesPerSec: cfg.MaxKafkaRate,
+		MaxBroadcastsPerSec:    cfg.MaxBroadcastRate,
+		MaxGoroutines:          cfg.MaxGoroutines,
 
 		// Safety thresholds (emergency brakes)
 		CPURejectThreshold: cfg.CPURejectThreshold,
 		CPUPauseThreshold:  cfg.CPUPauseThreshold,
-
-		// JetStream configuration
-		JSStreamMaxAge:    cfg.JSStreamMaxAge,
-		JSStreamMaxMsgs:   cfg.JSStreamMaxMsgs,
-		JSStreamMaxBytes:  cfg.JSStreamMaxBytes,
-		JSConsumerAckWait: cfg.JSConsumerAckWait,
-		JSStreamName:      cfg.JSStreamName,
-		JSConsumerName:    cfg.JSConsumerName,
 
 		// Monitoring intervals
 		MetricsInterval: cfg.MetricsInterval,

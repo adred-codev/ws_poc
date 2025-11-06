@@ -1,0 +1,354 @@
+version: "3"
+
+# Local Service Management Tasks
+# Individual service control that composes into aggregate tasks
+
+vars:
+  COMPOSE_FILE: "{{.USER_WORKING_DIR}}/deployments/v1/local/docker-compose.yml"
+
+tasks:
+  # ============================================================================
+  # DELETE (Cleanup) - For config changes
+  # ============================================================================
+
+  delete:redpanda:
+    desc: Delete Redpanda container and volumes
+    cmds:
+      - docker-compose -f {{.COMPOSE_FILE}} stop redpanda
+      - docker-compose -f {{.COMPOSE_FILE}} rm -f redpanda
+      - docker volume rm local_redpanda_data 2>/dev/null || true
+      - echo "✅ Redpanda deleted"
+
+  delete:console:
+    desc: Delete Redpanda Console container
+    cmds:
+      - docker-compose -f {{.COMPOSE_FILE}} stop console
+      - docker-compose -f {{.COMPOSE_FILE}} rm -f console
+      - echo "✅ Console deleted"
+
+  delete:publisher:
+    desc: Delete Publisher container
+    cmds:
+      - docker-compose -f {{.COMPOSE_FILE}} stop publisher
+      - docker-compose -f {{.COMPOSE_FILE}} rm -f publisher
+      - echo "✅ Publisher deleted"
+
+  delete:ws:
+    desc: Delete WS server container
+    cmds:
+      - docker-compose -f {{.COMPOSE_FILE}} stop ws-server
+      - docker-compose -f {{.COMPOSE_FILE}} rm -f ws-server
+      - echo "✅ WS server deleted"
+
+  delete:prometheus:
+    desc: Delete Prometheus container and volumes
+    cmds:
+      - docker-compose -f {{.COMPOSE_FILE}} stop prometheus
+      - docker-compose -f {{.COMPOSE_FILE}} rm -f prometheus
+      - docker volume rm local_prometheus_data 2>/dev/null || true
+      - echo "✅ Prometheus deleted"
+
+  delete:grafana:
+    desc: Delete Grafana container and volumes
+    cmds:
+      - docker-compose -f {{.COMPOSE_FILE}} stop grafana
+      - docker-compose -f {{.COMPOSE_FILE}} rm -f grafana
+      - docker volume rm local_grafana_data 2>/dev/null || true
+      - echo "✅ Grafana deleted"
+
+  delete:loki:
+    desc: Delete Loki container and volumes
+    cmds:
+      - docker-compose -f {{.COMPOSE_FILE}} stop loki
+      - docker-compose -f {{.COMPOSE_FILE}} rm -f loki
+      - docker volume rm local_loki_data 2>/dev/null || true
+      - echo "✅ Loki deleted"
+
+  delete:promtail:
+    desc: Delete Promtail container
+    cmds:
+      - docker-compose -f {{.COMPOSE_FILE}} stop promtail
+      - docker-compose -f {{.COMPOSE_FILE}} rm -f promtail
+      - echo "✅ Promtail deleted"
+
+  delete:monitoring:
+    desc: Delete all monitoring services (composed)
+    cmds:
+      - task: delete:prometheus
+      - task: delete:grafana
+      - task: delete:loki
+      - task: delete:promtail
+
+  delete:all:
+    desc: Delete ALL containers and volumes (nuclear option)
+    cmds:
+      - docker-compose -f {{.COMPOSE_FILE}} down -v --remove-orphans
+      - echo "✅ All containers and volumes deleted"
+
+  # ============================================================================
+  # START (Launch services)
+  # ============================================================================
+
+  start:redpanda:
+    desc: Start Redpanda
+    cmds:
+      - docker-compose -f {{.COMPOSE_FILE}} up -d redpanda
+      - echo "✅ Redpanda starting..."
+
+  start:console:
+    desc: Start Redpanda Console
+    deps: [start:redpanda]
+    cmds:
+      - docker-compose -f {{.COMPOSE_FILE}} up -d console
+      - echo "⏳ Waiting for Console to be ready..."
+      - |
+        max_attempts=30
+        attempt=0
+        while [ $attempt -lt $max_attempts ]; do
+          if curl -sf http://localhost:8080 > /dev/null 2>&1; then
+            echo "✅ Console ready!"
+            exit 0
+          fi
+          attempt=$((attempt + 1))
+          echo "   Attempt $attempt/$max_attempts..."
+          sleep 1
+        done
+        echo "❌ Console failed to become ready after ${max_attempts}s"
+        exit 1
+
+  start:publisher:
+    desc: Start Publisher
+    deps: [start:redpanda]
+    cmds:
+      - docker-compose -f {{.COMPOSE_FILE}} up -d publisher
+      - echo "⏳ Waiting for Publisher to be ready..."
+      - |
+        max_attempts=30
+        attempt=0
+        while [ $attempt -lt $max_attempts ]; do
+          if curl -sf http://localhost:3006/health > /dev/null 2>&1; then
+            echo "✅ Publisher ready!"
+            exit 0
+          fi
+          attempt=$((attempt + 1))
+          echo "   Attempt $attempt/$max_attempts..."
+          sleep 1
+        done
+        echo "❌ Publisher failed to become ready after ${max_attempts}s"
+        exit 1
+
+  start:ws:
+    desc: Start WS server
+    deps: [start:redpanda]
+    cmds:
+      - docker-compose -f {{.COMPOSE_FILE}} up -d ws-server
+      - echo "⏳ Waiting for WS server to be ready..."
+      - |
+        max_attempts=30
+        attempt=0
+        while [ $attempt -lt $max_attempts ]; do
+          if curl -sf http://localhost:3005/health > /dev/null 2>&1; then
+            echo "✅ WS server ready!"
+            exit 0
+          fi
+          attempt=$((attempt + 1))
+          echo "   Attempt $attempt/$max_attempts..."
+          sleep 1
+        done
+        echo "❌ WS server failed to become ready after ${max_attempts}s"
+        exit 1
+
+  start:prometheus:
+    desc: Start Prometheus
+    cmds:
+      - docker-compose -f {{.COMPOSE_FILE}} up -d prometheus
+      - echo "⏳ Waiting for Prometheus to be ready..."
+      - |
+        max_attempts=30
+        attempt=0
+        while [ $attempt -lt $max_attempts ]; do
+          if curl -sf http://localhost:9092/-/healthy > /dev/null 2>&1; then
+            echo "✅ Prometheus ready!"
+            exit 0
+          fi
+          attempt=$((attempt + 1))
+          echo "   Attempt $attempt/$max_attempts..."
+          sleep 1
+        done
+        echo "❌ Prometheus failed to become ready after ${max_attempts}s"
+        exit 1
+
+  start:loki:
+    desc: Start Loki
+    cmds:
+      - docker-compose -f {{.COMPOSE_FILE}} up -d loki
+      - echo "⏳ Waiting for Loki to be ready..."
+      - |
+        max_attempts=30
+        attempt=0
+        while [ $attempt -lt $max_attempts ]; do
+          if curl -sf http://localhost:3102/ready > /dev/null 2>&1; then
+            echo "✅ Loki ready!"
+            exit 0
+          fi
+          attempt=$((attempt + 1))
+          echo "   Attempt $attempt/$max_attempts..."
+          sleep 1
+        done
+        echo "❌ Loki failed to become ready after ${max_attempts}s"
+        exit 1
+
+  start:promtail:
+    desc: Start Promtail
+    deps: [start:loki]
+    cmds:
+      - docker-compose -f {{.COMPOSE_FILE}} up -d promtail
+      - echo "✅ Promtail starting..."
+
+  start:grafana:
+    desc: Start Grafana
+    deps: [start:prometheus, start:loki]
+    cmds:
+      - docker-compose -f {{.COMPOSE_FILE}} up -d grafana
+      - echo "⏳ Waiting for Grafana to be ready..."
+      - |
+        max_attempts=30
+        attempt=0
+        while [ $attempt -lt $max_attempts ]; do
+          if curl -sf http://localhost:3011/api/health > /dev/null 2>&1; then
+            echo "✅ Grafana ready!"
+            exit 0
+          fi
+          attempt=$((attempt + 1))
+          echo "   Attempt $attempt/$max_attempts..."
+          sleep 1
+        done
+        echo "❌ Grafana failed to become ready after ${max_attempts}s"
+        exit 1
+
+  start:monitoring:
+    desc: Start all monitoring services (composed)
+    cmds:
+      - task: start:loki
+      - task: start:prometheus
+      - task: start:promtail
+      - task: start:grafana
+
+  start:all:
+    desc: Start ALL services in correct order (composed)
+    cmds:
+      - echo "🚀 Starting all services..."
+      - task: start:redpanda
+      - sleep 5
+      - task: start:console
+      - task: start:publisher
+      - task: start:ws
+      - task: start:monitoring
+      - echo "✅ All services started"
+
+  # ============================================================================
+  # RESTART (Stop + Start)
+  # ============================================================================
+
+  restart:redpanda:
+    desc: Restart Redpanda (for config changes)
+    cmds:
+      - task: delete:redpanda
+      - task: start:redpanda
+
+  restart:publisher:
+    desc: Restart Publisher (for code changes)
+    cmds:
+      - docker-compose -f {{.COMPOSE_FILE}} restart publisher
+      - echo "✅ Publisher restarted"
+
+  restart:ws:
+    desc: Restart WS server (for code changes)
+    cmds:
+      - docker-compose -f {{.COMPOSE_FILE}} restart ws-server
+      - echo "✅ WS server restarted"
+
+  restart:monitoring:
+    desc: Restart all monitoring services (composed)
+    cmds:
+      - docker-compose -f {{.COMPOSE_FILE}} restart prometheus grafana loki promtail
+      - echo "✅ Monitoring restarted"
+
+  restart:all:
+    desc: Restart ALL services (composed)
+    cmds:
+      - docker-compose -f {{.COMPOSE_FILE}} restart
+      - echo "✅ All services restarted"
+
+  # ============================================================================
+  # REBUILD (For code changes)
+  # ============================================================================
+
+  rebuild:publisher:
+    desc: Rebuild and restart Publisher (for code changes)
+    cmds:
+      - docker-compose -f {{.COMPOSE_FILE}} up -d --build publisher
+      - echo "✅ Publisher rebuilt"
+
+  rebuild:ws:
+    desc: Rebuild and restart WS server (for code changes)
+    cmds:
+      - docker-compose -f {{.COMPOSE_FILE}} up -d --build ws-server
+      - echo "✅ WS server rebuilt"
+
+  rebuild:all:
+    desc: Rebuild and restart all buildable services (composed)
+    cmds:
+      - task: rebuild:publisher
+      - task: rebuild:ws
+
+  # ============================================================================
+  # LOGS
+  # ============================================================================
+
+  logs:redpanda:
+    desc: Tail Redpanda logs
+    cmds:
+      - docker-compose -f {{.COMPOSE_FILE}} logs -f redpanda
+
+  logs:publisher:
+    desc: Tail Publisher logs
+    cmds:
+      - docker-compose -f {{.COMPOSE_FILE}} logs -f publisher
+
+  logs:ws:
+    desc: Tail WS server logs
+    cmds:
+      - docker-compose -f {{.COMPOSE_FILE}} logs -f ws-server
+
+  logs:prometheus:
+    desc: Tail Prometheus logs
+    cmds:
+      - docker-compose -f {{.COMPOSE_FILE}} logs -f prometheus
+
+  logs:grafana:
+    desc: Tail Grafana logs
+    cmds:
+      - docker-compose -f {{.COMPOSE_FILE}} logs -f grafana
+
+  logs:all:
+    desc: Tail all service logs
+    cmds:
+      - docker-compose -f {{.COMPOSE_FILE}} logs -f
+
+  # ============================================================================
+  # STATUS
+  # ============================================================================
+
+  ps:
+    desc: Show running containers
+    cmds:
+      - docker-compose -f {{.COMPOSE_FILE}} ps
+
+  status:
+    desc: Show detailed service status
+    cmds:
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - echo "📊 LOCAL DEPLOYMENT STATUS"
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" | grep -E "(odin-|redpanda)" || echo "⚠️  No services running"

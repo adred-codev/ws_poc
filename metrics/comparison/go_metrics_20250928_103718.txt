@@ -1,7 +1,0 @@
-📊 Go Server Metrics:
-====================
-Connections: 0
-Uptime: 157.213914375s
-Goroutines: 16
-Memory: 15820216 bytes
-NATS Messages: 62 in, 0 out

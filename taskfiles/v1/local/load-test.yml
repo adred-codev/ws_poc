@@ -1,0 +1,178 @@
+version: "3"
+
+# Local Load Testing Tasks
+# Sustained capacity testing for local deployment
+
+tasks:
+  sustained:
+    desc: Sustained capacity test (publisher + 1000 WebSocket clients)
+    cmds:
+      - echo "=========================================="
+      - echo "SUSTAINED CAPACITY TEST"
+      - echo "=========================================="
+      - echo "   Publisher - 1000 events/sec"
+      - echo "   Clients - 1000 WebSocket connections"
+      - echo "   Ramp Rate - 50 conn/sec"
+      - echo "   Duration - 60 minutes"
+      - echo ""
+      - echo "   Monitor -"
+      - echo "     - task local:test:status"
+      - echo "     - tail -f /tmp/loadtest.log"
+      - echo "     - http://localhost:3011 (Grafana)"
+      - echo ""
+      - echo "   Stop -"
+      - echo "     - task local:test:stop"
+      - echo "=========================================="
+      - echo ""
+      - echo "🔍 Checking for existing load tests..."
+      - |
+        # Check if load test is already running
+        if pgrep -f "sustained-load-test" > /dev/null; then
+          echo "⚠️  Found existing load test processes. Stopping them..."
+          pkill -9 -f "sustained-load-test"
+          sleep 2
+          echo "✅ Old load tests stopped"
+        else
+          echo "✅ No existing load tests found"
+        fi
+      - echo ""
+      - echo "🚀 Starting publisher..."
+      - |
+        curl -X POST http://localhost:3006/start \
+          -H "Content-Type: application/json" \
+          -d '{
+            "rate": 1000,
+            "tokenIds": [
+              "BTC", "ETH", "SOL", "DOGE", "ODIN",
+              "AVAX", "MATIC", "LINK", "UNI", "AAVE",
+              "SUSHI", "COMP", "MKR", "SNX", "YFI",
+              "CRV", "BAL", "RUNE", "LUNA", "ATOM"
+            ]
+          }'
+      - echo "✅ Publisher started!"
+      - echo ""
+      - echo "🔌 Starting WebSocket clients..."
+      - |
+        cd {{.USER_WORKING_DIR}}/loadtest
+        ./sustained-load-test \
+          -url ws://localhost:3005/ws \
+          -health http://localhost:3005/health \
+          -connections 1000 \
+          -ramp-rate 50 \
+          -duration 3600 \
+          > /tmp/loadtest.log 2>&1 &
+        echo "✅ Clients started! (logs: /tmp/loadtest.log)"
+      - echo ""
+      - echo "🎉 Full capacity test running!"
+
+  start:publisher:
+    desc: Start publisher only (1000 events/sec)
+    cmds:
+      - echo "=========================================="
+      - echo "STARTING PUBLISHER"
+      - echo "=========================================="
+      - echo "   Rate - 1000 events/sec"
+      - echo "   Tokens - 20"
+      - echo "   Duration - Indefinite (until stopped)"
+      - echo ""
+      - echo "   Monitor - task local:test:status"
+      - echo "   Stop - task local:test:stop:publisher"
+      - echo "=========================================="
+      - echo ""
+      - |
+        curl -X POST http://localhost:3006/start \
+          -H "Content-Type: application/json" \
+          -d '{
+            "rate": 1000,
+            "tokenIds": [
+              "BTC", "ETH", "SOL", "DOGE", "ODIN",
+              "AVAX", "MATIC", "LINK", "UNI", "AAVE",
+              "SUSHI", "COMP", "MKR", "SNX", "YFI",
+              "CRV", "BAL", "RUNE", "LUNA", "ATOM"
+            ]
+          }'
+      - echo ""
+      - echo "✅ Publisher started!"
+
+  stop:
+    desc: Stop all load tests (publisher + clients)
+    cmds:
+      - echo "🛑 Stopping publisher..."
+      - curl -X POST http://localhost:3006/stop
+      - echo ""
+      - echo "🛑 Stopping WebSocket clients..."
+      - |
+        # Count processes before stopping
+        count=$(pgrep -f "sustained-load-test" | wc -l | tr -d ' ')
+        if [ "$count" -gt 0 ]; then
+          echo "   Found $count client process(es)"
+          pkill -9 -f "sustained-load-test"
+          sleep 2
+          # Verify all stopped
+          remaining=$(pgrep -f "sustained-load-test" | wc -l | tr -d ' ')
+          if [ "$remaining" -eq 0 ]; then
+            echo "✅ All clients stopped"
+          else
+            echo "⚠️  Warning: $remaining process(es) still running"
+          fi
+        else
+          echo "⚠️  No clients running"
+        fi
+      - echo ""
+      - echo "✅ All load tests stopped"
+
+  stop:publisher:
+    desc: Stop publisher only
+    cmds:
+      - curl -X POST http://localhost:3006/stop
+      - echo ""
+      - echo "✅ Publisher stopped"
+
+  stop:clients:
+    desc: Stop WebSocket clients only
+    cmds:
+      - |
+        # Count processes before stopping
+        count=$(pgrep -f "sustained-load-test" | wc -l | tr -d ' ')
+        if [ "$count" -gt 0 ]; then
+          echo "🛑 Found $count client process(es)"
+          pkill -9 -f "sustained-load-test"
+          sleep 2
+          # Verify all stopped
+          remaining=$(pgrep -f "sustained-load-test" | wc -l | tr -d ' ')
+          if [ "$remaining" -eq 0 ]; then
+            echo "✅ All clients stopped"
+          else
+            echo "⚠️  Warning: $remaining process(es) still running"
+            echo "   Manual cleanup: pkill -9 -f sustained-load-test"
+          fi
+        else
+          echo "⚠️  No clients running"
+        fi
+
+  status:
+    desc: Check load test status
+    cmds:
+      - echo "=========================================="
+      - echo "LOAD TEST STATUS"
+      - echo "=========================================="
+      - echo ""
+      - echo "📡 Publisher -"
+      - curl -s http://localhost:3006/status | jq '.'
+      - echo ""
+      - echo "🌐 WebSocket Server -"
+      - curl -s http://localhost:3005/health | jq '.checks.capacity'
+      - echo ""
+      - echo "🔌 Client Process -"
+      - |
+        if pgrep -f "sustained-load-test" > /dev/null; then
+          echo "   Status - ✅ Running"
+          echo "   Logs - tail -f /tmp/loadtest.log"
+        else
+          echo "   Status - ⚠️  Not running"
+        fi
+
+  logs:
+    desc: Show WebSocket client logs
+    cmds:
+      - tail -f /tmp/loadtest.log

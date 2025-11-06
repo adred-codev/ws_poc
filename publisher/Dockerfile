@@ -35,4 +35,4 @@ ENV NODE_ENV=production
 ENV PORT=3003
 
 # Run publisher
-CMD ["node", "dist/publisher.js"]
+CMD ["node", "dist/index.js"]
