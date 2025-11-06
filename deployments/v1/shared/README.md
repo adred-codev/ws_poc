@@ -96,6 +96,38 @@ services:
 - `.env.production` (gitignored) - Production secrets
 - **Change frequency:** Per-developer, per-deployment
 
+## What Goes Where?
+
+### ✅ Put in `shared/base.env`
+Values that are **identical across all environments**:
+- `WS_ADDR=:3002` - Server listen address (same everywhere)
+- `WS_MAX_BROADCAST_RATE=25` - Broadcast rate limit (same everywhere)
+- `WS_CPU_REJECT_THRESHOLD=75.0` - Safety thresholds (same everywhere)
+- `LOG_FORMAT=json` - Default log format (same everywhere)
+- `METRICS_INTERVAL=15s` - Metrics collection interval (same everywhere)
+
+**Rule:** If local and GCP would use the same value, put it in `base.env`.
+
+### ✅ Put in `overrides.env` (environment-specific)
+Values that **differ between environments**:
+- `ENVIRONMENT` - Local vs production
+- `KAFKA_BROKERS` - redpanda:9092 vs ${BACKEND_INTERNAL_IP}:9092
+- `WS_MEMORY_LIMIT` - 4GB (laptop) vs 14.5GB (server)
+- `WS_MAX_CONNECTIONS` - 1,000 (dev) vs 12,000 (production)
+- `WS_MAX_KAFKA_RATE` - 1,000 (testing) vs 25 (real traffic)
+- `LOG_LEVEL` - debug (dev) vs info (production)
+- `LOG_FORMAT` - pretty (dev) vs json (production)
+
+**Rule:** If local and GCP need different values, put it in each `overrides.env`.
+
+### ✅ Put in `.env.production` (gitignored secrets)
+Values that are **sensitive or machine-specific**:
+- `BACKEND_INTERNAL_IP=10.128.0.2` - GCP internal networking
+- `API_KEY=secret-key-here` - API credentials
+- `DATABASE_PASSWORD=secret-pass` - Database credentials
+
+**Rule:** Never commit secrets. Use gitignored `.env.production`.
+
 ## Examples
 
 ### Example 1: Using Default Value

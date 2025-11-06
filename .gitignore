@@ -53,3 +53,5 @@ temp/
 sessions
 
 bin
+
+deployments/v1/gcp/.env.gcp

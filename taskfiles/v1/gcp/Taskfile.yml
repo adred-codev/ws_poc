@@ -1,0 +1,163 @@
+version: "3"
+
+# =============================================================================
+# GCP Deployment Tasks (v1)
+# =============================================================================
+# Purpose: Orchestrate GCP distributed deployment (Kafka/Redpanda)
+# Architecture: Two instances (backend + ws-server) with shared configuration
+#
+# Usage:
+#   task gcp:COMMAND         - Run GCP task
+#   task gcp:deploy:backend  - Deploy backend services
+#   task gcp:deploy:ws       - Deploy WebSocket server
+#   task gcp:health          - Check all services health
+#   task gcp:stats:urls      - Show service URLs
+#
+# Configuration:
+#   - GCP_PROJECT: Google Cloud project ID
+#   - GCP_REGION: Deployment region (default: us-central1)
+#   - GCP_ZONE: Deployment zone (default: us-central1-a)
+#   - BACKEND_INSTANCE: Backend instance name (default: odin-backend)
+#   - WS_INSTANCE: WebSocket server instance name (default: odin-ws-go)
+
+vars:
+  # GCP Configuration
+  GCP_PROJECT: '{{.GCP_PROJECT | default "odin-ws-server"}}'
+  GCP_REGION: '{{.GCP_REGION | default "us-central1"}}'
+  GCP_ZONE: '{{.GCP_ZONE | default "us-central1-a"}}'
+
+  # Instance Names
+  BACKEND_INSTANCE: '{{.BACKEND_INSTANCE | default "odin-backend"}}'
+  WS_INSTANCE: '{{.WS_INSTANCE | default "odin-ws-go"}}'
+  LOADTEST_INSTANCE: '{{.LOADTEST_INSTANCE | default "odin-loadtest"}}'
+
+  # Git Configuration
+  GIT_BRANCH: '{{.GIT_BRANCH | default "working-refactored-12k"}}'
+  GIT_REPO_HTTPS: '{{.GIT_REPO_HTTPS | default "https://github.com/adred-codev/ws_poc.git"}}'
+  GIT_PAT: '{{.GIT_PAT | default ""}}'
+
+  # Deployment Paths
+  BACKEND_DEPLOY_PATH: "{{.USER_WORKING_DIR}}/deployments/v1/gcp/distributed/backend"
+  WS_DEPLOY_PATH: "{{.USER_WORKING_DIR}}/deployments/v1/gcp/distributed/ws-server"
+
+includes:
+  services:
+    taskfile: ./services.yml
+    vars:
+      GCP_PROJECT: "{{.GCP_PROJECT}}"
+      GCP_REGION: "{{.GCP_REGION}}"
+      GCP_ZONE: "{{.GCP_ZONE}}"
+      BACKEND_INSTANCE: "{{.BACKEND_INSTANCE}}"
+      WS_INSTANCE: "{{.WS_INSTANCE}}"
+      GIT_BRANCH: "{{.GIT_BRANCH}}"
+      GIT_REPO_HTTPS: "{{.GIT_REPO_HTTPS}}"
+      GIT_PAT: "{{.GIT_PAT}}"
+      BACKEND_DEPLOY_PATH: "{{.BACKEND_DEPLOY_PATH}}"
+      WS_DEPLOY_PATH: "{{.WS_DEPLOY_PATH}}"
+
+  deployment:
+    taskfile: ./deployment.yml
+    vars:
+      GCP_PROJECT: "{{.GCP_PROJECT}}"
+      GCP_REGION: "{{.GCP_REGION}}"
+      GCP_ZONE: "{{.GCP_ZONE}}"
+      BACKEND_INSTANCE: "{{.BACKEND_INSTANCE}}"
+      WS_INSTANCE: "{{.WS_INSTANCE}}"
+      LOADTEST_INSTANCE: "{{.LOADTEST_INSTANCE}}"
+      GIT_BRANCH: "{{.GIT_BRANCH}}"
+      GIT_REPO_HTTPS: "{{.GIT_REPO_HTTPS}}"
+      GIT_PAT: "{{.GIT_PAT}}"
+      BACKEND_DEPLOY_PATH: "{{.BACKEND_DEPLOY_PATH}}"
+      WS_DEPLOY_PATH: "{{.WS_DEPLOY_PATH}}"
+
+  health:
+    taskfile: ./health.yml
+    vars:
+      GCP_PROJECT: "{{.GCP_PROJECT}}"
+      GCP_ZONE: "{{.GCP_ZONE}}"
+      BACKEND_INSTANCE: "{{.BACKEND_INSTANCE}}"
+      WS_INSTANCE: "{{.WS_INSTANCE}}"
+
+  stats:
+    taskfile: ./stats.yml
+    vars:
+      GCP_PROJECT: "{{.GCP_PROJECT}}"
+      GCP_ZONE: "{{.GCP_ZONE}}"
+      BACKEND_INSTANCE: "{{.BACKEND_INSTANCE}}"
+      WS_INSTANCE: "{{.WS_INSTANCE}}"
+
+  load-test:
+    taskfile: ./load-test.yml
+    vars:
+      GCP_PROJECT: "{{.GCP_PROJECT}}"
+      GCP_ZONE: "{{.GCP_ZONE}}"
+      WS_INSTANCE: "{{.WS_INSTANCE}}"
+      LOADTEST_INSTANCE: "{{.LOADTEST_INSTANCE}}"
+      GIT_BRANCH: "{{.GIT_BRANCH}}"
+      GIT_REPO_HTTPS: "{{.GIT_REPO_HTTPS}}"
+      GIT_PAT: "{{.GIT_PAT}}"
+
+tasks:
+  default:
+    desc: Show available GCP tasks
+    cmds:
+      - task --list
+    silent: true
+
+  # === HIGH-LEVEL CONVENIENCE TASKS ===
+
+  up:
+    desc: Start all GCP services (quick start)
+    cmds:
+      - task: deployment:quick-start
+
+  down:
+    desc: Stop all GCP services
+    cmds:
+      - task: deployment:stop
+
+  restart:
+    desc: Restart all GCP services
+    cmds:
+      - task: services:restart:all
+      - echo ""
+      - echo "⏳ Waiting for services to be ready..."
+      - sleep 15
+      - echo ""
+      - task: health:all
+      - echo ""
+      - echo "✅ All services restarted"
+
+  status:
+    desc: Show GCP deployment status
+    cmds:
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - echo "📊 GCP DEPLOYMENT STATUS"
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - echo ""
+      - task: health:all
+      - echo ""
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - echo ""
+      - task: stats:urls
+      - echo ""
+      - task: services:ps
+
+  verify:
+    desc: Verify GCP deployment health
+    cmds:
+      - echo "🏥 Verifying GCP deployment health..."
+      - echo ""
+      - task: health:all
+      - echo ""
+      - echo "✅ Health verification complete"
+
+  deploy:
+    desc: Complete GCP deployment from scratch
+    cmds:
+      - task: deployment:setup
+
+  delete:
+    desc: Delete ALL GCP instances (DESTRUCTIVE - saves maximum costs)
+    cmds:
+      - task: deployment:delete:all

@@ -652,74 +652,6 @@
       "type": "timeseries"
     },
     {
-      "datasource": "Prometheus",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "mappings": [
-            {
-              "options": {
-                "0": {
-                  "color": "red",
-                  "index": 0,
-                  "text": "Disconnected"
-                },
-                "1": {
-                  "color": "green",
-                  "index": 1,
-                  "text": "Connected"
-                }
-              },
-              "type": "value"
-            }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "red",
-                "value": null
-              },
-              {
-                "color": "green",
-                "value": 1
-              }
-            ]
-          },
-          "unit": "short"
-        }
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 24
-      },
-      "id": 9,
-      "options": {
-        "orientation": "auto",
-        "reduceOptions": {
-          "calcs": ["lastNotNull"],
-          "fields": "",
-          "values": false
-        },
-        "showThresholdLabels": false,
-        "showThresholdMarkers": true,
-        "text": {}
-      },
-      "pluginVersion": "8.0.0",
-      "targets": [
-        {
-          "expr": "ws_nats_connected",
-          "refId": "A"
-        }
-      ],
-      "title": "NATS Connection Status",
-      "type": "gauge"
-    },
-    {
       "id": 10,
       "title": "Disconnects by Reason",
       "type": "timeseries",
@@ -732,7 +664,7 @@
       },
       "targets": [
         {
-          "expr": "increase(ws_disconnects_total[5m]) or vector(0)",
+          "expr": "increase(ws_disconnects_total{reason!=\"\"}[5m]) > 0",
           "legendFormat": "{{reason}} ({{initiated_by}})",
           "refId": "A"
         }
@@ -749,17 +681,20 @@
             "mode": "palette-classic"
           },
           "unit": "short",
-          "decimals": 0
-        }
+          "decimals": 0,
+          "noValue": "No data"
+        },
+        "overrides": []
       },
       "options": {
         "tooltip": {
           "mode": "multi"
         },
         "legend": {
-          "displayMode": "table",
+          "displayMode": "list",
           "placement": "bottom",
-          "calcs": ["lastNotNull", "mean"]
+          "calcs": ["last", "mean"],
+          "showLegend": true
         }
       }
     },
@@ -776,7 +711,7 @@
       },
       "targets": [
         {
-          "expr": "increase(ws_dropped_broadcasts_detailed_total[5m]) or vector(0)",
+          "expr": "increase(ws_dropped_broadcasts_detailed_total{channel!=\"\"}[5m]) > 0",
           "legendFormat": "{{channel}} - {{reason}}",
           "refId": "A"
         }
@@ -793,7 +728,8 @@
             "mode": "palette-classic"
           },
           "unit": "short",
-          "decimals": 0
+          "decimals": 0,
+          "noValue": "No data"
         }
       },
       "options": {
@@ -934,7 +870,7 @@
       "datasource": "Prometheus",
       "gridPos": {
         "h": 8,
-        "w": 6,
+        "w": 12,
         "x": 0,
         "y": 48
       },
@@ -981,8 +917,8 @@
       "datasource": "Prometheus",
       "gridPos": {
         "h": 8,
-        "w": 6,
-        "x": 6,
+        "w": 12,
+        "x": 12,
         "y": 48
       },
       "targets": [
@@ -1030,7 +966,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 48
+        "y": 56
       },
       "targets": [
         {

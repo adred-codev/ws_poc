@@ -3,6 +3,8 @@ version: "3"
 # Main Taskfile - Orchestrates all sub-taskfiles
 # Run 'task' or 'task --list' to see available commands
 
+dotenv: ["./deployments/v1/gcp/.env.gcp"]
+
 includes:
   # Version management
   version:
@@ -24,6 +26,11 @@ includes:
     dir: .
   local:stats:
     taskfile: ./taskfiles/v1/local/stats.yml
+    dir: .
+
+  # GCP deployment (Kafka/Redpanda, Distributed) - v1
+  gcp:
+    taskfile: ./taskfiles/v1/gcp/Taskfile.yml
     dir: .
 
 tasks:
@@ -90,10 +97,48 @@ tasks:
       - echo "  task local:stats:topics        - List Kafka topics"
       - echo "  task local:stats:consume       - Consume messages (TOPIC=... NUM=...)"
       - echo ""
+      - echo "☁️  GCP DEPLOYMENT (TOP-LEVEL SHORTCUTS)"
+      - echo "  task gcp:deploy                     - Complete first-time deployment"
+      - echo "  task gcp:up                         - Start all GCP services (quick start)"
+      - echo "  task gcp:down                       - Stop all GCP services"
+      - echo "  task gcp:restart                    - Restart all GCP services"
+      - echo "  task gcp:status                     - Show deployment status"
+      - echo "  task gcp:verify                     - Verify health"
+      - echo ""
+      - echo "☁️  GCP DEPLOYMENT WORKFLOWS"
+      - echo "  task gcp:deployment:setup           - Complete setup (infra + app)"
+      - echo "  task gcp:deployment:infrastructure  - Setup infrastructure only"
+      - echo "  task gcp:deployment:guided-setup    - Guided app setup (manual steps)"
+      - echo "  task gcp:deployment:quick-start     - Quick start (daily use)"
+      - echo "  task gcp:deployment:stop            - Stop all services"
+      - echo "  task gcp:deployment:reset           - Reset deployment"
+      - echo "  task gcp:deployment:rebuild-code    - Rebuild after code changes"
+      - echo "  task gcp:deployment:show-urls       - Show service URLs"
+      - echo ""
+      - echo "☁️  GCP CODE REBUILDS"
+      - echo "  task gcp:deployment:rebuild:backend - Rebuild backend with latest code"
+      - echo "  task gcp:deployment:rebuild:ws      - Rebuild WS server with latest code"
+      - echo "  task gcp:deployment:rebuild:all     - Rebuild all services"
+      - echo ""
+      - echo "☁️  GCP SERVICE CONTROL"
+      - echo "  task gcp:services:start:backend     - Start backend services"
+      - echo "  task gcp:services:start:ws          - Start WebSocket server"
+      - echo "  task gcp:services:stop:all          - Stop all services"
+      - echo "  task gcp:services:restart:all       - Restart all services"
+      - echo "  task gcp:services:ps                - Show running containers"
+      - echo "  task gcp:services:logs:backend      - View backend logs (follow)"
+      - echo "  task gcp:services:logs:ws           - View WS logs (follow)"
+      - echo ""
+      - echo "☁️  GCP HEALTH & MONITORING"
+      - echo "  task gcp:health:all                 - Check all services health"
+      - echo "  task gcp:stats:urls                 - Show service URLs"
+      - echo "  task gcp:load-test:capacity         - Run capacity test (12K)"
+      - echo ""
       - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
       - echo ""
       - echo "💡 TIP - Run task --list-all to see all available tasks"
       - echo "💡 TIP - Run task TASKNAME --summary for task description"
+      - echo "💡 TIP - See GCP_CONSOLIDATION_PLAN.md for GCP deployment guide"
       - echo ""
 
   # ============================================================================
@@ -103,12 +148,42 @@ tasks:
   up:
     desc: Quick start local deployment
     cmds:
-      - task: local:deploy:setup
+      - task: local:deploy:quick-start
 
   down:
-    desc: Quick stop local deployment
+    desc: Stop local deployment
     cmds:
       - task: local:deploy:stop
+
+  restart:
+    desc: Restart all local services
+    cmds:
+      - task: local:restart:all
+
+  status:
+    desc: Show local deployment status
+    cmds:
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - echo "📊 LOCAL DEPLOYMENT STATUS"
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - echo ""
+      - task: local:health:all
+      - echo ""
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - echo ""
+      - task: local:deploy:show-urls
+      - echo ""
+      - task: local:status
+
+  verify:
+    desc: Verify local deployment health
+    cmds:
+      - task: local:health:all
+
+  deploy:
+    desc: Complete local deployment from scratch
+    cmds:
+      - task: local:deploy:setup
 
   health:
     desc: Quick health check

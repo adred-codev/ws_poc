@@ -1,0 +1,686 @@
+version: "3"
+
+# =============================================================================
+# GCP Deployment Tasks
+# =============================================================================
+# Purpose: GCP infrastructure and application deployment
+# Scope: Instance creation, firewall, initial setup, code updates
+
+tasks:
+  # === HIGH-LEVEL WORKFLOWS ===
+
+  setup:
+    desc: Complete GCP deployment from scratch
+    cmds:
+      - task: "infrastructure"
+      - task: "guided-setup"
+
+  quick-start:
+    desc: Quick start all services (daily use - assumes infrastructure exists)
+    cmds:
+      - echo "🚀 Starting all GCP services..."
+      - echo ""
+      - task: :gcp:start:all
+      - echo ""
+      - echo "⏳ Waiting for services to be ready..."
+      - sleep 15
+      - echo ""
+      - task: :gcp:health:all
+      - echo ""
+      - task: :gcp:stats:urls
+      - echo ""
+      - echo "✅ All services started and healthy"
+
+  stop:
+    desc: Stop all services (keeps volumes)
+    cmds:
+      - task: :gcp:stop:all
+      - echo "✅ Services stopped (containers removed, infrastructure preserved)"
+
+  reset:
+    desc: Reset deployment (stop + rebuild + start - for config changes)
+    cmds:
+      - echo "⚠️  Resetting deployment (stop + rebuild + start)..."
+      - echo "   Press Ctrl+C to cancel, or wait 5 seconds..."
+      - sleep 5
+      - task: :gcp:stop:all
+      - echo "🔨 Rebuilding services..."
+      - task: "rebuild:all"
+      - echo "⏳ Waiting for services to be ready..."
+      - sleep 15
+      - task: :gcp:health:all
+      - echo "✅ Deployment reset complete"
+
+  rebuild-code:
+    desc: Rebuild services after code changes
+    cmds:
+      - echo "🔨 Rebuilding services..."
+      - task: "rebuild:all"
+      - echo "🔍 Checking health..."
+      - sleep 5
+      - task: :gcp:health:all
+      - echo "✅ Rebuild complete"
+
+  show-urls:
+    desc: Display service URLs
+    cmds:
+      - task: :gcp:stats:urls
+
+  infrastructure:
+    desc: Complete infrastructure setup (instances + networking + IP)
+    cmds:
+      - echo "🏗️  Starting complete infrastructure setup..."
+      - echo ""
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - 'echo "Phase 1: Creating GCP Instances"'
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - task: "create:backend"
+      - echo ""
+      - task: "create:ws"
+      - echo ""
+      - task: "create:loadtest"
+      - echo ""
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - 'echo "Phase 2: Configuring Firewall Rules"'
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - task: "firewall:backend"
+      - echo ""
+      - task: "firewall:ws"
+      - echo ""
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - 'echo "Phase 3: Reserving Static IP"'
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - task: "reserve-ip:ws"
+      - echo ""
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - echo "✅ INFRASTRUCTURE SETUP COMPLETE"
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - echo ""
+      - 'echo "💡 Next steps:"'
+      - 'echo "   1. Setup backend: task gcp:deployment:setup:backend"'
+      - 'echo "   2. Setup WS server: task gcp:deployment:setup:ws"'
+      - 'echo "   3. Setup load test: task gcp:deployment:setup:loadtest"'
+      - 'echo "   4. Verify health: task gcp:verify"'
+      - echo ""
+      - 'echo "Or run guided setup: task gcp:deployment:guided-setup"'
+
+  guided-setup:
+    desc: Guided application setup (shows manual steps for backend + ws)
+    cmds:
+      - echo "🚀 Starting Guided Application Setup"
+      - echo ""
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - 'echo "STEP 1: Backend Setup"'
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - task: "setup:backend"
+      - echo ""
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - 'echo "⏸️  PAUSE: Complete backend setup before continuing"'
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - echo ""
+      - 'echo "Press Enter when backend setup is complete..."'
+      - read REPLY
+      - echo ""
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - 'echo "STEP 2: WebSocket Server Setup"'
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - task: "setup:ws"
+      - echo ""
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - 'echo "⏸️  PAUSE: Complete WS server setup before continuing"'
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - echo ""
+      - 'echo "Press Enter when WS server setup is complete..."'
+      - read REPLY
+      - echo ""
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - 'echo "STEP 3: Verifying Deployment"'
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - task: :gcp:health:all
+      - echo ""
+      - task: :gcp:stats:urls
+      - echo ""
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - echo "✅ DEPLOYMENT SETUP COMPLETE"
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - echo ""
+      - 'echo "💡 Daily operations:"'
+      - 'echo "   Start services: task gcp:up"'
+      - 'echo "   Stop services: task gcp:down"'
+      - 'echo "   Check status: task gcp:status"'
+      - 'echo "   Run load test: task gcp:load-test:capacity"'
+
+  # === INFRASTRUCTURE SETUP (Individual Tasks) ===
+
+  create:backend:
+    desc: Create backend GCP instance (e2-small)
+    cmds:
+      - echo "🏗️  Creating backend instance..."
+      - |
+        gcloud compute instances create {{.BACKEND_INSTANCE}} \
+          --project={{.GCP_PROJECT}} \
+          --zone={{.GCP_ZONE}} \
+          --machine-type=e2-small \
+          --image-family=ubuntu-2204-lts \
+          --image-project=ubuntu-os-cloud \
+          --boot-disk-size=20GB \
+          --boot-disk-type=pd-standard \
+          --tags=odin-backend \
+          --metadata=startup-script='#!/bin/bash
+            apt-get update
+            apt-get install -y docker.io docker-compose-plugin git curl jq
+            systemctl enable docker
+            systemctl start docker
+            usermod -aG docker $(whoami)
+            useradd -m -s /bin/bash -G docker deploy
+            # Kernel tuning for Kafka/Redpanda and Publisher connections
+            echo "* soft nofile 262144" >> /etc/security/limits.conf
+            echo "* hard nofile 262144" >> /etc/security/limits.conf
+            echo "fs.file-max = 524288" >> /etc/sysctl.conf
+            echo "net.ipv4.ip_local_port_range = 1024 65535" >> /etc/sysctl.conf
+            echo "net.ipv4.tcp_tw_reuse = 1" >> /etc/sysctl.conf
+            echo "net.core.somaxconn = 32768" >> /etc/sysctl.conf
+            sysctl -p
+            echo "Startup completed" > /var/log/startup-complete.log'
+      - echo "⏳ Waiting for instance to start (2 minutes)..."
+      - sleep 120
+      - echo "✅ Backend instance created"
+      - echo ""
+      - 'echo "💡 Next steps:"'
+      - 'echo "   1. Create firewall rules: task gcp:deployment:firewall:backend"'
+      - 'echo "   2. Setup application: task gcp:deployment:setup:backend"'
+
+  create:ws:
+    desc: Create WebSocket server GCP instance (e2-standard-4)
+    cmds:
+      - echo "🏗️  Creating WebSocket server instance..."
+      - |
+        gcloud compute instances create {{.WS_INSTANCE}} \
+          --project={{.GCP_PROJECT}} \
+          --zone={{.GCP_ZONE}} \
+          --machine-type=e2-standard-4 \
+          --image-family=ubuntu-2204-lts \
+          --image-project=ubuntu-os-cloud \
+          --boot-disk-size=20GB \
+          --boot-disk-type=pd-standard \
+          --tags=odin-ws-server \
+          --metadata=startup-script='#!/bin/bash
+            apt-get update
+            apt-get install -y docker.io docker-compose-plugin git curl jq
+            systemctl enable docker
+            systemctl start docker
+            usermod -aG docker $(whoami)
+            useradd -m -s /bin/bash -G docker deploy
+            # Kernel tuning for high connection counts (12K-18K WebSocket connections)
+            echo "* soft nofile 1048576" >> /etc/security/limits.conf
+            echo "* hard nofile 1048576" >> /etc/security/limits.conf
+            echo "fs.file-max = 2097152" >> /etc/sysctl.conf
+            echo "net.ipv4.ip_local_port_range = 1024 65535" >> /etc/sysctl.conf
+            echo "net.ipv4.tcp_tw_reuse = 1" >> /etc/sysctl.conf
+            echo "net.core.somaxconn = 65535" >> /etc/sysctl.conf
+            echo "net.ipv4.tcp_max_syn_backlog = 65535" >> /etc/sysctl.conf
+            sysctl -p
+            echo "Startup completed" > /var/log/startup-complete.log'
+      - echo "⏳ Waiting for instance to start (2 minutes)..."
+      - sleep 120
+      - echo "✅ WebSocket server instance created"
+      - echo ""
+      - 'echo "💡 Next steps:"'
+      - 'echo "   1. Create firewall rules: task gcp:deployment:firewall:ws"'
+      - 'echo "   2. Reserve static IP: task gcp:deployment:reserve-ip:ws"'
+      - 'echo "   3. Setup application: task gcp:deployment:setup:ws"'
+
+  create:loadtest:
+    desc: Create load test GCP instance (e2-standard-8)
+    cmds:
+      - echo "🏗️  Creating load test instance..."
+      - |
+        gcloud compute instances create {{.LOADTEST_INSTANCE}} \
+          --project={{.GCP_PROJECT}} \
+          --zone={{.GCP_ZONE}} \
+          --machine-type=e2-standard-8 \
+          --image-family=ubuntu-2204-lts \
+          --image-project=ubuntu-os-cloud \
+          --boot-disk-size=30GB \
+          --boot-disk-type=pd-standard \
+          --tags=odin-loadtest \
+          --metadata=startup-script='#!/bin/bash
+            apt-get update
+            apt-get install -y docker.io docker-compose-plugin git curl jq golang-go
+            systemctl enable docker
+            systemctl start docker
+            usermod -aG docker $(whoami)
+            useradd -m -s /bin/bash -G docker deploy
+            # Kernel tuning for load testing (generating 12K-18K connections)
+            echo "* soft nofile 1048576" >> /etc/security/limits.conf
+            echo "* hard nofile 1048576" >> /etc/security/limits.conf
+            echo "fs.file-max = 2097152" >> /etc/sysctl.conf
+            echo "net.ipv4.ip_local_port_range = 1024 65535" >> /etc/sysctl.conf
+            echo "net.ipv4.tcp_tw_reuse = 1" >> /etc/sysctl.conf
+            echo "net.core.somaxconn = 65535" >> /etc/sysctl.conf
+            echo "net.ipv4.tcp_max_syn_backlog = 65535" >> /etc/sysctl.conf
+            sysctl -p
+            echo "Startup completed" > /var/log/startup-complete.log'
+      - echo "⏳ Waiting for instance to start (2 minutes)..."
+      - sleep 120
+      - echo "✅ Load test instance created"
+      - echo ""
+      - 'echo "💡 Next steps:"'
+      - 'echo "   1. Setup load test: task gcp:deployment:setup:loadtest"'
+      - 'echo "   2. Run capacity test: task gcp:load-test:capacity"'
+
+  # === DELETE INSTANCES ===
+
+  delete:backend:
+    desc: Delete backend GCP instance (saves costs)
+    cmds:
+      - echo "Deleting backend instance..."
+      - echo "WARNING - This will permanently delete the instance and all data!"
+      - echo ""
+      - |
+        read -p "Type 'yes' to confirm deletion: " CONFIRM
+        if [ "$CONFIRM" = "yes" ]; then
+          gcloud compute instances delete {{.BACKEND_INSTANCE}} \
+            --zone={{.GCP_ZONE}} \
+            --project={{.GCP_PROJECT}} \
+            --quiet
+          echo "Backend instance deleted"
+        else
+          echo "Deletion cancelled"
+        fi
+
+  delete:ws:
+    desc: Delete WebSocket server GCP instance (saves costs)
+    cmds:
+      - echo "Deleting WebSocket server instance..."
+      - echo "WARNING - This will permanently delete the instance and all data!"
+      - echo ""
+      - |
+        read -p "Type 'yes' to confirm deletion: " CONFIRM
+        if [ "$CONFIRM" = "yes" ]; then
+          gcloud compute instances delete {{.WS_INSTANCE}} \
+            --zone={{.GCP_ZONE}} \
+            --project={{.GCP_PROJECT}} \
+            --quiet
+          echo "WebSocket server instance deleted"
+        else
+          echo "Deletion cancelled"
+        fi
+
+  delete:loadtest:
+    desc: Delete load test GCP instance (saves costs when not testing)
+    cmds:
+      - echo "Deleting load test instance..."
+      - echo "WARNING - This will permanently delete the instance and all data!"
+      - echo ""
+      - |
+        read -p "Type 'yes' to confirm deletion: " CONFIRM
+        if [ "$CONFIRM" = "yes" ]; then
+          gcloud compute instances delete {{.LOADTEST_INSTANCE}} \
+            --zone={{.GCP_ZONE}} \
+            --project={{.GCP_PROJECT}} \
+            --quiet
+          echo "Load test instance deleted"
+          echo ""
+          echo "Recreate when needed - task gcp:deployment:create:loadtest"
+        else
+          echo "Deletion cancelled"
+        fi
+
+  delete:all:
+    desc: Delete ALL GCP instances (DESTRUCTIVE - saves maximum costs)
+    cmds:
+      - echo "Deleting ALL GCP instances..."
+      - echo ""
+      - 'echo "WARNING - This will delete ALL instances:"'
+      - 'echo "   - {{.BACKEND_INSTANCE}} (backend)"'
+      - 'echo "   - {{.WS_INSTANCE}} (WebSocket server)"'
+      - 'echo "   - {{.LOADTEST_INSTANCE}} (load test)"'
+      - echo ""
+      - echo "All data will be permanently lost!"
+      - echo ""
+      - |
+        read -p "Type 'DELETE-ALL' to confirm: " CONFIRM
+        if [ "$CONFIRM" = "DELETE-ALL" ]; then
+          echo ""
+          echo "Deleting instances..."
+          gcloud compute instances delete {{.BACKEND_INSTANCE}} {{.WS_INSTANCE}} {{.LOADTEST_INSTANCE}} \
+            --zone={{.GCP_ZONE}} \
+            --project={{.GCP_PROJECT}} \
+            --quiet
+          echo ""
+          echo "All instances deleted"
+          echo ""
+          echo "Recreate infrastructure with - task gcp:deployment:infrastructure"
+        else
+          echo "Deletion cancelled"
+        fi
+
+  # === FIREWALL RULES ===
+
+  firewall:backend:
+    desc: Create backend firewall rules
+    cmds:
+      - echo "🔥 Creating backend firewall rules..."
+      - |
+        # Grafana (public access for management)
+        gcloud compute firewall-rules create odin-backend-grafana \
+          --project={{.GCP_PROJECT}} \
+          --direction=INGRESS \
+          --priority=1000 \
+          --network=default \
+          --action=ALLOW \
+          --rules=tcp:3010 \
+          --source-ranges=0.0.0.0/0 \
+          --target-tags=odin-backend \
+          2>/dev/null || echo "⚠️  Grafana firewall rule already exists"
+
+        # Redpanda Console (public access for management)
+        gcloud compute firewall-rules create odin-backend-console \
+          --project={{.GCP_PROJECT}} \
+          --direction=INGRESS \
+          --priority=1000 \
+          --network=default \
+          --action=ALLOW \
+          --rules=tcp:8080 \
+          --source-ranges=0.0.0.0/0 \
+          --target-tags=odin-backend \
+          2>/dev/null || echo "⚠️  Console firewall rule already exists"
+
+        # Kafka (internal access from WS server)
+        gcloud compute firewall-rules create odin-backend-kafka \
+          --project={{.GCP_PROJECT}} \
+          --direction=INGRESS \
+          --priority=1000 \
+          --network=default \
+          --action=ALLOW \
+          --rules=tcp:9092 \
+          --source-tags=odin-ws-server \
+          --target-tags=odin-backend \
+          2>/dev/null || echo "⚠️  Kafka firewall rule already exists"
+
+        # Loki (internal access from WS server)
+        gcloud compute firewall-rules create odin-backend-loki \
+          --project={{.GCP_PROJECT}} \
+          --direction=INGRESS \
+          --priority=1000 \
+          --network=default \
+          --action=ALLOW \
+          --rules=tcp:3100 \
+          --source-tags=odin-ws-server \
+          --target-tags=odin-backend \
+          2>/dev/null || echo "⚠️  Loki firewall rule already exists"
+      - echo "✅ Backend firewall rules created"
+
+  firewall:ws:
+    desc: Create WebSocket server firewall rules
+    cmds:
+      - echo "🔥 Creating WebSocket server firewall rules..."
+      - |
+        # WebSocket + Health endpoint (public access)
+        gcloud compute firewall-rules create odin-ws-server-public \
+          --project={{.GCP_PROJECT}} \
+          --direction=INGRESS \
+          --priority=1000 \
+          --network=default \
+          --action=ALLOW \
+          --rules=tcp:3004 \
+          --source-ranges=0.0.0.0/0 \
+          --target-tags=odin-ws-server \
+          2>/dev/null || echo "⚠️  WebSocket firewall rule already exists"
+      - echo "✅ WebSocket server firewall rules created"
+
+  # === STATIC IP ===
+
+  reserve-ip:ws:
+    desc: Reserve static IP for WebSocket server
+    cmds:
+      - echo "📍 Reserving static IP for WebSocket server..."
+      - |
+        gcloud compute addresses create {{.WS_INSTANCE}}-static-ip \
+          --region={{.GCP_REGION}} \
+          --project={{.GCP_PROJECT}} \
+          2>/dev/null || echo "⚠️  Static IP already exists"
+      - |
+        STATIC_IP=$(gcloud compute addresses describe {{.WS_INSTANCE}}-static-ip \
+          --region={{.GCP_REGION}} \
+          --project={{.GCP_PROJECT}} \
+          --format='get(address)')
+        echo "Static IP: $STATIC_IP"
+      - |
+        # Remove existing access config
+        gcloud compute instances delete-access-config {{.WS_INSTANCE}} \
+          --access-config-name="external-nat" \
+          --zone={{.GCP_ZONE}} \
+          --project={{.GCP_PROJECT}} \
+          2>/dev/null || true
+      - |
+        # Assign static IP
+        STATIC_IP=$(gcloud compute addresses describe {{.WS_INSTANCE}}-static-ip \
+          --region={{.GCP_REGION}} \
+          --project={{.GCP_PROJECT}} \
+          --format='get(address)')
+        gcloud compute instances add-access-config {{.WS_INSTANCE}} \
+          --access-config-name="external-nat" \
+          --address=$STATIC_IP \
+          --zone={{.GCP_ZONE}} \
+          --project={{.GCP_PROJECT}}
+      - echo "✅ Static IP assigned"
+      - task: :gcp:stats:ip:ws
+
+  # === APPLICATION SETUP ===
+
+  setup:backend:
+    desc: Initial backend setup (clone repo, configure, deploy)
+    cmds:
+      - echo "Setting up backend application..."
+      - echo ""
+      - |
+        # Build git clone URL with PAT if provided
+        if [ -n "{{.GIT_PAT}}" ]; then
+          GIT_CLONE_URL="https://{{.GIT_PAT}}@github.com/adred-codev/ws_poc.git"
+          echo "✅ Using authenticated clone (PAT provided)"
+        else
+          GIT_CLONE_URL="{{.GIT_REPO_HTTPS}}"
+          echo "⚠️  Using public clone (no PAT) - will fail for private repos"
+        fi
+      - echo ""
+      - 'echo "📋 Manual steps required:"'
+      - echo ""
+      - 'echo "1. SSH into backend instance:"'
+      - 'echo "   gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}}"'
+      - echo ""
+      - 'echo "2. Switch to deploy user and clone repo:"'
+      - 'echo "   sudo su - deploy"'
+      - 'echo "   git clone -b {{.GIT_BRANCH}} $GIT_CLONE_URL"'
+      - 'echo "   cd ws_poc"'
+      - echo ""
+      - 'echo "3. Create .env.production if needed (usually not required):"'
+      - 'echo "   cd deployments/v1/gcp/distributed/backend"'
+      - 'echo "   Check .env.production - add secrets if needed"'
+      - echo ""
+      - 'echo "4. Start services:"'
+      - 'echo "   docker compose up -d"'
+      - echo ""
+      - 'echo "5. Create Kafka topics:"'
+      - 'echo "   docker exec redpanda rpk topic create \\"'
+      - 'echo "     odin.trades odin.liquidity odin.balances odin.metadata \\"'
+      - 'echo "     odin.social odin.community odin.creation odin.analytics \\"'
+      - 'echo "     --partitions 12 --replicas 1"'
+      - echo ""
+      - 'echo "6. Verify:"'
+      - 'echo "   docker compose ps"'
+      - 'echo "   docker exec redpanda rpk topic list"'
+      - 'echo "   curl localhost:3003/status"'
+      - echo ""
+      - 'echo "7. Exit and verify from local:"'
+      - 'echo "   exit # Exit from deploy user"'
+      - 'echo "   exit # Exit from SSH"'
+
+  setup:ws:
+    desc: Initial WebSocket server setup (clone repo, configure, deploy)
+    cmds:
+      - echo "Setting up WebSocket server application..."
+      - echo ""
+      - |
+        BACKEND_IP=$(gcloud compute instances describe {{.BACKEND_INSTANCE}} \
+          --zone={{.GCP_ZONE}} \
+          --project={{.GCP_PROJECT}} \
+          --format='get(networkInterfaces[0].networkIP)')
+        echo "Backend Internal IP: $BACKEND_IP"
+      - echo ""
+      - |
+        # Build git clone URL with PAT if provided
+        if [ -n "{{.GIT_PAT}}" ]; then
+          GIT_CLONE_URL="https://{{.GIT_PAT}}@github.com/adred-codev/ws_poc.git"
+          echo "✅ Using authenticated clone (PAT provided)"
+        else
+          GIT_CLONE_URL="{{.GIT_REPO_HTTPS}}"
+          echo "⚠️  Using public clone (no PAT) - will fail for private repos"
+        fi
+      - echo ""
+      - 'echo "📋 Manual steps required:"'
+      - echo ""
+      - 'echo "1. SSH into WebSocket server instance:"'
+      - 'echo "   gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}}"'
+      - echo ""
+      - 'echo "2. Switch to deploy user and clone repo:"'
+      - 'echo "   sudo su - deploy"'
+      - 'echo "   git clone -b {{.GIT_BRANCH}} $GIT_CLONE_URL"'
+      - 'echo "   cd ws_poc"'
+      - echo ""
+      - 'echo "3. Create .env.production with backend IP:"'
+      - 'echo "   cd deployments/v1/gcp/distributed/ws-server"'
+      - 'echo "   cat > .env.production <<EOF"'
+      - 'echo "BACKEND_INTERNAL_IP=$BACKEND_IP"'
+      - 'echo "EOF"'
+      - 'echo "   chmod 600 .env.production"'
+      - echo ""
+      - 'echo "4. Start services:"'
+      - 'echo "   export BACKEND_INTERNAL_IP=$BACKEND_IP"'
+      - 'echo "   docker compose up -d"'
+      - echo ""
+      - 'echo "5. Verify:"'
+      - 'echo "   docker compose ps"'
+      - 'echo "   curl localhost:3004/health"'
+      - echo ""
+      - 'echo "6. Exit and verify from local:"'
+      - 'echo "   exit # Exit from deploy user"'
+      - 'echo "   exit # Exit from SSH"'
+      - 'echo "   task gcp:health:ws"'
+
+  setup:loadtest:
+    desc: Initial load test instance setup (clone repo, build binary)
+    cmds:
+      - echo "Setting up load test instance..."
+      - echo ""
+      - |
+        # Build git clone URL with PAT if provided
+        if [ -n "{{.GIT_PAT}}" ]; then
+          GIT_CLONE_URL="https://{{.GIT_PAT}}@github.com/adred-codev/ws_poc.git"
+          echo "✅ Using authenticated clone (PAT provided)"
+        else
+          GIT_CLONE_URL="{{.GIT_REPO_HTTPS}}"
+          echo "⚠️  Using public clone (no PAT) - will fail for private repos"
+        fi
+      - echo ""
+      - 'echo "📋 Manual steps required:"'
+      - echo ""
+      - 'echo "1. SSH into load test instance:"'
+      - 'echo "   gcloud compute ssh {{.LOADTEST_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}}"'
+      - echo ""
+      - 'echo "2. Switch to deploy user and clone repo:"'
+      - 'echo "   sudo su - deploy"'
+      - 'echo "   git clone -b {{.GIT_BRANCH}} $GIT_CLONE_URL"'
+      - 'echo "   cd ws_poc"'
+      - echo ""
+      - 'echo "3. Build load test binary:"'
+      - 'echo "   cd loadtest"'
+      - 'echo "   go build -o sustained-load-test ."'
+      - 'echo "   chmod +x sustained-load-test"'
+      - echo ""
+      - 'echo "4. Verify build:"'
+      - 'echo "   ./sustained-load-test -help"'
+      - echo ""
+      - 'echo "5. Exit and run load test:"'
+      - 'echo "   exit # Exit from deploy user"'
+      - 'echo "   exit # Exit from SSH"'
+      - 'echo "   task gcp:load-test:capacity"'
+
+  # === CODE UPDATES / REBUILDS ===
+
+  rebuild:backend:
+    desc: Rebuild backend with latest code
+    cmds:
+      - echo "🔄 Rebuilding backend code..."
+      - |
+        gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="\
+          sudo su - deploy -c '\
+            cd ws_poc && \
+            git pull origin {{.GIT_BRANCH}} && \
+            cd deployments/v1/gcp/distributed/backend && \
+            docker compose build && \
+            docker compose up -d && \
+            sleep 10 && \
+            curl -sf http://localhost:3003/status'"
+      - echo "✅ Backend rebuilt"
+      - task: :gcp:health:backend
+
+  rebuild:ws:
+    desc: Rebuild WebSocket server with latest code
+    cmds:
+      - echo "🔄 Rebuilding WebSocket server code..."
+      - |
+        BACKEND_IP=$(gcloud compute instances describe {{.BACKEND_INSTANCE}} \
+          --zone={{.GCP_ZONE}} \
+          --project={{.GCP_PROJECT}} \
+          --format='get(networkInterfaces[0].networkIP)')
+
+        gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="\
+          sudo su - deploy -c '\
+            cd ws_poc && \
+            git pull origin {{.GIT_BRANCH}} && \
+            cd deployments/v1/gcp/distributed/ws-server && \
+            export BACKEND_INTERNAL_IP=$BACKEND_IP && \
+            docker compose build && \
+            docker compose up -d && \
+            sleep 10 && \
+            curl -sf http://localhost:3004/health'"
+      - echo "✅ WebSocket server rebuilt"
+      - task: :gcp:health:ws
+
+  rebuild:all:
+    desc: Rebuild all services with latest code
+    cmds:
+      - task: "rebuild:backend"
+      - task: "rebuild:ws"
+      - echo ""
+      - echo "✅ All services rebuilt"
+
+  # Legacy aliases (for backwards compatibility)
+  update:backend:
+    desc: (Deprecated - use rebuild:backend)
+    cmds:
+      - task: "rebuild:backend"
+
+  update:ws:
+    desc: (Deprecated - use rebuild:ws)
+    cmds:
+      - task: "rebuild:ws"
+
+  update:all:
+    desc: (Deprecated - use rebuild:all)
+    cmds:
+      - task: "rebuild:all"
+
+  # === SSH ACCESS ===
+
+  ssh:backend:
+    desc: SSH into backend instance
+    cmds:
+      - gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}}
+
+  ssh:ws:
+    desc: SSH into WebSocket server instance
+    cmds:
+      - gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}}

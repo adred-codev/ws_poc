@@ -1,0 +1,186 @@
+version: "3"
+
+# =============================================================================
+# GCP Service Management Tasks
+# =============================================================================
+# Purpose: Start, stop, restart services on GCP instances
+# Scope: Docker Compose operations on remote instances
+
+tasks:
+  # === BACKEND SERVICES ===
+
+  start:backend:
+    desc: Start all backend services (Redpanda, Publisher, Monitoring)
+    cmds:
+      - echo "🚀 Starting backend services on {{.BACKEND_INSTANCE}}..."
+      - |
+        gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
+          cd ~/ws_poc/deployments/v1/gcp/distributed/backend && \
+          docker compose up -d"
+      - echo "⏳ Waiting for services to be ready..."
+      - sleep 15
+      - task: :gcp:health:backend
+      - echo "✅ Backend services started"
+
+  stop:backend:
+    desc: Stop all backend services
+    cmds:
+      - echo "⏸️  Stopping backend services on {{.BACKEND_INSTANCE}}..."
+      - |
+        gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
+          cd ~/ws_poc/deployments/v1/gcp/distributed/backend && \
+          docker compose down"
+      - echo "✅ Backend services stopped"
+
+  restart:backend:
+    desc: Restart all backend services
+    cmds:
+      - echo "🔄 Restarting backend services on {{.BACKEND_INSTANCE}}..."
+      - |
+        gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
+          cd ~/ws_poc/deployments/v1/gcp/distributed/backend && \
+          docker compose restart"
+      - echo "⏳ Waiting for services to be ready..."
+      - sleep 15
+      - task: :gcp:health:backend
+      - echo "✅ Backend services restarted"
+
+  # === WEBSOCKET SERVER ===
+
+  start:ws:
+    desc: Start WebSocket server
+    cmds:
+      - echo "🚀 Starting WebSocket server on {{.WS_INSTANCE}}..."
+      - |
+        # Get backend internal IP
+        BACKEND_IP=$(gcloud compute instances describe {{.BACKEND_INSTANCE}} \
+          --zone={{.GCP_ZONE}} \
+          --format="get(networkInterfaces[0].networkIP)")
+
+        echo "Backend Internal IP: $BACKEND_IP"
+
+        gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
+          export BACKEND_INTERNAL_IP=$BACKEND_IP && \
+          cd ~/ws_poc/deployments/v1/gcp/distributed/ws-server && \
+          docker compose up -d"
+      - echo "⏳ Waiting for WebSocket server to be ready..."
+      - sleep 10
+      - task: :gcp:health:ws
+      - echo "✅ WebSocket server started"
+
+  stop:ws:
+    desc: Stop WebSocket server
+    cmds:
+      - echo "⏸️  Stopping WebSocket server on {{.WS_INSTANCE}}..."
+      - |
+        gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
+          cd ~/ws_poc/deployments/v1/gcp/distributed/ws-server && \
+          docker compose down"
+      - echo "✅ WebSocket server stopped"
+
+  restart:ws:
+    desc: Restart WebSocket server
+    cmds:
+      - echo "🔄 Restarting WebSocket server on {{.WS_INSTANCE}}..."
+      - |
+        gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
+          cd ~/ws_poc/deployments/v1/gcp/distributed/ws-server && \
+          docker compose restart"
+      - echo "⏳ Waiting for WebSocket server to be ready..."
+      - sleep 10
+      - task: :gcp:health:ws
+      - echo "✅ WebSocket server restarted"
+
+  # === ALL SERVICES ===
+
+  start:all:
+    desc: Start all services (backend + WebSocket server)
+    cmds:
+      - task: start:backend
+      - task: start:ws
+      - echo ""
+      - echo "✅ All services started"
+      - task: :gcp:stats:urls
+
+  stop:all:
+    desc: Stop all services (backend + WebSocket server)
+    cmds:
+      - task: stop:ws
+      - task: stop:backend
+      - echo ""
+      - echo "✅ All services stopped"
+
+  restart:all:
+    desc: Restart all services (backend + WebSocket server)
+    cmds:
+      - task: restart:backend
+      - task: restart:ws
+      - echo ""
+      - echo "✅ All services restarted"
+      - task: :gcp:stats:urls
+
+  # === STATUS ===
+
+  ps:
+    desc: Show running containers on all instances
+    cmds:
+      - task: ps:all
+
+  ps:backend:
+    desc: Show running containers on backend instance
+    cmds:
+      - echo "📦 Backend containers ({{.BACKEND_INSTANCE}}):"
+      - |
+        gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
+          cd ~/ws_poc/deployments/v1/gcp/distributed/backend && \
+          docker compose ps"
+
+  ps:ws:
+    desc: Show running containers on WebSocket server instance
+    cmds:
+      - echo "📦 WebSocket server containers ({{.WS_INSTANCE}}):"
+      - |
+        gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
+          cd ~/ws_poc/deployments/v1/gcp/distributed/ws-server && \
+          docker compose ps"
+
+  ps:all:
+    desc: Show running containers on all instances
+    cmds:
+      - task: ps:backend
+      - echo ""
+      - task: ps:ws
+
+  # === LOGS ===
+
+  logs:backend:
+    desc: View backend logs (follow mode)
+    cmds:
+      - |
+        gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
+          cd ~/ws_poc/deployments/v1/gcp/distributed/backend && \
+          docker compose logs -f"
+
+  logs:ws:
+    desc: View WebSocket server logs (follow mode)
+    cmds:
+      - |
+        gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
+          cd ~/ws_poc/deployments/v1/gcp/distributed/ws-server && \
+          docker compose logs -f"
+
+  logs:backend:tail:
+    desc: View last 100 lines of backend logs
+    cmds:
+      - |
+        gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
+          cd ~/ws_poc/deployments/v1/gcp/distributed/backend && \
+          docker compose logs --tail=100"
+
+  logs:ws:tail:
+    desc: View last 100 lines of WebSocket server logs
+    cmds:
+      - |
+        gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
+          cd ~/ws_poc/deployments/v1/gcp/distributed/ws-server && \
+          docker compose logs --tail=100"

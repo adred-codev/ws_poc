@@ -1,0 +1,240 @@
+version: "3"
+
+# =============================================================================
+# GCP Load Testing Tasks
+# =============================================================================
+# Purpose: Run load tests against GCP WebSocket server
+# Scope: Capacity tests, stress tests from dedicated GCP load test instance
+#
+# Note: Tests run from GCP load test instance to avoid local ulimit issues
+# Instance: odin-loadtest (e2-standard-8 with high ulimits)
+# Load test binary: ~/ws_poc/loadtest/sustained-load-test
+
+vars:
+  LOADTEST_BINARY: "/home/deploy/ws_poc/loadtest/sustained-load-test"
+
+tasks:
+  # === CAPACITY TESTS ===
+
+  capacity:
+    desc: "CAPACITY TEST - 12K connections (matches server WS_MAX_CONNECTIONS)"
+    cmds:
+      - echo "🔍 Preparing capacity test..."
+      - |
+        WS_IP=$(gcloud compute instances describe {{.WS_INSTANCE}} \
+          --zone={{.GCP_ZONE}} \
+          --project={{.GCP_PROJECT}} \
+          --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
+
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "🚀 CAPACITY TEST - 12,000 CONNECTIONS"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "Target:      ws://$WS_IP:3004/ws"
+        echo "Connections: 12,000 (matches server limit)"
+        echo "Ramp rate:   100 connections/sec"
+        echo "Duration:    30 minutes"
+        echo "Running from: {{.LOADTEST_INSTANCE}}"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        echo "🔍 Stopping any existing load tests on {{.LOADTEST_INSTANCE}}..."
+
+        # Stop existing tests and run new test
+        gcloud compute ssh {{.LOADTEST_INSTANCE}} \
+          --zone={{.GCP_ZONE}} \
+          --project={{.GCP_PROJECT}} \
+          --command="sudo su - deploy -c '\
+            pkill -9 -f sustained-load-test 2>/dev/null || true && \
+            sleep 2 && \
+            cd ws_poc/loadtest && \
+            nohup ./sustained-load-test \
+              -url ws://$WS_IP:3004/ws \
+              -connections 12000 \
+              -ramp-rate 100 \
+              -duration 1800 \
+              > loadtest.log 2>&1 &' && \
+            echo '' && \
+            echo '✅ Load test started in background' && \
+            echo '📊 Monitor with: task gcp:load-test:logs'"
+
+  capacity:short:
+    desc: "CAPACITY TEST - 12K connections, 5 min"
+    cmds:
+      - |
+        WS_IP=$(gcloud compute instances describe {{.WS_INSTANCE}} \
+          --zone={{.GCP_ZONE}} \
+          --project={{.GCP_PROJECT}} \
+          --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
+
+        echo "🚀 CAPACITY TEST - 12K connections, 5 min (from {{.LOADTEST_INSTANCE}})"
+
+        gcloud compute ssh {{.LOADTEST_INSTANCE}} \
+          --zone={{.GCP_ZONE}} \
+          --project={{.GCP_PROJECT}} \
+          --command="sudo su - deploy -c '\
+            pkill -9 -f sustained-load-test 2>/dev/null || true && \
+            sleep 2 && \
+            cd ws_poc/loadtest && \
+            nohup ./sustained-load-test \
+              -url ws://$WS_IP:3004/ws \
+              -connections 12000 \
+              -ramp-rate 100 \
+              -duration 300 \
+              > loadtest.log 2>&1 &' && \
+            echo '✅ Load test started' && \
+            echo '📊 Monitor with: task gcp:load-test:logs'"
+
+  # === STRESS TESTS (Exceed server limit) ===
+
+  stress:
+    desc: "STRESS TEST - 18K connections (1.5x overload)"
+    cmds:
+      - |
+        WS_IP=$(gcloud compute instances describe {{.WS_INSTANCE}} \
+          --zone={{.GCP_ZONE}} \
+          --project={{.GCP_PROJECT}} \
+          --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
+
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "⚡ STRESS TEST - 18,000 CONNECTIONS (1.5x)"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "Target:      ws://$WS_IP:3004/ws"
+        echo "Connections: 18,000 (1.5x server limit)"
+        echo "Expected:    Rejections after 12K"
+        echo "Running from: {{.LOADTEST_INSTANCE}}"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+
+        gcloud compute ssh {{.LOADTEST_INSTANCE}} \
+          --zone={{.GCP_ZONE}} \
+          --project={{.GCP_PROJECT}} \
+          --command="sudo su - deploy -c '\
+            pkill -9 -f sustained-load-test 2>/dev/null || true && \
+            sleep 2 && \
+            cd ws_poc/loadtest && \
+            nohup ./sustained-load-test \
+              -url ws://$WS_IP:3004/ws \
+              -connections 18000 \
+              -ramp-rate 200 \
+              -duration 1800 \
+              > loadtest.log 2>&1 &' && \
+            echo '✅ Stress test started' && \
+            echo '📊 Monitor with: task gcp:load-test:logs'"
+
+  stress:heavy:
+    desc: "STRESS TEST - 24K connections (2x overload)"
+    cmds:
+      - |
+        WS_IP=$(gcloud compute instances describe {{.WS_INSTANCE}} \
+          --zone={{.GCP_ZONE}} \
+          --project={{.GCP_PROJECT}} \
+          --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
+
+        echo "⚡ STRESS TEST - 24K connections (2x overload, from {{.LOADTEST_INSTANCE}})"
+
+        gcloud compute ssh {{.LOADTEST_INSTANCE}} \
+          --zone={{.GCP_ZONE}} \
+          --project={{.GCP_PROJECT}} \
+          --command="sudo su - deploy -c '\
+            pkill -9 -f sustained-load-test 2>/dev/null || true && \
+            sleep 2 && \
+            cd ws_poc/loadtest && \
+            nohup ./sustained-load-test \
+              -url ws://$WS_IP:3004/ws \
+              -connections 24000 \
+              -ramp-rate 200 \
+              -duration 1800 \
+              > loadtest.log 2>&1 &' && \
+            echo '✅ Heavy stress test started' && \
+            echo '📊 Monitor with: task gcp:load-test:logs'"
+
+  # === CUSTOM TEST ===
+
+  custom:
+    desc: "Custom load test (use CONNECTIONS, RAMP_RATE, DURATION vars)"
+    vars:
+      CONNECTIONS: '{{.CONNECTIONS | default "1000"}}'
+      RAMP_RATE: '{{.RAMP_RATE | default "100"}}'
+      DURATION: '{{.DURATION | default "600"}}'
+    cmds:
+      - |
+        WS_IP=$(gcloud compute instances describe {{.WS_INSTANCE}} \
+          --zone={{.GCP_ZONE}} \
+          --project={{.GCP_PROJECT}} \
+          --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
+
+        echo "🚀 CUSTOM TEST (from {{.LOADTEST_INSTANCE}})"
+        echo "Connections: {{.CONNECTIONS}}"
+        echo "Ramp rate:   {{.RAMP_RATE}}/sec"
+        echo "Duration:    {{.DURATION}}s"
+        echo ""
+
+        gcloud compute ssh {{.LOADTEST_INSTANCE}} \
+          --zone={{.GCP_ZONE}} \
+          --project={{.GCP_PROJECT}} \
+          --command="sudo su - deploy -c '\
+            pkill -9 -f sustained-load-test 2>/dev/null || true && \
+            sleep 2 && \
+            cd ws_poc/loadtest && \
+            nohup ./sustained-load-test \
+              -url ws://$WS_IP:3004/ws \
+              -connections {{.CONNECTIONS}} \
+              -ramp-rate {{.RAMP_RATE}} \
+              -duration {{.DURATION}} \
+              > loadtest.log 2>&1 &' && \
+            echo '✅ Custom test started' && \
+            echo '📊 Monitor with: task gcp:load-test:logs'"
+
+  # === CONTROL ===
+
+  stop:
+    desc: Stop all load tests
+    cmds:
+      - echo "🛑 Stopping load tests on {{.LOADTEST_INSTANCE}}..."
+      - |
+        gcloud compute ssh {{.LOADTEST_INSTANCE}} \
+          --zone={{.GCP_ZONE}} \
+          --project={{.GCP_PROJECT}} \
+          --command="sudo su - deploy -c '\
+            count=\$(pgrep -f sustained-load-test | wc -l) && \
+            if [ \"\$count\" -gt 0 ]; then \
+              echo \"🛑 Found \$count load test process(es)\" && \
+              pkill -9 -f sustained-load-test && \
+              sleep 2 && \
+              remaining=\$(pgrep -f sustained-load-test | wc -l) && \
+              if [ \"\$remaining\" -eq 0 ]; then \
+                echo \"✅ All load tests stopped\" ; \
+              else \
+                echo \"⚠️  Warning: \$remaining process(es) still running\" ; \
+              fi ; \
+            else \
+              echo \"✅ No load tests running\" ; \
+            fi'"
+
+  logs:
+    desc: Show load test logs (last run output)
+    cmds:
+      - echo "📊 Fetching load test logs from {{.LOADTEST_INSTANCE}}..."
+      - echo ""
+      - |
+        gcloud compute ssh {{.LOADTEST_INSTANCE}} \
+          --zone={{.GCP_ZONE}} \
+          --project={{.GCP_PROJECT}} \
+          --command="sudo su - deploy -c '\
+            if pgrep -f sustained-load-test > /dev/null; then \
+              echo \"📊 Load test is currently running\" && \
+              echo \"\" && \
+              echo \"Last 50 lines of log:\" && \
+              echo \"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\" && \
+              tail -50 ~/ws_poc/loadtest/loadtest.log 2>/dev/null || echo \"No log file found\" ; \
+            else \
+              echo \"⚠️  No load test currently running\" && \
+              echo \"\" && \
+              echo \"Last 50 lines of previous run:\" && \
+              echo \"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\" && \
+              tail -50 ~/ws_poc/loadtest/loadtest.log 2>/dev/null || echo \"No log file found\" ; \
+            fi'"
+      - echo ""
+      - 'echo "💡 To follow live logs, SSH in and run:"'
+      - 'echo "   gcloud compute ssh {{.LOADTEST_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}}"'
+      - 'echo "   sudo su - deploy"'
+      - 'echo "   tail -f ~/ws_poc/loadtest/loadtest.log"'
