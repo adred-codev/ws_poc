@@ -666,7 +666,7 @@
       },
       "targets": [
         {
-          "expr": "increase(ws_disconnects_total[5m]) or vector(0)",
+          "expr": "increase(ws_disconnects_total{reason!=\"\"}[5m]) > 0",
           "legendFormat": "{{reason}} ({{initiated_by}})",
           "refId": "A"
         }
@@ -685,19 +685,21 @@
           "unit": "short",
           "decimals": 0,
           "noValue": "No data"
-        }
+        },
+        "overrides": []
       },
       "options": {
         "tooltip": {
           "mode": "multi"
         },
         "legend": {
-          "displayMode": "table",
+          "displayMode": "list",
           "placement": "bottom",
           "calcs": [
-            "lastNotNull",
+            "last",
             "mean"
-          ]
+          ],
+          "showLegend": true
         }
       }
     },
@@ -714,7 +716,7 @@
       },
       "targets": [
         {
-          "expr": "increase(ws_dropped_broadcasts_detailed_total[5m]) or vector(0)",
+          "expr": "increase(ws_dropped_broadcasts_detailed_total{channel!=\"\"}[5m]) > 0",
           "legendFormat": "{{channel}} - {{reason}}",
           "refId": "A"
         }
