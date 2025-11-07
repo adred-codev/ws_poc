@@ -20,8 +20,8 @@ services:
       - --advertise-rpc-addr redpanda:33145
       - --mode dev-container
       - --smp 1
-      - --memory 600M
-      - --reserve-memory 100M
+      - --memory 450M
+      - --reserve-memory 50M
       - --overprovisioned
     ports:
       - "0.0.0.0:9092:9092" # Kafka API (internal - for ws-go)
@@ -43,7 +43,7 @@ services:
       resources:
         limits:
           cpus: "1.0"
-          memory: 600M
+          memory: 450M
 
   console:
     image: docker.redpanda.com/redpandadata/console:v2.7.2
