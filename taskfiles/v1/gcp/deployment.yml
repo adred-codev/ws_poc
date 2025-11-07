@@ -27,10 +27,6 @@ tasks:
       - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
       - echo "✅ DEPLOYMENT COMPLETE"
       - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-      - echo ""
-      - task: :gcp:health:all
-      - echo ""
-      - task: :gcp:stats:urls
 
   quick-start:
     desc: Quick start all services (daily use - assumes infrastructure exists)
@@ -42,9 +38,9 @@ tasks:
       - echo "⏳ Waiting for services to be ready..."
       - sleep 15
       - echo ""
-      - task: :gcp:health:all
+      - task: health:all
       - echo ""
-      - task: :gcp:stats:urls
+      - task: stats:urls
       - echo ""
       - echo "✅ All services started and healthy"
 
@@ -65,7 +61,7 @@ tasks:
       - task: "rebuild:all"
       - echo "⏳ Waiting for services to be ready..."
       - sleep 15
-      - task: :gcp:health:all
+      - task: health:all
       - echo "✅ Deployment reset complete"
 
   rebuild-code:
@@ -75,7 +71,7 @@ tasks:
       - task: "rebuild:all"
       - echo "🔍 Checking health..."
       - sleep 5
-      - task: :gcp:health:all
+      - task: health:all
       - echo "✅ Rebuild complete"
 
   show-urls:
@@ -114,63 +110,16 @@ tasks:
       - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
       - echo ""
       - 'echo "💡 Next steps:"'
-      - 'echo "   1. Setup backend: task gcp:deployment:setup:backend"'
-      - 'echo "   2. Setup WS server: task gcp:deployment:setup:ws"'
-      - 'echo "   3. Setup load test: task gcp:deployment:setup:loadtest"'
-      - 'echo "   4. Verify health: task gcp:verify"'
-      - echo ""
-      - 'echo "Or run guided setup: task gcp:deployment:guided-setup"'
-
-  guided-setup:
-    desc: Guided application setup (shows manual steps for backend + ws)
-    cmds:
-      - echo "🚀 Starting Guided Application Setup"
-      - echo ""
-      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-      - 'echo "STEP 1: Backend Setup"'
-      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-      - task: "setup:backend"
-      - echo ""
-      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-      - 'echo "⏸️  PAUSE: Complete backend setup before continuing"'
-      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-      - echo ""
-      - 'echo "Press Enter when backend setup is complete..."'
-      - read REPLY
-      - echo ""
-      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-      - 'echo "STEP 2: WebSocket Server Setup"'
-      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-      - task: "setup:ws"
-      - echo ""
-      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-      - 'echo "⏸️  PAUSE: Complete WS server setup before continuing"'
-      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-      - echo ""
-      - 'echo "Press Enter when WS server setup is complete..."'
-      - read REPLY
-      - echo ""
-      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-      - 'echo "STEP 3: Verifying Deployment"'
-      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-      - task: :gcp:health:all
-      - echo ""
-      - task: :gcp:stats:urls
-      - echo ""
-      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-      - echo "✅ DEPLOYMENT SETUP COMPLETE"
-      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-      - echo ""
-      - 'echo "💡 Daily operations:"'
-      - 'echo "   Start services: task gcp:up"'
-      - 'echo "   Stop services: task gcp:down"'
-      - 'echo "   Check status: task gcp:status"'
-      - 'echo "   Run load test: task gcp:load-test:capacity"'
+      - 'echo "   Complete setup: task gcp:deploy"'
+      - 'echo "   Or run individually:"'
+      - 'echo "     - task gcp:deployment:setup:backend"'
+      - 'echo "     - task gcp:deployment:setup:ws"'
+      - 'echo "     - task gcp:deployment:setup:loadtest"'
 
   # === INFRASTRUCTURE SETUP (Individual Tasks) ===
 
   create:backend:
-    desc: Create backend GCP instance (e2-small) - smart, idempotent
+    desc: Create backend GCP instance (e2-medium) - smart, idempotent
     cmds:
       - |
         echo "🔍 Checking backend instance..."
@@ -191,7 +140,7 @@ tasks:
           echo "📦 Creating new instance..."
           gcloud compute instances create {{.BACKEND_INSTANCE}} \
             --project={{.GCP_PROJECT}} --zone={{.GCP_ZONE}} \
-            --machine-type=e2-small --image-family=ubuntu-2204-lts \
+            --machine-type=e2-medium --image-family=ubuntu-2204-lts \
             --image-project=ubuntu-os-cloud --boot-disk-size=20GB \
             --boot-disk-type=pd-standard --tags=odin-backend --quiet \
             --metadata=startup-script='#!/bin/bash
@@ -557,7 +506,6 @@ tasks:
           --zone={{.GCP_ZONE}} \
           --project={{.GCP_PROJECT}}
       - echo "✅ Static IP assigned"
-      - task: :gcp:stats:ip:ws
 
   # === APPLICATION SETUP ===
 
@@ -588,7 +536,7 @@ tasks:
         fi
 
         echo "🐳 Starting Docker services..."
-        gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo -i -u deploy bash -c 'cd /home/deploy/ws_poc/deployments/v1/gcp/distributed/backend && docker compose up -d 2>&1 | grep -E \"(Created|Started|Running)\"'" 2>/dev/null || true
+        gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo -i -u deploy bash -c 'cd /home/deploy/ws_poc/deployments/v1/gcp/distributed/backend && docker-compose up -d 2>&1 | grep -E \"(Created|Started|Running)\"'" 2>/dev/null || true
         sleep 15
 
         # Create topics if needed
@@ -637,7 +585,7 @@ tasks:
         gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo -i -u deploy bash -c 'echo BACKEND_INTERNAL_IP=$BACKEND_IP > /home/deploy/ws_poc/deployments/v1/gcp/distributed/ws-server/.env.production && chmod 600 /home/deploy/ws_poc/deployments/v1/gcp/distributed/ws-server/.env.production'" 2>/dev/null
 
         echo "🐳 Starting Docker services..."
-        gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo -i -u deploy bash -c 'cd /home/deploy/ws_poc/deployments/v1/gcp/distributed/ws-server && export BACKEND_INTERNAL_IP=$BACKEND_IP && docker compose up -d 2>&1 | grep -E \"(Created|Started|Running)\"'" 2>/dev/null || true
+        gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo -i -u deploy bash -c 'cd /home/deploy/ws_poc/deployments/v1/gcp/distributed/ws-server && export BACKEND_INTERNAL_IP=$BACKEND_IP && docker-compose up -d 2>&1 | grep -E \"(Created|Started|Running)\"'" 2>/dev/null || true
         sleep 15
 
         echo "✅ WS server setup complete"
