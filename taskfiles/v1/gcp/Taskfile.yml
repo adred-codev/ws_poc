@@ -41,6 +41,16 @@ vars:
   WS_DEPLOY_PATH: "{{.USER_WORKING_DIR}}/deployments/v1/gcp/distributed/ws-server"
 
 includes:
+  utilities:
+    taskfile: ./utilities.yml
+    vars:
+      GCP_PROJECT: "{{.GCP_PROJECT}}"
+      GCP_REGION: "{{.GCP_REGION}}"
+      GCP_ZONE: "{{.GCP_ZONE}}"
+      BACKEND_INSTANCE: "{{.BACKEND_INSTANCE}}"
+      WS_INSTANCE: "{{.WS_INSTANCE}}"
+      LOADTEST_INSTANCE: "{{.LOADTEST_INSTANCE}}"
+
   services:
     taskfile: ./services.yml
     vars:

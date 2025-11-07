@@ -10,10 +10,27 @@ tasks:
   # === HIGH-LEVEL WORKFLOWS ===
 
   setup:
-    desc: Complete GCP deployment from scratch
+    desc: Complete GCP deployment from scratch (fully automated)
     cmds:
       - task: "infrastructure"
-      - task: "guided-setup"
+      - echo ""
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - echo "🤖 AUTOMATED APPLICATION SETUP"
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - echo ""
+      - task: "setup:backend"
+      - echo ""
+      - task: "setup:ws"
+      - echo ""
+      - task: "setup:loadtest"
+      - echo ""
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - echo "✅ DEPLOYMENT COMPLETE"
+      - echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      - echo ""
+      - task: :gcp:health:all
+      - echo ""
+      - task: :gcp:stats:urls
 
   quick-start:
     desc: Quick start all services (daily use - assumes infrastructure exists)
@@ -153,121 +170,195 @@ tasks:
   # === INFRASTRUCTURE SETUP (Individual Tasks) ===
 
   create:backend:
-    desc: Create backend GCP instance (e2-small)
+    desc: Create backend GCP instance (e2-small) - smart, idempotent
     cmds:
-      - echo "🏗️  Creating backend instance..."
       - |
-        gcloud compute instances create {{.BACKEND_INSTANCE}} \
-          --project={{.GCP_PROJECT}} \
-          --zone={{.GCP_ZONE}} \
-          --machine-type=e2-small \
-          --image-family=ubuntu-2204-lts \
-          --image-project=ubuntu-os-cloud \
-          --boot-disk-size=20GB \
-          --boot-disk-type=pd-standard \
-          --tags=odin-backend \
-          --metadata=startup-script='#!/bin/bash
-            apt-get update
-            apt-get install -y docker.io docker-compose-plugin git curl jq
-            systemctl enable docker
-            systemctl start docker
-            usermod -aG docker $(whoami)
-            useradd -m -s /bin/bash -G docker deploy
-            # Kernel tuning for Kafka/Redpanda and Publisher connections
-            echo "* soft nofile 262144" >> /etc/security/limits.conf
-            echo "* hard nofile 262144" >> /etc/security/limits.conf
-            echo "fs.file-max = 524288" >> /etc/sysctl.conf
-            echo "net.ipv4.ip_local_port_range = 1024 65535" >> /etc/sysctl.conf
-            echo "net.ipv4.tcp_tw_reuse = 1" >> /etc/sysctl.conf
-            echo "net.core.somaxconn = 32768" >> /etc/sysctl.conf
-            sysctl -p
-            echo "Startup completed" > /var/log/startup-complete.log'
-      - echo "⏳ Waiting for instance to start (2 minutes)..."
-      - sleep 120
-      - echo "✅ Backend instance created"
-      - echo ""
-      - 'echo "💡 Next steps:"'
-      - 'echo "   1. Create firewall rules: task gcp:deployment:firewall:backend"'
-      - 'echo "   2. Setup application: task gcp:deployment:setup:backend"'
+        echo "🔍 Checking backend instance..."
+        if gcloud compute instances describe {{.BACKEND_INSTANCE}} \
+          --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} \
+          --format="value(status)" 2>/dev/null | grep -q "RUNNING"; then
+          echo "✅ Backend already running"
+          exit 0
+        fi
+
+        if gcloud compute instances describe {{.BACKEND_INSTANCE}} \
+          --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} \
+          2>/dev/null | grep -q "name:"; then
+          echo "⚡ Starting existing instance..."
+          gcloud compute instances start {{.BACKEND_INSTANCE}} \
+            --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --quiet
+        else
+          echo "📦 Creating new instance..."
+          gcloud compute instances create {{.BACKEND_INSTANCE}} \
+            --project={{.GCP_PROJECT}} --zone={{.GCP_ZONE}} \
+            --machine-type=e2-small --image-family=ubuntu-2204-lts \
+            --image-project=ubuntu-os-cloud --boot-disk-size=20GB \
+            --boot-disk-type=pd-standard --tags=odin-backend --quiet \
+            --metadata=startup-script='#!/bin/bash
+              apt-get update && apt-get install -y docker.io docker-compose git curl jq
+              systemctl enable docker && systemctl start docker
+              usermod -aG docker $(whoami) && useradd -m -s /bin/bash -G docker deploy
+              echo "* soft nofile 262144" >> /etc/security/limits.conf
+              echo "* hard nofile 262144" >> /etc/security/limits.conf
+              echo "fs.file-max = 524288" >> /etc/sysctl.conf
+              echo "net.ipv4.ip_local_port_range = 1024 65535" >> /etc/sysctl.conf
+              echo "net.ipv4.tcp_tw_reuse = 1" >> /etc/sysctl.conf
+              echo "net.core.somaxconn = 32768" >> /etc/sysctl.conf
+              sysctl -p && echo "Startup completed" > /var/log/startup-complete.log'
+        fi
+
+        echo "⏳ Waiting for SSH..."
+        for i in {1..30}; do
+          if gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} \
+            --project={{.GCP_PROJECT}} --command="echo ok" \
+            --ssh-flag="-o ConnectTimeout=5" --ssh-flag="-o StrictHostKeyChecking=no" \
+            2>/dev/null | grep -q "ok"; then
+            echo "✅ SSH ready ($((i*10))s)"
+            break
+          fi
+          sleep 10
+        done
+
+        echo "⏳ Waiting for startup script..."
+        for i in {1..30}; do
+          if gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} \
+            --project={{.GCP_PROJECT}} --command="test -f /var/log/startup-complete.log && echo ok" \
+            --ssh-flag="-o ConnectTimeout=5" --ssh-flag="-o StrictHostKeyChecking=no" \
+            2>/dev/null | grep -q "ok"; then
+            echo "✅ Backend ready ($((i*10))s)"
+            exit 0
+          fi
+          sleep 10
+        done
+        echo "⚠️  Startup timeout (may still be installing)"
 
   create:ws:
-    desc: Create WebSocket server GCP instance (e2-standard-4)
+    desc: Create WebSocket server GCP instance (e2-standard-4) - smart, idempotent
     cmds:
-      - echo "🏗️  Creating WebSocket server instance..."
       - |
-        gcloud compute instances create {{.WS_INSTANCE}} \
-          --project={{.GCP_PROJECT}} \
-          --zone={{.GCP_ZONE}} \
-          --machine-type=e2-standard-4 \
-          --image-family=ubuntu-2204-lts \
-          --image-project=ubuntu-os-cloud \
-          --boot-disk-size=20GB \
-          --boot-disk-type=pd-standard \
-          --tags=odin-ws-server \
-          --metadata=startup-script='#!/bin/bash
-            apt-get update
-            apt-get install -y docker.io docker-compose-plugin git curl jq
-            systemctl enable docker
-            systemctl start docker
-            usermod -aG docker $(whoami)
-            useradd -m -s /bin/bash -G docker deploy
-            # Kernel tuning for high connection counts (12K-18K WebSocket connections)
-            echo "* soft nofile 1048576" >> /etc/security/limits.conf
-            echo "* hard nofile 1048576" >> /etc/security/limits.conf
-            echo "fs.file-max = 2097152" >> /etc/sysctl.conf
-            echo "net.ipv4.ip_local_port_range = 1024 65535" >> /etc/sysctl.conf
-            echo "net.ipv4.tcp_tw_reuse = 1" >> /etc/sysctl.conf
-            echo "net.core.somaxconn = 65535" >> /etc/sysctl.conf
-            echo "net.ipv4.tcp_max_syn_backlog = 65535" >> /etc/sysctl.conf
-            sysctl -p
-            echo "Startup completed" > /var/log/startup-complete.log'
-      - echo "⏳ Waiting for instance to start (2 minutes)..."
-      - sleep 120
-      - echo "✅ WebSocket server instance created"
-      - echo ""
-      - 'echo "💡 Next steps:"'
-      - 'echo "   1. Create firewall rules: task gcp:deployment:firewall:ws"'
-      - 'echo "   2. Reserve static IP: task gcp:deployment:reserve-ip:ws"'
-      - 'echo "   3. Setup application: task gcp:deployment:setup:ws"'
+        echo "🔍 Checking WS server instance..."
+        if gcloud compute instances describe {{.WS_INSTANCE}} \
+          --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} \
+          --format="value(status)" 2>/dev/null | grep -q "RUNNING"; then
+          echo "✅ WS server already running"
+          exit 0
+        fi
+
+        if gcloud compute instances describe {{.WS_INSTANCE}} \
+          --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} \
+          2>/dev/null | grep -q "name:"; then
+          echo "⚡ Starting existing instance..."
+          gcloud compute instances start {{.WS_INSTANCE}} \
+            --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --quiet
+        else
+          echo "📦 Creating new instance..."
+          gcloud compute instances create {{.WS_INSTANCE}} \
+            --project={{.GCP_PROJECT}} --zone={{.GCP_ZONE}} \
+            --machine-type=e2-standard-4 --image-family=ubuntu-2204-lts \
+            --image-project=ubuntu-os-cloud --boot-disk-size=20GB \
+            --boot-disk-type=pd-standard --tags=odin-ws-server --quiet \
+            --metadata=startup-script='#!/bin/bash
+              apt-get update && apt-get install -y docker.io git curl jq
+              systemctl enable docker && systemctl start docker
+              usermod -aG docker $(whoami) && useradd -m -s /bin/bash -G docker deploy
+              echo "* soft nofile 1048576" >> /etc/security/limits.conf
+              echo "* hard nofile 1048576" >> /etc/security/limits.conf
+              echo "fs.file-max = 2097152" >> /etc/sysctl.conf
+              echo "net.ipv4.ip_local_port_range = 1024 65535" >> /etc/sysctl.conf
+              echo "net.ipv4.tcp_tw_reuse = 1" >> /etc/sysctl.conf
+              echo "net.core.somaxconn = 65535" >> /etc/sysctl.conf
+              echo "net.ipv4.tcp_max_syn_backlog = 65535" >> /etc/sysctl.conf
+              sysctl -p && echo "Startup completed" > /var/log/startup-complete.log'
+        fi
+
+        echo "⏳ Waiting for SSH..."
+        for i in {1..30}; do
+          if gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} \
+            --project={{.GCP_PROJECT}} --command="echo ok" \
+            --ssh-flag="-o ConnectTimeout=5" --ssh-flag="-o StrictHostKeyChecking=no" \
+            2>/dev/null | grep -q "ok"; then
+            echo "✅ SSH ready ($((i*10))s)"
+            break
+          fi
+          sleep 10
+        done
+
+        echo "⏳ Waiting for startup script..."
+        for i in {1..30}; do
+          if gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} \
+            --project={{.GCP_PROJECT}} --command="test -f /var/log/startup-complete.log && echo ok" \
+            --ssh-flag="-o ConnectTimeout=5" --ssh-flag="-o StrictHostKeyChecking=no" \
+            2>/dev/null | grep -q "ok"; then
+            echo "✅ WS server ready ($((i*10))s)"
+            exit 0
+          fi
+          sleep 10
+        done
+        echo "⚠️  Startup timeout (may still be installing)"
 
   create:loadtest:
-    desc: Create load test GCP instance (e2-standard-8)
+    desc: Create load test GCP instance (e2-standard-8) - smart, idempotent
     cmds:
-      - echo "🏗️  Creating load test instance..."
       - |
-        gcloud compute instances create {{.LOADTEST_INSTANCE}} \
-          --project={{.GCP_PROJECT}} \
-          --zone={{.GCP_ZONE}} \
-          --machine-type=e2-standard-8 \
-          --image-family=ubuntu-2204-lts \
-          --image-project=ubuntu-os-cloud \
-          --boot-disk-size=30GB \
-          --boot-disk-type=pd-standard \
-          --tags=odin-loadtest \
-          --metadata=startup-script='#!/bin/bash
-            apt-get update
-            apt-get install -y docker.io docker-compose-plugin git curl jq golang-go
-            systemctl enable docker
-            systemctl start docker
-            usermod -aG docker $(whoami)
-            useradd -m -s /bin/bash -G docker deploy
-            # Kernel tuning for load testing (generating 12K-18K connections)
-            echo "* soft nofile 1048576" >> /etc/security/limits.conf
-            echo "* hard nofile 1048576" >> /etc/security/limits.conf
-            echo "fs.file-max = 2097152" >> /etc/sysctl.conf
-            echo "net.ipv4.ip_local_port_range = 1024 65535" >> /etc/sysctl.conf
-            echo "net.ipv4.tcp_tw_reuse = 1" >> /etc/sysctl.conf
-            echo "net.core.somaxconn = 65535" >> /etc/sysctl.conf
-            echo "net.ipv4.tcp_max_syn_backlog = 65535" >> /etc/sysctl.conf
-            sysctl -p
-            echo "Startup completed" > /var/log/startup-complete.log'
-      - echo "⏳ Waiting for instance to start (2 minutes)..."
-      - sleep 120
-      - echo "✅ Load test instance created"
-      - echo ""
-      - 'echo "💡 Next steps:"'
-      - 'echo "   1. Setup load test: task gcp:deployment:setup:loadtest"'
-      - 'echo "   2. Run capacity test: task gcp:load-test:capacity"'
+        echo "🔍 Checking loadtest instance..."
+        if gcloud compute instances describe {{.LOADTEST_INSTANCE}} \
+          --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} \
+          --format="value(status)" 2>/dev/null | grep -q "RUNNING"; then
+          echo "✅ Loadtest already running"
+          exit 0
+        fi
+
+        if gcloud compute instances describe {{.LOADTEST_INSTANCE}} \
+          --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} \
+          2>/dev/null | grep -q "name:"; then
+          echo "⚡ Starting existing instance..."
+          gcloud compute instances start {{.LOADTEST_INSTANCE}} \
+            --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --quiet
+        else
+          echo "📦 Creating new instance..."
+          gcloud compute instances create {{.LOADTEST_INSTANCE}} \
+            --project={{.GCP_PROJECT}} --zone={{.GCP_ZONE}} \
+            --machine-type=e2-standard-8 --image-family=ubuntu-2204-lts \
+            --image-project=ubuntu-os-cloud --boot-disk-size=30GB \
+            --boot-disk-type=pd-standard --tags=odin-loadtest --quiet \
+            --metadata=startup-script='#!/bin/bash
+              apt-get update && apt-get install -y docker.io git curl jq
+              systemctl enable docker && systemctl start docker
+              usermod -aG docker $(whoami) && useradd -m -s /bin/bash -G docker deploy
+              echo "* soft nofile 1048576" >> /etc/security/limits.conf
+              echo "* hard nofile 1048576" >> /etc/security/limits.conf
+              echo "fs.file-max = 2097152" >> /etc/sysctl.conf
+              echo "net.ipv4.ip_local_port_range = 1024 65535" >> /etc/sysctl.conf
+              echo "net.ipv4.tcp_tw_reuse = 1" >> /etc/sysctl.conf
+              echo "net.core.somaxconn = 65535" >> /etc/sysctl.conf
+              echo "net.ipv4.tcp_max_syn_backlog = 65535" >> /etc/sysctl.conf
+              sysctl -p && echo "Startup completed" > /var/log/startup-complete.log'
+        fi
+
+        echo "⏳ Waiting for SSH..."
+        for i in {1..30}; do
+          if gcloud compute ssh {{.LOADTEST_INSTANCE}} --zone={{.GCP_ZONE}} \
+            --project={{.GCP_PROJECT}} --command="echo ok" \
+            --ssh-flag="-o ConnectTimeout=5" --ssh-flag="-o StrictHostKeyChecking=no" \
+            2>/dev/null | grep -q "ok"; then
+            echo "✅ SSH ready ($((i*10))s)"
+            break
+          fi
+          sleep 10
+        done
+
+        echo "⏳ Waiting for startup script..."
+        for i in {1..30}; do
+          if gcloud compute ssh {{.LOADTEST_INSTANCE}} --zone={{.GCP_ZONE}} \
+            --project={{.GCP_PROJECT}} --command="test -f /var/log/startup-complete.log && echo ok" \
+            --ssh-flag="-o ConnectTimeout=5" --ssh-flag="-o StrictHostKeyChecking=no" \
+            2>/dev/null | grep -q "ok"; then
+            echo "✅ Loadtest ready ($((i*10))s)"
+            exit 0
+          fi
+          sleep 10
+        done
+        echo "⚠️  Startup timeout (may still be installing)"
 
   # === DELETE INSTANCES ===
 
@@ -471,141 +562,127 @@ tasks:
   # === APPLICATION SETUP ===
 
   setup:backend:
-    desc: Initial backend setup (clone repo, configure, deploy)
+    desc: Automated backend setup (secure PAT handling, idempotent)
     cmds:
-      - echo "Setting up backend application..."
-      - echo ""
       - |
-        # Build git clone URL with PAT if provided
+        echo "🤖 Automated Backend Setup"
+
+        # Build clone URL SECURELY (NEVER echo this variable)
         if [ -n "{{.GIT_PAT}}" ]; then
-          GIT_CLONE_URL="https://{{.GIT_PAT}}@github.com/adred-codev/ws_poc.git"
-          echo "✅ Using authenticated clone (PAT provided)"
+          CLONE_URL="https://{{.GIT_PAT}}@github.com/adred-codev/ws_poc.git"
+          echo "🔐 Using authenticated clone"
         else
-          GIT_CLONE_URL="{{.GIT_REPO_HTTPS}}"
-          echo "⚠️  Using public clone (no PAT) - will fail for private repos"
+          CLONE_URL="{{.GIT_REPO_HTTPS}}"
+          echo "🌐 Using public clone"
         fi
-      - echo ""
-      - 'echo "📋 Manual steps required:"'
-      - echo ""
-      - 'echo "1. SSH into backend instance:"'
-      - 'echo "   gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}}"'
-      - echo ""
-      - 'echo "2. Switch to deploy user and clone repo:"'
-      - 'echo "   sudo su - deploy"'
-      - 'echo "   git clone -b {{.GIT_BRANCH}} $GIT_CLONE_URL"'
-      - 'echo "   cd ws_poc"'
-      - echo ""
-      - 'echo "3. Create .env.production if needed (usually not required):"'
-      - 'echo "   cd deployments/v1/gcp/distributed/backend"'
-      - 'echo "   Check .env.production - add secrets if needed"'
-      - echo ""
-      - 'echo "4. Start services:"'
-      - 'echo "   docker compose up -d"'
-      - echo ""
-      - 'echo "5. Create Kafka topics:"'
-      - 'echo "   docker exec redpanda rpk topic create \\"'
-      - 'echo "     odin.trades odin.liquidity odin.balances odin.metadata \\"'
-      - 'echo "     odin.social odin.community odin.creation odin.analytics \\"'
-      - 'echo "     --partitions 12 --replicas 1"'
-      - echo ""
-      - 'echo "6. Verify:"'
-      - 'echo "   docker compose ps"'
-      - 'echo "   docker exec redpanda rpk topic list"'
-      - 'echo "   curl localhost:3003/status"'
-      - echo ""
-      - 'echo "7. Exit and verify from local:"'
-      - 'echo "   exit # Exit from deploy user"'
-      - 'echo "   exit # Exit from SSH"'
+
+        # Check if repo exists
+        REPO_EXISTS=$(gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo -i -u deploy test -d /home/deploy/ws_poc && echo true || echo false" 2>/dev/null || echo "false")
+
+        if [ "$REPO_EXISTS" = "true" ]; then
+          echo "✅ Repository exists, updating..."
+          gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo -i -u deploy bash -c 'cd /home/deploy/ws_poc && git fetch origin {{.GIT_BRANCH}} 2>&1 | grep -v From && git reset --hard origin/{{.GIT_BRANCH}} 2>&1 | head -1'" 2>/dev/null
+        else
+          echo "📦 Cloning repository..."
+          gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo -i -u deploy git clone -b {{.GIT_BRANCH}} -q $CLONE_URL /home/deploy/ws_poc" 2>&1 | grep -v "Cloning" | grep -v "remote" || true
+        fi
+
+        echo "🐳 Starting Docker services..."
+        gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo -i -u deploy bash -c 'cd /home/deploy/ws_poc/deployments/v1/gcp/distributed/backend && docker compose up -d 2>&1 | grep -E \"(Created|Started|Running)\"'" 2>/dev/null || true
+        sleep 15
+
+        # Create topics if needed
+        TOPICS=$(gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="docker exec redpanda rpk topic list 2>/dev/null | grep -q odin.trades && echo exists || echo missing" 2>/dev/null || echo "missing")
+
+        if [ "$TOPICS" = "missing" ]; then
+          echo "📋 Creating Kafka topics..."
+          gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="docker exec redpanda rpk topic create odin.trades odin.liquidity odin.balances odin.metadata odin.social odin.community odin.creation odin.analytics --partitions 12 --replicas 1 2>&1 | grep TOPIC" 2>/dev/null || true
+        else
+          echo "✅ Topics already exist"
+        fi
+
+        echo "✅ Backend setup complete"
 
   setup:ws:
-    desc: Initial WebSocket server setup (clone repo, configure, deploy)
+    desc: Automated WS setup (secure PAT handling, idempotent)
     cmds:
-      - echo "Setting up WebSocket server application..."
-      - echo ""
       - |
-        BACKEND_IP=$(gcloud compute instances describe {{.BACKEND_INSTANCE}} \
-          --zone={{.GCP_ZONE}} \
-          --project={{.GCP_PROJECT}} \
-          --format='get(networkInterfaces[0].networkIP)')
-        echo "Backend Internal IP: $BACKEND_IP"
-      - echo ""
-      - |
-        # Build git clone URL with PAT if provided
+        echo "🤖 Automated WebSocket Server Setup"
+
+        # Get backend IP
+        BACKEND_IP=$(gcloud compute instances describe {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --format='get(networkInterfaces[0].networkIP)')
+        echo "Backend IP: $BACKEND_IP"
+
+        # Build clone URL SECURELY (NEVER echo this variable)
         if [ -n "{{.GIT_PAT}}" ]; then
-          GIT_CLONE_URL="https://{{.GIT_PAT}}@github.com/adred-codev/ws_poc.git"
-          echo "✅ Using authenticated clone (PAT provided)"
+          CLONE_URL="https://{{.GIT_PAT}}@github.com/adred-codev/ws_poc.git"
+          echo "🔐 Using authenticated clone"
         else
-          GIT_CLONE_URL="{{.GIT_REPO_HTTPS}}"
-          echo "⚠️  Using public clone (no PAT) - will fail for private repos"
+          CLONE_URL="{{.GIT_REPO_HTTPS}}"
+          echo "🌐 Using public clone"
         fi
-      - echo ""
-      - 'echo "📋 Manual steps required:"'
-      - echo ""
-      - 'echo "1. SSH into WebSocket server instance:"'
-      - 'echo "   gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}}"'
-      - echo ""
-      - 'echo "2. Switch to deploy user and clone repo:"'
-      - 'echo "   sudo su - deploy"'
-      - 'echo "   git clone -b {{.GIT_BRANCH}} $GIT_CLONE_URL"'
-      - 'echo "   cd ws_poc"'
-      - echo ""
-      - 'echo "3. Create .env.production with backend IP:"'
-      - 'echo "   cd deployments/v1/gcp/distributed/ws-server"'
-      - 'echo "   cat > .env.production <<EOF"'
-      - 'echo "BACKEND_INTERNAL_IP=$BACKEND_IP"'
-      - 'echo "EOF"'
-      - 'echo "   chmod 600 .env.production"'
-      - echo ""
-      - 'echo "4. Start services:"'
-      - 'echo "   export BACKEND_INTERNAL_IP=$BACKEND_IP"'
-      - 'echo "   docker compose up -d"'
-      - echo ""
-      - 'echo "5. Verify:"'
-      - 'echo "   docker compose ps"'
-      - 'echo "   curl localhost:3004/health"'
-      - echo ""
-      - 'echo "6. Exit and verify from local:"'
-      - 'echo "   exit # Exit from deploy user"'
-      - 'echo "   exit # Exit from SSH"'
-      - 'echo "   task gcp:health:ws"'
+
+        # Check if repo exists
+        REPO_EXISTS=$(gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo -i -u deploy test -d /home/deploy/ws_poc && echo true || echo false" 2>/dev/null || echo "false")
+
+        if [ "$REPO_EXISTS" = "true" ]; then
+          echo "✅ Repository exists, updating..."
+          gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo -i -u deploy bash -c 'cd /home/deploy/ws_poc && git fetch origin {{.GIT_BRANCH}} 2>&1 | grep -v From && git reset --hard origin/{{.GIT_BRANCH}} 2>&1 | head -1'" 2>/dev/null
+        else
+          echo "📦 Cloning repository..."
+          gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo -i -u deploy git clone -b {{.GIT_BRANCH}} -q $CLONE_URL /home/deploy/ws_poc" 2>&1 | grep -v "Cloning" | grep -v "remote" || true
+        fi
+
+        echo "⚙️  Configuring environment..."
+        gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo -i -u deploy bash -c 'echo BACKEND_INTERNAL_IP=$BACKEND_IP > /home/deploy/ws_poc/deployments/v1/gcp/distributed/ws-server/.env.production && chmod 600 /home/deploy/ws_poc/deployments/v1/gcp/distributed/ws-server/.env.production'" 2>/dev/null
+
+        echo "🐳 Starting Docker services..."
+        gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo -i -u deploy bash -c 'cd /home/deploy/ws_poc/deployments/v1/gcp/distributed/ws-server && export BACKEND_INTERNAL_IP=$BACKEND_IP && docker compose up -d 2>&1 | grep -E \"(Created|Started|Running)\"'" 2>/dev/null || true
+        sleep 15
+
+        echo "✅ WS server setup complete"
 
   setup:loadtest:
-    desc: Initial load test instance setup (clone repo, build binary)
+    desc: Automated loadtest setup (secure PAT handling, idempotent)
     cmds:
-      - echo "Setting up load test instance..."
-      - echo ""
       - |
-        # Build git clone URL with PAT if provided
+        echo "🤖 Automated Load Test Setup"
+
+        # Build clone URL SECURELY (NEVER echo this variable)
         if [ -n "{{.GIT_PAT}}" ]; then
-          GIT_CLONE_URL="https://{{.GIT_PAT}}@github.com/adred-codev/ws_poc.git"
-          echo "✅ Using authenticated clone (PAT provided)"
+          CLONE_URL="https://{{.GIT_PAT}}@github.com/adred-codev/ws_poc.git"
+          echo "🔐 Using authenticated clone"
         else
-          GIT_CLONE_URL="{{.GIT_REPO_HTTPS}}"
-          echo "⚠️  Using public clone (no PAT) - will fail for private repos"
+          CLONE_URL="{{.GIT_REPO_HTTPS}}"
+          echo "🌐 Using public clone"
         fi
-      - echo ""
-      - 'echo "📋 Manual steps required:"'
-      - echo ""
-      - 'echo "1. SSH into load test instance:"'
-      - 'echo "   gcloud compute ssh {{.LOADTEST_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}}"'
-      - echo ""
-      - 'echo "2. Switch to deploy user and clone repo:"'
-      - 'echo "   sudo su - deploy"'
-      - 'echo "   git clone -b {{.GIT_BRANCH}} $GIT_CLONE_URL"'
-      - 'echo "   cd ws_poc"'
-      - echo ""
-      - 'echo "3. Build load test binary:"'
-      - 'echo "   cd loadtest"'
-      - 'echo "   go build -o sustained-load-test ."'
-      - 'echo "   chmod +x sustained-load-test"'
-      - echo ""
-      - 'echo "4. Verify build:"'
-      - 'echo "   ./sustained-load-test -help"'
-      - echo ""
-      - 'echo "5. Exit and run load test:"'
-      - 'echo "   exit # Exit from deploy user"'
-      - 'echo "   exit # Exit from SSH"'
-      - 'echo "   task gcp:load-test:capacity"'
+
+        # Check if repo exists
+        REPO_EXISTS=$(gcloud compute ssh {{.LOADTEST_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo -i -u deploy test -d /home/deploy/ws_poc && echo true || echo false" 2>/dev/null || echo "false")
+
+        if [ "$REPO_EXISTS" = "true" ]; then
+          echo "✅ Repository exists, updating..."
+          gcloud compute ssh {{.LOADTEST_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo -i -u deploy bash -c 'cd /home/deploy/ws_poc && git fetch origin {{.GIT_BRANCH}} 2>&1 | grep -v From && git reset --hard origin/{{.GIT_BRANCH}} 2>&1 | head -1'" 2>/dev/null
+        else
+          echo "📦 Cloning repository..."
+          gcloud compute ssh {{.LOADTEST_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo -i -u deploy git clone -b {{.GIT_BRANCH}} -q $CLONE_URL /home/deploy/ws_poc" 2>&1 | grep -v "Cloning" | grep -v "remote" || true
+        fi
+
+        # Build Docker image (use sudo docker like old deployment - group membership not active yet)
+        echo "🐳 Building Docker image..."
+        gcloud compute ssh {{.LOADTEST_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo docker build -t loadtest /home/deploy/ws_poc/loadtest 2>&1 | tail -10" 2>/dev/null || true
+
+        # Verify image was built
+        IMAGE_EXISTS=$(gcloud compute ssh {{.LOADTEST_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo docker images -q loadtest 2>/dev/null" 2>/dev/null)
+
+        if [ -n "$IMAGE_EXISTS" ]; then
+          echo "✅ Load test Docker image ready"
+        else
+          echo "❌ Failed to build Docker image"
+          exit 1
+        fi
+
+        echo "✅ Load test setup complete"
 
   # === CODE UPDATES / REBUILDS ===
 
