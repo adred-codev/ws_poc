@@ -8,7 +8,7 @@ vars:
   METADATA_FILE: ./.version-metadata.yml
   WS_VERSION_FILE: ./ws/VERSION
   CURRENT_VERSION:
-    sh: grep "^version:" {{.VERSION_FILE}} | cut -d' ' -f2
+    sh: test -f {{.VERSION_FILE}} && grep "^version:" {{.VERSION_FILE}} | cut -d' ' -f2 || echo "unknown"
 
 tasks:
   info:
