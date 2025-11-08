@@ -77,7 +77,7 @@ tasks:
   show-urls:
     desc: Display service URLs
     cmds:
-      - task: :gcp:stats:urls
+      - task: :stats:urls
 
   infrastructure:
     desc: Complete infrastructure setup (instances + networking + IP)
