@@ -199,8 +199,3 @@ tasks:
     desc: Quick stats overview
     cmds:
       - task: local:stats:all
-
-  urls:
-    desc: Show GCP service URLs
-    cmds:
-      - task: gcp:stats:urls

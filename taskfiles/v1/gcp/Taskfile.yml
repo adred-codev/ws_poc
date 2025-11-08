@@ -178,3 +178,8 @@ tasks:
     desc: Delete ALL GCP instances (DESTRUCTIVE - saves maximum costs)
     cmds:
       - task: deployment:delete:all
+
+  urls:
+    desc: Show GCP service URLs
+    cmds:
+      - task: stats:urls
