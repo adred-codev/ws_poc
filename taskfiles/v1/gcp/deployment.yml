@@ -209,7 +209,7 @@ tasks:
             --image-project=ubuntu-os-cloud --boot-disk-size=20GB \
             --boot-disk-type=pd-standard --tags=odin-ws-server --quiet \
             --metadata=startup-script='#!/bin/bash
-              apt-get update && apt-get install -y docker.io git curl jq
+              apt-get update && apt-get install -y docker.io docker-compose git curl jq
               systemctl enable docker && systemctl start docker
               usermod -aG docker $(whoami)
               id -u deploy &>/dev/null || useradd -m -s /bin/bash deploy
@@ -275,7 +275,7 @@ tasks:
             --image-project=ubuntu-os-cloud --boot-disk-size=30GB \
             --boot-disk-type=pd-standard --tags=odin-loadtest --quiet \
             --metadata=startup-script='#!/bin/bash
-              apt-get update && apt-get install -y docker.io git curl jq
+              apt-get update && apt-get install -y docker.io docker-compose git curl jq
               systemctl enable docker && systemctl start docker
               usermod -aG docker $(whoami)
               id -u deploy &>/dev/null || useradd -m -s /bin/bash deploy
