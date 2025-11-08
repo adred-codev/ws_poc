@@ -49,11 +49,13 @@ services:
   promtail:
     image: grafana/promtail:3.3.2
     container_name: odin-ws-promtail
+    environment:
+      - BACKEND_INTERNAL_IP=${BACKEND_INTERNAL_IP}
     volumes:
       - ./promtail-config.yml:/etc/promtail/promtail-config.yml
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
       - /var/run/docker.sock:/var/run/docker.sock
-    command: -config.file=/etc/promtail/promtail-config.yml
+    command: -config.file=/etc/promtail/promtail-config.yml -config.expand-env=true
     restart: unless-stopped
     deploy:
       resources:

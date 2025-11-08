@@ -541,11 +541,11 @@ tasks:
         sleep 15
 
         # Create topics if needed
-        TOPICS=$(gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="docker exec redpanda rpk topic list 2>/dev/null | grep -q odin.trades && echo exists || echo missing" 2>/dev/null || echo "missing")
+        TOPICS=$(gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo docker exec redpanda rpk topic list 2>/dev/null | grep -q odin.trades && echo exists || echo missing" 2>/dev/null || echo "missing")
 
         if [ "$TOPICS" = "missing" ]; then
           echo "📋 Creating Kafka topics..."
-          gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="docker exec redpanda rpk topic create odin.trades odin.liquidity odin.balances odin.metadata odin.social odin.community odin.creation odin.analytics --partitions 12 --replicas 1 2>&1 | grep TOPIC" 2>/dev/null || true
+          gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo docker exec redpanda rpk topic create odin.trades odin.liquidity odin.balances odin.metadata odin.social odin.community odin.creation odin.analytics --partitions 12 --replicas 1 2>&1 | grep TOPIC" 2>/dev/null || echo "⚠️  Failed to create topics"
         else
           echo "✅ Topics already exist"
         fi
