@@ -49,8 +49,8 @@ services:
   promtail:
     image: grafana/promtail:3.3.2
     container_name: odin-ws-promtail
-    environment:
-      - BACKEND_INTERNAL_IP=${BACKEND_INTERNAL_IP}
+    env_file:
+      - .env.production
     volumes:
       - ./promtail-config.yml:/etc/promtail/promtail-config.yml
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
