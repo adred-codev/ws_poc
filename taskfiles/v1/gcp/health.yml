@@ -28,7 +28,7 @@ tasks:
         # Check Redpanda health
         echo "📊 Redpanda Health:"
         (gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
-          docker exec redpanda rpk cluster health 2>/dev/null" || echo "❌ Redpanda not responding") || true
+          sudo docker exec redpanda rpk cluster health 2>/dev/null" || echo "❌ Redpanda not responding") || true
         echo ""
 
         # Check Grafana
