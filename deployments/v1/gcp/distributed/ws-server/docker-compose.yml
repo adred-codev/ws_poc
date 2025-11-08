@@ -16,7 +16,7 @@
 services:
   ws-go:
     build:
-      context: ../../../../ws
+      context: ../../../../../ws
       dockerfile: Dockerfile
     container_name: odin-ws-go
     ports:
