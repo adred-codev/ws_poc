@@ -146,7 +146,9 @@ tasks:
             --metadata=startup-script='#!/bin/bash
               apt-get update && apt-get install -y docker.io docker-compose git curl jq
               systemctl enable docker && systemctl start docker
-              usermod -aG docker $(whoami) && useradd -m -s /bin/bash -G docker deploy
+              usermod -aG docker $(whoami)
+              id -u deploy &>/dev/null || useradd -m -s /bin/bash deploy
+              usermod -aG docker deploy
               echo "* soft nofile 262144" >> /etc/security/limits.conf
               echo "* hard nofile 262144" >> /etc/security/limits.conf
               echo "fs.file-max = 524288" >> /etc/sysctl.conf
@@ -209,7 +211,9 @@ tasks:
             --metadata=startup-script='#!/bin/bash
               apt-get update && apt-get install -y docker.io git curl jq
               systemctl enable docker && systemctl start docker
-              usermod -aG docker $(whoami) && useradd -m -s /bin/bash -G docker deploy
+              usermod -aG docker $(whoami)
+              id -u deploy &>/dev/null || useradd -m -s /bin/bash deploy
+              usermod -aG docker deploy
               echo "* soft nofile 1048576" >> /etc/security/limits.conf
               echo "* hard nofile 1048576" >> /etc/security/limits.conf
               echo "fs.file-max = 2097152" >> /etc/sysctl.conf
@@ -273,7 +277,9 @@ tasks:
             --metadata=startup-script='#!/bin/bash
               apt-get update && apt-get install -y docker.io git curl jq
               systemctl enable docker && systemctl start docker
-              usermod -aG docker $(whoami) && useradd -m -s /bin/bash -G docker deploy
+              usermod -aG docker $(whoami)
+              id -u deploy &>/dev/null || useradd -m -s /bin/bash deploy
+              usermod -aG docker deploy
               echo "* soft nofile 1048576" >> /etc/security/limits.conf
               echo "* hard nofile 1048576" >> /etc/security/limits.conf
               echo "fs.file-max = 2097152" >> /etc/sysctl.conf

@@ -15,11 +15,10 @@ tasks:
       - echo "🚀 Starting backend services on {{.BACKEND_INSTANCE}}..."
       - |
         gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
-          cd ~/ws_poc/deployments/v1/gcp/distributed/backend && \
-          docker compose up -d"
+          sudo -i -u deploy bash -c 'cd /home/deploy/ws_poc/deployments/v1/gcp/distributed/backend && sudo docker-compose up -d'"
       - echo "⏳ Waiting for services to be ready..."
       - sleep 15
-      - task: :gcp:health:backend
+      - task: :health:backend
       - echo "✅ Backend services started"
 
   stop:backend:
@@ -28,8 +27,7 @@ tasks:
       - echo "⏸️  Stopping backend services on {{.BACKEND_INSTANCE}}..."
       - |
         gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
-          cd ~/ws_poc/deployments/v1/gcp/distributed/backend && \
-          docker compose down"
+          sudo -i -u deploy bash -c 'cd /home/deploy/ws_poc/deployments/v1/gcp/distributed/backend && sudo docker-compose down'"
       - echo "✅ Backend services stopped"
 
   restart:backend:
@@ -38,11 +36,10 @@ tasks:
       - echo "🔄 Restarting backend services on {{.BACKEND_INSTANCE}}..."
       - |
         gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
-          cd ~/ws_poc/deployments/v1/gcp/distributed/backend && \
-          docker compose restart"
+          sudo -i -u deploy bash -c 'cd /home/deploy/ws_poc/deployments/v1/gcp/distributed/backend && sudo docker-compose restart'"
       - echo "⏳ Waiting for services to be ready..."
       - sleep 15
-      - task: :gcp:health:backend
+      - task: :health:backend
       - echo "✅ Backend services restarted"
 
   # === WEBSOCKET SERVER ===
@@ -60,12 +57,10 @@ tasks:
         echo "Backend Internal IP: $BACKEND_IP"
 
         gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
-          export BACKEND_INTERNAL_IP=$BACKEND_IP && \
-          cd ~/ws_poc/deployments/v1/gcp/distributed/ws-server && \
-          docker compose up -d"
+          sudo -i -u deploy bash -c 'cd /home/deploy/ws_poc/deployments/v1/gcp/distributed/ws-server && export BACKEND_INTERNAL_IP=$BACKEND_IP && sudo docker-compose up -d'"
       - echo "⏳ Waiting for WebSocket server to be ready..."
       - sleep 10
-      - task: :gcp:health:ws
+      - task: :health:ws
       - echo "✅ WebSocket server started"
 
   stop:ws:
@@ -74,8 +69,7 @@ tasks:
       - echo "⏸️  Stopping WebSocket server on {{.WS_INSTANCE}}..."
       - |
         gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
-          cd ~/ws_poc/deployments/v1/gcp/distributed/ws-server && \
-          docker compose down"
+          sudo -i -u deploy bash -c 'cd /home/deploy/ws_poc/deployments/v1/gcp/distributed/ws-server && sudo docker-compose down'"
       - echo "✅ WebSocket server stopped"
 
   restart:ws:
@@ -84,11 +78,10 @@ tasks:
       - echo "🔄 Restarting WebSocket server on {{.WS_INSTANCE}}..."
       - |
         gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
-          cd ~/ws_poc/deployments/v1/gcp/distributed/ws-server && \
-          docker compose restart"
+          sudo -i -u deploy bash -c 'cd /home/deploy/ws_poc/deployments/v1/gcp/distributed/ws-server && sudo docker-compose restart'"
       - echo "⏳ Waiting for WebSocket server to be ready..."
       - sleep 10
-      - task: :gcp:health:ws
+      - task: :health:ws
       - echo "✅ WebSocket server restarted"
 
   # === ALL SERVICES ===
@@ -100,7 +93,7 @@ tasks:
       - task: start:ws
       - echo ""
       - echo "✅ All services started"
-      - task: :gcp:stats:urls
+      - task: :stats:urls
 
   stop:all:
     desc: Stop all services (backend + WebSocket server)
@@ -117,7 +110,7 @@ tasks:
       - task: restart:ws
       - echo ""
       - echo "✅ All services restarted"
-      - task: :gcp:stats:urls
+      - task: :stats:urls
 
   # === STATUS ===
 
@@ -132,8 +125,7 @@ tasks:
       - echo "📦 Backend containers ({{.BACKEND_INSTANCE}}):"
       - |
         gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
-          cd ~/ws_poc/deployments/v1/gcp/distributed/backend && \
-          docker compose ps"
+          sudo -i -u deploy bash -c 'cd /home/deploy/ws_poc/deployments/v1/gcp/distributed/backend && sudo docker-compose ps'"
 
   ps:ws:
     desc: Show running containers on WebSocket server instance
@@ -141,8 +133,7 @@ tasks:
       - echo "📦 WebSocket server containers ({{.WS_INSTANCE}}):"
       - |
         gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
-          cd ~/ws_poc/deployments/v1/gcp/distributed/ws-server && \
-          docker compose ps"
+          sudo -i -u deploy bash -c 'cd /home/deploy/ws_poc/deployments/v1/gcp/distributed/ws-server && sudo docker-compose ps'"
 
   ps:all:
     desc: Show running containers on all instances
@@ -158,29 +149,25 @@ tasks:
     cmds:
       - |
         gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
-          cd ~/ws_poc/deployments/v1/gcp/distributed/backend && \
-          docker compose logs -f"
+          sudo -i -u deploy bash -c 'cd /home/deploy/ws_poc/deployments/v1/gcp/distributed/backend && sudo docker-compose logs -f'"
 
   logs:ws:
     desc: View WebSocket server logs (follow mode)
     cmds:
       - |
         gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
-          cd ~/ws_poc/deployments/v1/gcp/distributed/ws-server && \
-          docker compose logs -f"
+          sudo -i -u deploy bash -c 'cd /home/deploy/ws_poc/deployments/v1/gcp/distributed/ws-server && sudo docker-compose logs -f'"
 
   logs:backend:tail:
     desc: View last 100 lines of backend logs
     cmds:
       - |
         gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
-          cd ~/ws_poc/deployments/v1/gcp/distributed/backend && \
-          docker compose logs --tail=100"
+          sudo -i -u deploy bash -c 'cd /home/deploy/ws_poc/deployments/v1/gcp/distributed/backend && sudo docker-compose logs --tail=100'"
 
   logs:ws:tail:
     desc: View last 100 lines of WebSocket server logs
     cmds:
       - |
         gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
-          cd ~/ws_poc/deployments/v1/gcp/distributed/ws-server && \
-          docker compose logs --tail=100"
+          sudo -i -u deploy bash -c 'cd /home/deploy/ws_poc/deployments/v1/gcp/distributed/ws-server && sudo docker-compose logs --tail=100'"
