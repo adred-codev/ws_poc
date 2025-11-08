@@ -74,11 +74,6 @@ tasks:
       - task: health:all
       - echo "✅ Rebuild complete"
 
-  show-urls:
-    desc: Display service URLs
-    cmds:
-      - task: :stats:urls
-
   infrastructure:
     desc: Complete infrastructure setup (instances + networking + IP)
     cmds:
