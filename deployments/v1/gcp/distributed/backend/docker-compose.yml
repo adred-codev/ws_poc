@@ -11,26 +11,37 @@ services:
     command:
       - redpanda
       - start
-      - --kafka-addr 0.0.0.0:9092
-      - --advertise-kafka-addr redpanda:9092
-      - --pandaproxy-addr 0.0.0.0:8082
-      - --advertise-pandaproxy-addr redpanda:8082
-      - --schema-registry-addr 0.0.0.0:8081
-      - --rpc-addr redpanda:33145
-      - --advertise-rpc-addr redpanda:33145
-      - --mode dev-container
-      - --smp 1
-      - --memory 450M
-      - --reserve-memory 50M
+      - --kafka-addr
+      - 0.0.0.0:9092
+      - --advertise-kafka-addr
+      - ${BACKEND_INTERNAL_IP:-redpanda}:9092
+      - --pandaproxy-addr
+      - 0.0.0.0:8082
+      - --advertise-pandaproxy-addr
+      - ${BACKEND_INTERNAL_IP:-redpanda}:8082
+      - --schema-registry-addr
+      - 0.0.0.0:8081
+      - --rpc-addr
+      - redpanda:33145
+      - --advertise-rpc-addr
+      - redpanda:33145
+      - --mode
+      - dev-container
+      - --smp
+      - "1"
+      - --memory
+      - 450M
+      - --reserve-memory
+      - 50M
       - --overprovisioned
+    volumes:
+      - redpanda_data:/var/lib/redpanda/data
     ports:
       - "0.0.0.0:9092:9092" # Kafka API (internal - for ws-go)
       - "0.0.0.0:19092:19092" # Kafka API (external - for local dev)
       - "0.0.0.0:18081:18081" # Schema Registry
       - "0.0.0.0:18082:18082" # HTTP Proxy
       - "0.0.0.0:9644:9644" # Admin API
-    volumes:
-      - redpanda_data:/var/lib/redpanda/data
     healthcheck:
       test:
         ["CMD-SHELL", "rpk cluster health | grep 'Healthy:.*true' || exit 1"]

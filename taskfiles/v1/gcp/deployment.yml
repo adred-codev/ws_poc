@@ -536,6 +536,14 @@ tasks:
           gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo -i -u deploy git clone -b {{.GIT_BRANCH}} -q $CLONE_URL /home/deploy/ws_poc" 2>&1 | grep -v "Cloning" | grep -v "remote" || true
         fi
 
+        # Get backend internal IP
+        BACKEND_IP=$(gcloud compute instances describe {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --format='get(networkInterfaces[0].networkIP)')
+        echo "📍 Backend internal IP: $BACKEND_IP"
+
+        # Create .env file with BACKEND_INTERNAL_IP for docker-compose
+        echo "📝 Creating .env file for docker-compose..."
+        gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo -i -u deploy bash -c 'echo \"BACKEND_INTERNAL_IP=$BACKEND_IP\" > /home/deploy/ws_poc/deployments/v1/gcp/distributed/backend/.env'" 2>/dev/null
+
         echo "🐳 Starting Docker services..."
         gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo -i -u deploy bash -c 'cd /home/deploy/ws_poc/deployments/v1/gcp/distributed/backend && docker-compose up -d 2>&1 | grep -E \"(Created|Started|Running)\"'" 2>/dev/null || true
         sleep 15
