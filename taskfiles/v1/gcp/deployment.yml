@@ -113,6 +113,38 @@ tasks:
 
   # === INFRASTRUCTURE SETUP (Individual Tasks) ===
 
+  fix-docker-group:
+    desc: Fix docker group for deploy user on existing instances (one-time migration)
+    cmds:
+      - |
+        echo "🔧 Ensuring deploy user has docker group access..."
+
+        # Fix backend instance
+        if gcloud compute instances describe {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} 2>/dev/null | grep -q "name:"; then
+          echo "📦 Fixing backend..."
+          gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} \
+            --command="sudo usermod -aG docker deploy 2>/dev/null || true" 2>/dev/null
+          echo "✅ Backend docker group updated"
+        fi
+
+        # Fix WS instance
+        if gcloud compute instances describe {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} 2>/dev/null | grep -q "name:"; then
+          echo "📦 Fixing WS server..."
+          gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} \
+            --command="sudo usermod -aG docker deploy 2>/dev/null || true" 2>/dev/null
+          echo "✅ WS server docker group updated"
+        fi
+
+        # Fix loadtest instance
+        if gcloud compute instances describe {{.LOADTEST_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} 2>/dev/null | grep -q "name:"; then
+          echo "📦 Fixing loadtest..."
+          gcloud compute ssh {{.LOADTEST_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} \
+            --command="sudo usermod -aG docker deploy 2>/dev/null || true" 2>/dev/null
+          echo "✅ Loadtest docker group updated"
+        fi
+
+        echo "✅ Docker group fix complete - deploy user can now run docker without sudo"
+
   create:backend:
     desc: Create backend GCP instance (e2-medium) - smart, idempotent
     cmds:
@@ -549,11 +581,11 @@ tasks:
         sleep 15
 
         # Create topics if needed
-        TOPICS=$(gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo docker exec redpanda rpk topic list 2>/dev/null | grep -q odin.trades && echo exists || echo missing" 2>/dev/null || echo "missing")
+        TOPICS=$(gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo -i -u deploy docker exec redpanda rpk topic list 2>/dev/null | grep -q odin.trades && echo exists || echo missing" 2>/dev/null || echo "missing")
 
         if [ "$TOPICS" = "missing" ]; then
           echo "📋 Creating Kafka topics..."
-          gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo docker exec redpanda rpk topic create odin.trades odin.liquidity odin.balances odin.metadata odin.social odin.community odin.creation odin.analytics --partitions 12 --replicas 1 2>&1 | grep TOPIC" 2>/dev/null || echo "⚠️  Failed to create topics"
+          gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo -i -u deploy docker exec redpanda rpk topic create odin.trades odin.liquidity odin.balances odin.metadata odin.social odin.community odin.creation odin.analytics --partitions 12 --replicas 1 2>&1 | grep TOPIC" 2>/dev/null || echo "⚠️  Failed to create topics"
         else
           echo "✅ Topics already exist"
         fi
@@ -625,12 +657,12 @@ tasks:
           gcloud compute ssh {{.LOADTEST_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo -i -u deploy git clone -b {{.GIT_BRANCH}} -q $CLONE_URL /home/deploy/ws_poc" 2>&1 | grep -v "Cloning" | grep -v "remote" || true
         fi
 
-        # Build Docker image (use sudo docker like old deployment - group membership not active yet)
+        # Build Docker image (deploy user in docker group, no sudo needed)
         echo "🐳 Building Docker image..."
-        gcloud compute ssh {{.LOADTEST_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo docker build -t loadtest /home/deploy/ws_poc/loadtest 2>&1 | tail -10" 2>/dev/null || true
+        gcloud compute ssh {{.LOADTEST_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo -i -u deploy docker build -t loadtest /home/deploy/ws_poc/loadtest 2>&1 | tail -10" 2>/dev/null || true
 
         # Verify image was built
-        IMAGE_EXISTS=$(gcloud compute ssh {{.LOADTEST_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo docker images -q loadtest 2>/dev/null" 2>/dev/null)
+        IMAGE_EXISTS=$(gcloud compute ssh {{.LOADTEST_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo -i -u deploy docker images -q loadtest 2>/dev/null" 2>/dev/null)
 
         if [ -n "$IMAGE_EXISTS" ]; then
           echo "✅ Load test Docker image ready"
