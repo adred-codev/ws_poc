@@ -74,7 +74,7 @@ services:
       - "0.0.0.0:3003:3003"
     environment:
       - KAFKA_BROKERS=redpanda:9092
-      - PORT=3003
+      - API_PORT=3003
       - NODE_ENV=production
     depends_on:
       redpanda:
