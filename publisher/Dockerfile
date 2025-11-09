@@ -3,14 +3,14 @@ FROM node:22-alpine AS builder
 
 WORKDIR /app
 
-# Copy package files from publisher directory
-COPY publisher/package*.json ./
+# Copy package files (context is already publisher directory)
+COPY package*.json ./
 
 # Install dependencies
 RUN npm ci
 
-# Copy source code from publisher directory
-COPY publisher/ .
+# Copy source code (context is already publisher directory)
+COPY . .
 
 # Build TypeScript
 RUN npm run build
