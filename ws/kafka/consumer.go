@@ -200,6 +200,13 @@ func (c *Consumer) processRecord(record *kgo.Record) {
 
 	// Increment processed count
 	c.incrementProcessed()
+
+	// Log every consumed message (visibility like publisher)
+	c.logger.Info().
+		Str("token_id", tokenID).
+		Str("event_type", eventType).
+		Str("topic", record.Topic).
+		Msg("Consumed Kafka message")
 }
 
 // GetMetrics returns current consumer metrics

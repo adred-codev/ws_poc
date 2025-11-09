@@ -863,6 +863,9 @@ func (s *Server) broadcast(subject string, message []byte) {
 			client.lastMessageSentAt = time.Now()
 			successCount++
 
+			// Log successful broadcast (visibility like publisher)
+			s.logger.Printf("📢 Broadcast to client %d: channel=%s", client.id, channel)
+
 		default:
 			// Buffer full - client can't keep up
 			// This indicates:
