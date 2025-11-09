@@ -623,7 +623,12 @@ tasks:
         fi
 
         echo "⚙️  Configuring environment..."
-        gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo -i -u deploy bash -c 'echo BACKEND_INTERNAL_IP=$BACKEND_IP > /home/deploy/ws_poc/deployments/v1/gcp/distributed/ws-server/.env.production && chmod 600 /home/deploy/ws_poc/deployments/v1/gcp/distributed/ws-server/.env.production'" 2>/dev/null
+        gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo -i -u deploy bash -c '
+          KAFKA_PORT=\$(grep \"^KAFKA_INTERNAL_PORT=\" /home/deploy/ws_poc/deployments/v1/shared/ports.env | cut -d\"=\" -f2)
+          echo \"BACKEND_INTERNAL_IP=$BACKEND_IP
+KAFKA_BROKERS=$BACKEND_IP:\${KAFKA_PORT}\" > /home/deploy/ws_poc/deployments/v1/gcp/distributed/ws-server/.env.production
+          chmod 600 /home/deploy/ws_poc/deployments/v1/gcp/distributed/ws-server/.env.production
+        '" 2>/dev/null
 
         echo "🐳 Starting Docker services..."
         gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo -i -u deploy bash -c 'cd /home/deploy/ws_poc/deployments/v1/gcp/distributed/ws-server && export BACKEND_INTERNAL_IP=$BACKEND_IP && docker-compose up -d 2>&1 | grep -E \"(Created|Started|Running)\"'" 2>/dev/null || true
