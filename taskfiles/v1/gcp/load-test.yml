@@ -49,6 +49,7 @@ tasks:
               --name loadtest-capacity \
               --network host \
               -e WS_URL=ws://$WS_IP:3004/ws \
+              -e HEALTH_URL=http://$WS_IP:3004/health \
               -e TARGET_CONNECTIONS=12000 \
               -e RAMP_RATE=100 \
               -e DURATION=1800 \
@@ -78,6 +79,7 @@ tasks:
               --name loadtest-capacity-short \
               --network host \
               -e WS_URL=ws://$WS_IP:3004/ws \
+              -e HEALTH_URL=http://$WS_IP:3004/health \
               -e TARGET_CONNECTIONS=12000 \
               -e RAMP_RATE=100 \
               -e DURATION=300 \
@@ -116,6 +118,7 @@ tasks:
               --name loadtest-stress \
               --network host \
               -e WS_URL=ws://$WS_IP:3004/ws \
+              -e HEALTH_URL=http://$WS_IP:3004/health \
               -e TARGET_CONNECTIONS=18000 \
               -e RAMP_RATE=200 \
               -e DURATION=1800 \
@@ -144,6 +147,7 @@ tasks:
               --name loadtest-stress-heavy \
               --network host \
               -e WS_URL=ws://$WS_IP:3004/ws \
+              -e HEALTH_URL=http://$WS_IP:3004/health \
               -e TARGET_CONNECTIONS=24000 \
               -e RAMP_RATE=200 \
               -e DURATION=1800 \
@@ -182,6 +186,7 @@ tasks:
               --name loadtest-custom \
               --network host \
               -e WS_URL=ws://$WS_IP:3004/ws \
+              -e HEALTH_URL=http://$WS_IP:3004/health \
               -e TARGET_CONNECTIONS={{.CONNECTIONS}} \
               -e RAMP_RATE={{.RAMP_RATE}} \
               -e DURATION={{.DURATION}} \
@@ -285,25 +290,27 @@ tasks:
           --zone={{.GCP_ZONE}} \
           --project={{.GCP_PROJECT}} \
           --command="sudo su - deploy -c '\
-            containers=\$(docker ps -f name=loadtest- --format \"{{.Names}}\") && \
+            containers=\$(docker ps -f name=loadtest- -q) && \
             if [ -n \"\$containers\" ]; then \
               echo \"📊 Active load test containers:\" && \
-              echo \"\$containers\" && \
+              docker ps -f name=loadtest- && \
               echo \"\" && \
-              for container in \$containers; do \
+              for container_id in \$containers; do \
+                container_name=\$(docker inspect --format=\"{{{{.Name}}}}\" \$container_id | sed \"s/^\///\") && \
                 echo \"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\" && \
-                echo \"📋 Logs from: \$container\" && \
+                echo \"📋 Logs from: \$container_name\" && \
                 echo \"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\" && \
-                docker logs --tail 50 \$container && \
+                docker logs --tail 50 \$container_id && \
                 echo \"\" ; \
               done ; \
             else \
               echo \"⚠️  No load test containers running\" && \
               echo \"\" && \
               echo \"Checking for stopped containers...\" && \
-              stopped=\$(docker ps -a -f name=loadtest- --format \"{{.Names}}\" | head -1) && \
+              stopped=\$(docker ps -a -f name=loadtest- -q | head -1) && \
               if [ -n \"\$stopped\" ]; then \
-                echo \"Last 50 lines from: \$stopped\" && \
+                stopped_name=\$(docker inspect --format=\"{{{{.Name}}}}\" \$stopped | sed \"s/^\///\") && \
+                echo \"Last 50 lines from: \$stopped_name\" && \
                 echo \"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\" && \
                 docker logs --tail 50 \$stopped ; \
               else \
