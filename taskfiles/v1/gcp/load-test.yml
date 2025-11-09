@@ -38,20 +38,21 @@ tasks:
         echo ""
         echo "🔍 Stopping any existing load tests on {{.LOADTEST_INSTANCE}}..."
 
-        # Stop existing tests and run new test
+        # Stop existing tests and run new test in Docker
         gcloud compute ssh {{.LOADTEST_INSTANCE}} \
           --zone={{.GCP_ZONE}} \
           --project={{.GCP_PROJECT}} \
           --command="sudo su - deploy -c '\
-            pkill -9 -f sustained-load-test 2>/dev/null || true && \
+            docker rm -f loadtest-capacity 2>/dev/null || true && \
             sleep 2 && \
-            cd ws_poc/loadtest && \
-            nohup ./sustained-load-test \
-              -url ws://$WS_IP:3004/ws \
-              -connections 12000 \
-              -ramp-rate 100 \
-              -duration 1800 \
-              > loadtest.log 2>&1 &' && \
+            docker run -d \
+              --name loadtest-capacity \
+              --network host \
+              -e WS_URL=ws://$WS_IP:3004/ws \
+              -e TARGET_CONNECTIONS=12000 \
+              -e RAMP_RATE=100 \
+              -e DURATION=1800 \
+              loadtest:latest' && \
             echo '' && \
             echo '✅ Load test started in background' && \
             echo '📊 Monitor with: task gcp:load-test:logs'"
@@ -71,15 +72,16 @@ tasks:
           --zone={{.GCP_ZONE}} \
           --project={{.GCP_PROJECT}} \
           --command="sudo su - deploy -c '\
-            pkill -9 -f sustained-load-test 2>/dev/null || true && \
+            docker rm -f loadtest-capacity-short 2>/dev/null || true && \
             sleep 2 && \
-            cd ws_poc/loadtest && \
-            nohup ./sustained-load-test \
-              -url ws://$WS_IP:3004/ws \
-              -connections 12000 \
-              -ramp-rate 100 \
-              -duration 300 \
-              > loadtest.log 2>&1 &' && \
+            docker run -d \
+              --name loadtest-capacity-short \
+              --network host \
+              -e WS_URL=ws://$WS_IP:3004/ws \
+              -e TARGET_CONNECTIONS=12000 \
+              -e RAMP_RATE=100 \
+              -e DURATION=300 \
+              loadtest:latest' && \
             echo '✅ Load test started' && \
             echo '📊 Monitor with: task gcp:load-test:logs'"
 
@@ -108,15 +110,16 @@ tasks:
           --zone={{.GCP_ZONE}} \
           --project={{.GCP_PROJECT}} \
           --command="sudo su - deploy -c '\
-            pkill -9 -f sustained-load-test 2>/dev/null || true && \
+            docker rm -f loadtest-stress 2>/dev/null || true && \
             sleep 2 && \
-            cd ws_poc/loadtest && \
-            nohup ./sustained-load-test \
-              -url ws://$WS_IP:3004/ws \
-              -connections 18000 \
-              -ramp-rate 200 \
-              -duration 1800 \
-              > loadtest.log 2>&1 &' && \
+            docker run -d \
+              --name loadtest-stress \
+              --network host \
+              -e WS_URL=ws://$WS_IP:3004/ws \
+              -e TARGET_CONNECTIONS=18000 \
+              -e RAMP_RATE=200 \
+              -e DURATION=1800 \
+              loadtest:latest' && \
             echo '✅ Stress test started' && \
             echo '📊 Monitor with: task gcp:load-test:logs'"
 
@@ -135,15 +138,16 @@ tasks:
           --zone={{.GCP_ZONE}} \
           --project={{.GCP_PROJECT}} \
           --command="sudo su - deploy -c '\
-            pkill -9 -f sustained-load-test 2>/dev/null || true && \
+            docker rm -f loadtest-stress-heavy 2>/dev/null || true && \
             sleep 2 && \
-            cd ws_poc/loadtest && \
-            nohup ./sustained-load-test \
-              -url ws://$WS_IP:3004/ws \
-              -connections 24000 \
-              -ramp-rate 200 \
-              -duration 1800 \
-              > loadtest.log 2>&1 &' && \
+            docker run -d \
+              --name loadtest-stress-heavy \
+              --network host \
+              -e WS_URL=ws://$WS_IP:3004/ws \
+              -e TARGET_CONNECTIONS=24000 \
+              -e RAMP_RATE=200 \
+              -e DURATION=1800 \
+              loadtest:latest' && \
             echo '✅ Heavy stress test started' && \
             echo '📊 Monitor with: task gcp:load-test:logs'"
 
@@ -172,15 +176,16 @@ tasks:
           --zone={{.GCP_ZONE}} \
           --project={{.GCP_PROJECT}} \
           --command="sudo su - deploy -c '\
-            pkill -9 -f sustained-load-test 2>/dev/null || true && \
+            docker rm -f loadtest-custom 2>/dev/null || true && \
             sleep 2 && \
-            cd ws_poc/loadtest && \
-            nohup ./sustained-load-test \
-              -url ws://$WS_IP:3004/ws \
-              -connections {{.CONNECTIONS}} \
-              -ramp-rate {{.RAMP_RATE}} \
-              -duration {{.DURATION}} \
-              > loadtest.log 2>&1 &' && \
+            docker run -d \
+              --name loadtest-custom \
+              --network host \
+              -e WS_URL=ws://$WS_IP:3004/ws \
+              -e TARGET_CONNECTIONS={{.CONNECTIONS}} \
+              -e RAMP_RATE={{.RAMP_RATE}} \
+              -e DURATION={{.DURATION}} \
+              loadtest:latest' && \
             echo '✅ Custom test started' && \
             echo '📊 Monitor with: task gcp:load-test:logs'"
 
@@ -254,16 +259,17 @@ tasks:
           --zone={{.GCP_ZONE}} \
           --project={{.GCP_PROJECT}} \
           --command="sudo su - deploy -c '\
-            count=\$(pgrep -f sustained-load-test | wc -l) && \
+            count=\$(docker ps -q -f name=loadtest- | wc -l) && \
             if [ \"\$count\" -gt 0 ]; then \
-              echo \"🛑 Found \$count load test process(es)\" && \
-              pkill -9 -f sustained-load-test && \
+              echo \"🛑 Found \$count load test container(s)\" && \
+              docker stop \$(docker ps -q -f name=loadtest-) && \
+              docker rm \$(docker ps -aq -f name=loadtest-) && \
               sleep 2 && \
-              remaining=\$(pgrep -f sustained-load-test | wc -l) && \
+              remaining=\$(docker ps -q -f name=loadtest- | wc -l) && \
               if [ \"\$remaining\" -eq 0 ]; then \
                 echo \"✅ All load tests stopped\" ; \
               else \
-                echo \"⚠️  Warning: \$remaining process(es) still running\" ; \
+                echo \"⚠️  Warning: \$remaining container(s) still running\" ; \
               fi ; \
             else \
               echo \"✅ No load tests running\" ; \
@@ -279,21 +285,33 @@ tasks:
           --zone={{.GCP_ZONE}} \
           --project={{.GCP_PROJECT}} \
           --command="sudo su - deploy -c '\
-            if pgrep -f sustained-load-test > /dev/null; then \
-              echo \"📊 Load test is currently running\" && \
+            containers=\$(docker ps -f name=loadtest- --format \"{{.Names}}\") && \
+            if [ -n \"\$containers\" ]; then \
+              echo \"📊 Active load test containers:\" && \
+              echo \"\$containers\" && \
               echo \"\" && \
-              echo \"Last 50 lines of log:\" && \
-              echo \"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\" && \
-              tail -50 ~/ws_poc/loadtest/loadtest.log 2>/dev/null || echo \"No log file found\" ; \
+              for container in \$containers; do \
+                echo \"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\" && \
+                echo \"📋 Logs from: \$container\" && \
+                echo \"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\" && \
+                docker logs --tail 50 \$container && \
+                echo \"\" ; \
+              done ; \
             else \
-              echo \"⚠️  No load test currently running\" && \
+              echo \"⚠️  No load test containers running\" && \
               echo \"\" && \
-              echo \"Last 50 lines of previous run:\" && \
-              echo \"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\" && \
-              tail -50 ~/ws_poc/loadtest/loadtest.log 2>/dev/null || echo \"No log file found\" ; \
+              echo \"Checking for stopped containers...\" && \
+              stopped=\$(docker ps -a -f name=loadtest- --format \"{{.Names}}\" | head -1) && \
+              if [ -n \"\$stopped\" ]; then \
+                echo \"Last 50 lines from: \$stopped\" && \
+                echo \"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\" && \
+                docker logs --tail 50 \$stopped ; \
+              else \
+                echo \"No load test containers found (running or stopped)\" ; \
+              fi ; \
             fi'"
       - echo ""
-      - 'echo "💡 To follow live logs, SSH in and run:"'
+      - 'echo "💡 To follow live logs, run:"'
       - 'echo "   gcloud compute ssh {{.LOADTEST_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}}"'
       - 'echo "   sudo su - deploy"'
-      - 'echo "   tail -f ~/ws_poc/loadtest/loadtest.log"'
+      - 'echo "   docker logs -f loadtest-capacity  # or loadtest-stress, etc."'
