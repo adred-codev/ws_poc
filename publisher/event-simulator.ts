@@ -4,6 +4,10 @@ export class EventSimulator {
   private tokenIds: string[];
   private isRunning: boolean = false;
   private intervalId?: NodeJS.Timeout;
+  private statsIntervalId?: NodeJS.Timeout;
+  private eventCount: number = 0;
+  private lastLogTime: number = 0;
+  private lastEventCount: number = 0;
 
   constructor(tokenIds: string[]) {
     this.tokenIds = tokenIds;
@@ -24,12 +28,37 @@ export class EventSimulator {
     this.isRunning = true;
     const intervalMs = 1000 / eventsPerSecond;
 
+    // Reset counters
+    this.eventCount = 0;
+    this.lastLogTime = Date.now();
+    this.lastEventCount = 0;
+
     console.log(`[EventSimulator] Starting at ${eventsPerSecond} events/sec`);
 
+    // Start event generation
     this.intervalId = setInterval(() => {
       const event = this.generateRandomEvent();
+      this.eventCount++;
+      console.log(
+        `[EventSimulator] Generated ${event.type} for token ${event.tokenId}`
+      );
       void onEvent(event);
     }, intervalMs);
+
+    // Start periodic stats logging (every 10 seconds)
+    this.statsIntervalId = setInterval(() => {
+      const now = Date.now();
+      const elapsedSeconds = (now - this.lastLogTime) / 1000;
+      const eventsGenerated = this.eventCount - this.lastEventCount;
+      const actualRate = eventsGenerated / elapsedSeconds;
+
+      console.log(
+        `[EventSimulator] Generated ${eventsGenerated} events in last ${elapsedSeconds.toFixed(1)}s (${actualRate.toFixed(1)} events/sec) | Total: ${this.eventCount}`
+      );
+
+      this.lastLogTime = now;
+      this.lastEventCount = this.eventCount;
+    }, 10000); // Log every 10 seconds
   }
 
   /**
@@ -45,8 +74,15 @@ export class EventSimulator {
       this.intervalId = undefined;
     }
 
+    if (this.statsIntervalId) {
+      clearInterval(this.statsIntervalId);
+      this.statsIntervalId = undefined;
+    }
+
     this.isRunning = false;
-    console.log('[EventSimulator] Stopped');
+    console.log(
+      `[EventSimulator] Stopped after generating ${this.eventCount} total events`
+    );
   }
 
   /**

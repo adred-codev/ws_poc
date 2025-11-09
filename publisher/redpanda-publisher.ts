@@ -9,6 +9,10 @@ export class RedpandaPublisher {
   private kafka: Kafka;
   private producer: Producer;
   private isConnected: boolean = false;
+  private publishCount: number = 0;
+  private lastLogTime: number = 0;
+  private lastPublishCount: number = 0;
+  private statsIntervalId?: NodeJS.Timeout;
 
   constructor(brokers: string[]) {
     this.kafka = new Kafka({
@@ -33,7 +37,28 @@ export class RedpandaPublisher {
 
     await this.producer.connect();
     this.isConnected = true;
+    this.publishCount = 0;
+    this.lastLogTime = Date.now();
+    this.lastPublishCount = 0;
+
     console.log('[RedpandaPublisher] Connected to Redpanda');
+
+    // Start periodic stats logging (every 10 seconds)
+    this.statsIntervalId = setInterval(() => {
+      const now = Date.now();
+      const elapsedSeconds = (now - this.lastLogTime) / 1000;
+      const eventsPublished = this.publishCount - this.lastPublishCount;
+      const actualRate = eventsPublished / elapsedSeconds;
+
+      if (eventsPublished > 0) {
+        console.log(
+          `[RedpandaPublisher] Published ${eventsPublished} events in last ${elapsedSeconds.toFixed(1)}s (${actualRate.toFixed(1)} events/sec) | Total: ${this.publishCount}`
+        );
+      }
+
+      this.lastLogTime = now;
+      this.lastPublishCount = this.publishCount;
+    }, 10000); // Log every 10 seconds
   }
 
   async disconnect(): Promise<void> {
@@ -41,9 +66,16 @@ export class RedpandaPublisher {
       return;
     }
 
+    if (this.statsIntervalId) {
+      clearInterval(this.statsIntervalId);
+      this.statsIntervalId = undefined;
+    }
+
     await this.producer.disconnect();
     this.isConnected = false;
-    console.log('[RedpandaPublisher] Disconnected from Redpanda');
+    console.log(
+      `[RedpandaPublisher] Disconnected from Redpanda after publishing ${this.publishCount} total events`
+    );
   }
 
   /**
@@ -73,6 +105,13 @@ export class RedpandaPublisher {
       topic,
       messages: [message],
     });
+
+    this.publishCount++;
+
+    // Log every publish just like NATS did
+    console.log(
+      `[RedpandaPublisher] Published ${event.type} for token ${event.tokenId} to ${topic}`
+    );
   }
 
   /**
