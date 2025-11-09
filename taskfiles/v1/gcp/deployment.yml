@@ -572,9 +572,17 @@ tasks:
         BACKEND_IP=$(gcloud compute instances describe {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --format='get(networkInterfaces[0].networkIP)')
         echo "📍 Backend internal IP: $BACKEND_IP"
 
+        # Get WS server internal IP for Prometheus scrape configuration
+        WS_IP=$(gcloud compute instances describe {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --format='get(networkInterfaces[0].networkIP)')
+        echo "📍 WS server internal IP: $WS_IP"
+
         # Create .env file with BACKEND_INTERNAL_IP for docker-compose
         echo "📝 Creating .env file for docker-compose..."
         gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo -i -u deploy bash -c 'echo \"BACKEND_INTERNAL_IP=$BACKEND_IP\" > /home/deploy/ws_poc/deployments/v1/gcp/distributed/backend/.env'" 2>/dev/null
+
+        # Substitute WS_GO_INTERNAL_IP in prometheus.yml before starting services
+        echo "📝 Configuring Prometheus scrape targets..."
+        gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo -i -u deploy bash -c 'cd /home/deploy/ws_poc/deployments/v1/gcp/distributed/backend && sed -i.bak \"s/\\\${WS_GO_INTERNAL_IP}/$WS_IP/g\" prometheus.yml && echo \"✅ Prometheus config updated: WS server at $WS_IP:3004\"'" 2>/dev/null
 
         echo "🐳 Starting Docker services..."
         gcloud compute ssh {{.BACKEND_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo -i -u deploy bash -c 'cd /home/deploy/ws_poc/deployments/v1/gcp/distributed/backend && docker-compose up -d 2>&1 | grep -E \"(Created|Started|Running)\"'" 2>/dev/null || true
