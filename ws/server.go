@@ -180,23 +180,10 @@ func NewServer(config ServerConfig) (*Server, error) {
 	// Initialize Kafka consumer
 	if len(config.KafkaBrokers) > 0 {
 		// Create broadcast function that will be called for each Kafka message
-		// CRITICAL: Submit to worker pool to avoid blocking Kafka consumer
-		// Without this, Kafka consumer thread blocks on broadcast (2-3ms per message)
-		// limiting throughput to ~300-400 msg/sec regardless of CPU availability
 		broadcastFunc := func(tokenID string, eventType string, message []byte) {
 			// Format subject as: "odin.token.{tokenID}.{eventType}"
 			subject := fmt.Sprintf("odin.token.%s.%s", tokenID, eventType)
-
-			// Capture variables for closure (avoid race conditions)
-			subjectCopy := subject
-			messageCopy := make([]byte, len(message))
-			copy(messageCopy, message)
-
-			// Submit to worker pool for async processing
-			// This allows Kafka consumer to continue polling without blocking
-			s.workerPool.Submit(func() {
-				s.broadcast(subjectCopy, messageCopy)
-			})
+			s.broadcast(subject, message)
 		}
 
 		consumer, err := kafka.NewConsumer(kafka.ConsumerConfig{
@@ -844,55 +831,42 @@ func (s *Server) broadcast(subject string, message []byte) {
 	totalCount := len(subscribers)
 	successCount := 0
 
-	// CRITICAL OPTIMIZATION: Serialize message ONCE for all clients
-	// Without this optimization:
-	//   - 2,200 clients × 25 msg/sec = 55,000 json.Marshal() calls/sec
-	//   - 55,000 × 25μs = 1.375 CPU seconds/second = 137.5% CPU (impossible on 1 core!)
-	//   - Result: Server plateaus at ~2,200 connections @ 100% CPU
-	//
-	// With this optimization:
-	//   - 25 msg/sec × 1 marshal/msg = 25 json.Marshal() calls/sec
-	//   - 25 × 25μs = 0.625ms CPU/second = 0.0625% CPU
-	//   - Result: 99.95% reduction in serialization overhead
-	//
-	// Trade-off: All clients receive same sequence number (0) instead of unique per-client sequences
-	// This is acceptable because:
-	//   - Replay buffer functionality preserved (clients can still replay)
-	//   - Sequence numbers weren't critical for this use case
-	//   - Performance gain enables 12K connections @ ~30% CPU vs 2.2K @ 100%
-	baseEnvelope := &MessageEnvelope{
-		Seq:       0, // Shared sequence for all clients (acceptable trade-off for 160x performance gain)
-		Timestamp: time.Now().UnixMilli(),
-		Type:      "price:update",
-		Priority:  PRIORITY_HIGH,
-		Data:      json.RawMessage(message),
-	}
-
-	// Serialize ONCE for all clients (not once per client!)
-	sharedData, err := baseEnvelope.Serialize()
-	if err != nil {
-		RecordSerializationError(ErrorSeverityCritical)
-		s.logger.Error().
-			Err(err).
-			Str("channel", channel).
-			Int("subscribers", totalCount).
-			Msg("Failed to serialize broadcast message - CRITICAL: affects all subscribers")
-		return // Cannot broadcast if serialization fails
-	}
-
 	// Iterate ONLY subscribed clients (not all clients!)
 	for _, client := range subscribers {
+		// Wrap raw Kafka message in envelope with sequence number
+		// Message type: "price:update" (could be parsed from subject)
+		// Priority: HIGH (trading data is critical but not life-or-death)
+		envelope, err := WrapMessage(message, "price:update", PRIORITY_HIGH, client.seqGen)
+		if err != nil {
+			RecordBroadcastError(ErrorSeverityWarning)
+			s.logger.Error().
+				Int64("client_id", client.id).
+				Err(err).
+				Msg("Failed to wrap message")
+			continue // Skip to next client
+		}
+
 		// Add to replay buffer BEFORE sending
 		// Critical: If send fails, client can request replay
-		// All clients get same envelope (seq=0) but replay still works
-		client.replayBuffer.Add(baseEnvelope)
+		// If we added AFTER send, failed sends wouldn't be replayable
+		client.replayBuffer.Add(envelope)
+
+		// Serialize envelope to JSON for WebSocket transmission
+		data, err := envelope.Serialize()
+		if err != nil {
+			RecordSerializationError(ErrorSeverityWarning)
+			s.logger.Error().
+				Int64("client_id", client.id).
+				Err(err).
+				Msg("Failed to serialize message")
+			continue // Skip to next client
+		}
 
 		// Attempt to send - COMPLETELY NON-BLOCKING
 		// Critical fix: Do not use time.After() which blocks the entire broadcast
 		// Instead, immediately detect full buffers and mark client as slow
-		// Send pre-serialized data (same bytes for all clients - no per-client marshaling!)
 		select {
-		case client.send <- sharedData:
+		case client.send <- data:
 			// Success - message queued for writePump to send
 			// Reset failure counter (client is healthy)
 			atomic.StoreInt32(&client.sendAttempts, 0)
