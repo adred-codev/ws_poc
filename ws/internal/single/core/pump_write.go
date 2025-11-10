@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bufio"
 	"sync/atomic"
 	"time"
 
@@ -9,13 +10,14 @@ import (
 	"github.com/gobwas/ws/wsutil"
 )
 
-// writePump writes messages to the WebSocket connection (HOT PATH - 97% CPU)
+// writePump batches messages and writes them to the WebSocket connection.
+// This is a hot path and has been optimized to reduce system calls.
 func (s *Server) writePump(c *Client) {
+	// Use a buffered writer to batch writes and reduce syscalls.
+	writer := bufio.NewWriter(c.conn)
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
-		// Use sync.Once to ensure connection is only closed once
-		// Prevents race condition with readPump also trying to close
 		c.closeOnce.Do(func() {
 			if c.conn != nil {
 				c.conn.Close()
@@ -27,34 +29,18 @@ func (s *Server) writePump(c *Client) {
 		select {
 		case message, ok := <-c.send:
 			if !ok {
-				// The server closed the channel.
-				s.logger.Debug().
-					Int64("client_id", c.id).
-					Str("reason", "send_channel_closed").
-					Msg("Client send channel closed, disconnecting")
-				if c.conn != nil {
-					wsutil.WriteServerMessage(c.conn, ws.OpClose, []byte{})
-				}
+				s.logger.Debug().Int64("client_id", c.id).Msg("Send channel closed")
+				wsutil.WriteServerMessage(c.conn, ws.OpClose, []byte{})
 				return
 			}
 
-			if c.conn == nil {
-				s.logger.Warn().
-					Int64("client_id", c.id).
-					Str("reason", "connection_nil").
-					Msg("Client connection is nil in writePump")
-				return
-			}
-
+			// Set a deadline for the write operation.
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-			err := wsutil.WriteServerMessage(c.conn, ws.OpText, message)
+
+			// Write the first message
+			err := wsutil.WriteServerMessage(writer, ws.OpText, message)
 			if err != nil {
-				s.logger.Debug().
-					Int64("client_id", c.id).
-					Err(err).
-					Str("reason", "write_error").
-					Int("message_size", len(message)).
-					Msg("Failed to write message to client")
+				s.logger.Debug().Err(err).Int64("client_id", c.id).Msg("Failed to write message")
 				return
 			}
 			atomic.AddInt64(&s.stats.MessagesSent, 1)
@@ -62,30 +48,39 @@ func (s *Server) writePump(c *Client) {
 			monitoring.UpdateMessageMetrics(1, 0)
 			monitoring.UpdateBytesMetrics(int64(len(message)), 0)
 
-		case <-ticker.C:
-			if c.conn == nil {
-				s.logger.Warn().
-					Int64("client_id", c.id).
-					Str("reason", "connection_nil_ping").
-					Msg("Client connection is nil during ping")
+			// Batch additional messages from the channel.
+			n := len(c.send)
+			for i := 0; i < n; i++ {
+				message = <-c.send
+				err := wsutil.WriteServerMessage(writer, ws.OpText, message)
+				if err != nil {
+					s.logger.Debug().Err(err).Int64("client_id", c.id).Msg("Failed to write message")
+					return
+				}
+				atomic.AddInt64(&s.stats.MessagesSent, 1)
+				atomic.AddInt64(&s.stats.BytesSent, int64(len(message)))
+				monitoring.UpdateMessageMetrics(1, 0)
+				monitoring.UpdateBytesMetrics(int64(len(message)), 0)
+			}
+
+			// Flush the buffer to send all batched messages.
+			if err := writer.Flush(); err != nil {
+				s.logger.Debug().Err(err).Int64("client_id", c.id).Msg("Failed to flush writer")
 				return
 			}
+
+		case <-ticker.C:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := wsutil.WriteServerMessage(c.conn, ws.OpPing, nil); err != nil {
-				s.logger.Debug().
-					Int64("client_id", c.id).
-					Err(err).
-					Str("reason", "ping_write_error").
-					Msg("Failed to send ping to client")
+				s.logger.Debug().Err(err).Int64("client_id", c.id).Msg("Failed to send ping")
 				return
 			}
 		}
 	}
 }
 
-// extractChannel extracts the hierarchical channel identifier from a Kafka topic subject
-// Subject format: "odin.token.BTC.trade" → extracts "BTC.trade"
-//
+
+
 // Subject structure:
 // - Part 0: Namespace ("odin")
 // - Part 1: Type ("token")
