@@ -192,6 +192,8 @@ func NewServer(config ServerConfig) (*Server, error) {
 			Topics:        kafka.AllTopics(),
 			Logger:        &logger,
 			Broadcast:     broadcastFunc,
+			ResourceGuard: s.resourceGuard, // Enable rate limiting and CPU brake
+			WorkerPool:    s.workerPool,    // Enable async processing (192 workers)
 		})
 		if err != nil {
 			s.auditLogger.Critical("KafkaConnectionFailed", "Failed to create Kafka consumer", map[string]any{

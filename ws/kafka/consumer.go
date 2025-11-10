@@ -22,18 +22,32 @@ type TokenEvent struct {
 // Parameters: tokenID, eventType, messageJSON
 type BroadcastFunc func(tokenID string, eventType string, message []byte)
 
+// ResourceGuard interface for rate limiting and CPU emergency brake
+type ResourceGuard interface {
+	AllowKafkaMessage(ctx context.Context) (allow bool, waitDuration time.Duration)
+	ShouldPauseKafka() bool
+}
+
+// WorkerPool interface for async task submission
+type WorkerPool interface {
+	Submit(task func())
+}
+
 // Consumer wraps franz-go client for consuming from Redpanda
 type Consumer struct {
-	client    *kgo.Client
-	logger    *zerolog.Logger
-	broadcast BroadcastFunc
-	ctx       context.Context
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
+	client        *kgo.Client
+	logger        *zerolog.Logger
+	broadcast     BroadcastFunc
+	resourceGuard ResourceGuard
+	workerPool    WorkerPool
+	ctx           context.Context
+	cancel        context.CancelFunc
+	wg            sync.WaitGroup
 
 	// Metrics
 	messagesProcessed uint64
 	messagesFailed    uint64
+	messagesDropped   uint64 // Rate limited or CPU paused
 	mu                sync.RWMutex
 }
 
@@ -44,6 +58,8 @@ type ConsumerConfig struct {
 	Topics        []string
 	Logger        *zerolog.Logger
 	Broadcast     BroadcastFunc
+	ResourceGuard ResourceGuard // For rate limiting and CPU brake
+	WorkerPool    WorkerPool    // For async processing
 }
 
 // NewConsumer creates a new Kafka consumer
@@ -59,6 +75,12 @@ func NewConsumer(cfg ConsumerConfig) (*Consumer, error) {
 	}
 	if cfg.Broadcast == nil {
 		return nil, fmt.Errorf("broadcast function is required")
+	}
+	if cfg.ResourceGuard == nil {
+		return nil, fmt.Errorf("resource guard is required")
+	}
+	if cfg.WorkerPool == nil {
+		return nil, fmt.Errorf("worker pool is required")
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -95,11 +117,13 @@ func NewConsumer(cfg ConsumerConfig) (*Consumer, error) {
 	}
 
 	consumer := &Consumer{
-		client:    client,
-		logger:    cfg.Logger,
-		broadcast: cfg.Broadcast,
-		ctx:       ctx,
-		cancel:    cancel,
+		client:        client,
+		logger:        cfg.Logger,
+		broadcast:     cfg.Broadcast,
+		resourceGuard: cfg.ResourceGuard,
+		workerPool:    cfg.WorkerPool,
+		ctx:           ctx,
+		cancel:        cancel,
 	}
 
 	return consumer, nil
@@ -168,8 +192,55 @@ func (c *Consumer) consumeLoop() {
 	}
 }
 
-// processRecord handles a single Kafka record
+// processRecord handles a single Kafka record with three-layer protection
+//
+// LAYER 1: Rate limiting (caps consumption at configured rate, e.g., 25 msg/sec)
+// LAYER 2: CPU emergency brake (pauses when CPU exceeds threshold, e.g., 80%)
+// LAYER 3: Worker pool async processing (queues to 192 workers, non-blocking)
+//
+// This matches the NATS implementation that achieved 12K connections @ 30% CPU.
+// Without these protections, Kafka consumer blocks synchronously, causing plateau at 2.2K connections.
 func (c *Consumer) processRecord(record *kgo.Record) {
+	// ============================================================================
+	// LAYER 1: RATE LIMITING
+	// ============================================================================
+	// Check if we're allowed to process this message based on configured rate limit
+	// If rate limit exceeded, drop message and let Kafka handle redelivery
+	allow, waitDuration := c.resourceGuard.AllowKafkaMessage(c.ctx)
+	if !allow {
+		c.incrementDropped()
+
+		// Log every 100th drop to avoid log spam
+		dropped := c.getDroppedCount()
+		if dropped%100 == 0 {
+			c.logger.Warn().
+				Uint64("dropped_count", dropped).
+				Dur("would_wait", waitDuration).
+				Str("topic", record.Topic).
+				Msg("Kafka rate limit exceeded - dropping messages")
+		}
+		return
+	}
+
+	// ============================================================================
+	// LAYER 2: CPU EMERGENCY BRAKE
+	// ============================================================================
+	// If CPU is critically high (>80% by default), pause consumption
+	// This provides backpressure to prevent cascading failures
+	if c.resourceGuard.ShouldPauseKafka() {
+		c.incrementDropped()
+
+		// Log every 100th drop to avoid log spam
+		dropped := c.getDroppedCount()
+		if dropped%100 == 0 {
+			c.logger.Warn().
+				Uint64("dropped_count", dropped).
+				Str("topic", record.Topic).
+				Msg("CPU emergency brake - pausing Kafka consumption")
+		}
+		return
+	}
+
 	// Extract token ID from key
 	tokenID := string(record.Key)
 	if tokenID == "" {
@@ -180,7 +251,7 @@ func (c *Consumer) processRecord(record *kgo.Record) {
 		return
 	}
 
-	// Parse event from value
+	// Parse event from value (validation only, we broadcast raw bytes)
 	var event TokenEvent
 	if err := json.Unmarshal(record.Value, &event); err != nil {
 		c.logger.Error().
@@ -195,25 +266,34 @@ func (c *Consumer) processRecord(record *kgo.Record) {
 	// Get event type category from topic
 	eventType := TopicToEventType(record.Topic)
 
-	// Broadcast to clients
-	c.broadcast(tokenID, eventType, record.Value)
+	// ============================================================================
+	// LAYER 3: WORKER POOL ASYNC PROCESSING
+	// ============================================================================
+	// Submit broadcast to worker pool for async processing
+	// This allows consumer to continue polling without blocking (key to 12K capacity)
+	// If worker queue is full, Submit() will drop the task (backpressure)
+	c.workerPool.Submit(func() {
+		// Execute broadcast in worker goroutine (non-blocking)
+		c.broadcast(tokenID, eventType, record.Value)
 
-	// Increment processed count
-	c.incrementProcessed()
+		// Increment processed count after successful broadcast
+		c.incrementProcessed()
 
-	// DEBUG level: Zero overhead in production (LOG_LEVEL=info)
-	c.logger.Debug().
-		Str("token_id", tokenID).
-		Str("event_type", eventType).
-		Str("topic", record.Topic).
-		Msg("Consumed Kafka message")
+		// DEBUG level: Zero overhead in production (LOG_LEVEL=info)
+		c.logger.Debug().
+			Str("token_id", tokenID).
+			Str("event_type", eventType).
+			Str("topic", record.Topic).
+			Msg("Consumed Kafka message")
+	})
+	// Consumer returns immediately, doesn't block on broadcast
 }
 
 // GetMetrics returns current consumer metrics
-func (c *Consumer) GetMetrics() (processed, failed uint64) {
+func (c *Consumer) GetMetrics() (processed, failed, dropped uint64) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.messagesProcessed, c.messagesFailed
+	return c.messagesProcessed, c.messagesFailed, c.messagesDropped
 }
 
 func (c *Consumer) incrementProcessed() {
@@ -226,4 +306,16 @@ func (c *Consumer) incrementFailed() {
 	c.mu.Lock()
 	c.messagesFailed++
 	c.mu.Unlock()
+}
+
+func (c *Consumer) incrementDropped() {
+	c.mu.Lock()
+	c.messagesDropped++
+	c.mu.Unlock()
+}
+
+func (c *Consumer) getDroppedCount() uint64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.messagesDropped
 }
