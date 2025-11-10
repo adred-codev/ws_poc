@@ -91,7 +91,7 @@ func main() {
 		LogFormat: LogFormat(cfg.LogFormat),
 	}
 
-	server, err := NewServer(serverConfig, logger)
+	server, err := NewServer(serverConfig)
 	if err != nil {
 		logger.Fatalf("Failed to create server: %v", err)
 	}

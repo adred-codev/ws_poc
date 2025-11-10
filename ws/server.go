@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -68,8 +67,7 @@ type ServerConfig struct {
 
 type Server struct {
 	config        ServerConfig
-	logger        *log.Logger    // Old logger (for backwards compat)
-	structLogger  zerolog.Logger // New structured logger for Loki
+	logger        zerolog.Logger // Structured logger
 	listener      net.Listener
 	kafkaConsumer *kafka.Consumer
 	kafkaPaused   int32 // Atomic flag: 1 = paused, 0 = active
@@ -132,11 +130,11 @@ type Stats struct {
 	DroppedBroadcastLogCounter int64 // Counter for sampled logging (every 100th drop)
 }
 
-func NewServer(config ServerConfig, logger *log.Logger) (*Server, error) {
+func NewServer(config ServerConfig) (*Server, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Initialize structured logger for Loki
-	structLogger := NewLogger(LoggerConfig{
+	// Initialize structured logger
+	logger := NewLogger(LoggerConfig{
 		Level:  config.LogLevel,
 		Format: config.LogFormat,
 	})
@@ -145,15 +143,14 @@ func NewServer(config ServerConfig, logger *log.Logger) (*Server, error) {
 
 	s := &Server{
 		config:            config,
-		logger:            logger,       // Old logger (backwards compat)
-		structLogger:      structLogger, // New structured logger
+		logger:            logger,
 		ctx:               ctx,
 		cancel:            cancel,
 		bufferPool:        bufferPool,
 		connections:       NewConnectionPool(config.MaxConnections, bufferPool),
 		connectionsSem:    make(chan struct{}, config.MaxConnections),
 		subscriptionIndex: NewSubscriptionIndex(), // Fast channel → subscribers lookup
-		workerPool:        NewWorkerPool(config.WorkerCount, config.WorkerQueueSize, structLogger),
+		workerPool:        NewWorkerPool(config.WorkerCount, config.WorkerQueueSize, logger),
 		rateLimiter:       NewRateLimiter(),
 		stats: &Stats{
 			StartTime:                  time.Now(),
@@ -169,9 +166,9 @@ func NewServer(config ServerConfig, logger *log.Logger) (*Server, error) {
 	s.metricsCollector = NewMetricsCollector(s)
 
 	// Initialize ResourceGuard with static configuration
-	s.resourceGuard = NewResourceGuard(config, structLogger, &s.stats.CurrentConnections)
+	s.resourceGuard = NewResourceGuard(config, logger, &s.stats.CurrentConnections)
 
-	structLogger.Info().
+	logger.Info().
 		Str("addr", config.Addr).
 		Int("max_connections", config.MaxConnections).
 		Int("worker_count", config.WorkerCount).
@@ -193,7 +190,7 @@ func NewServer(config ServerConfig, logger *log.Logger) (*Server, error) {
 			Brokers:       config.KafkaBrokers,
 			ConsumerGroup: config.ConsumerGroup,
 			Topics:        kafka.AllTopics(),
-			Logger:        &structLogger,
+			Logger:        &logger,
 			Broadcast:     broadcastFunc,
 		})
 		if err != nil {
@@ -226,7 +223,9 @@ func (s *Server) Start() error {
 	}
 	s.listener = listener
 
-	s.logger.Printf("Server listening on %s", s.config.Addr)
+	s.logger.Info().
+		Str("address", s.config.Addr).
+		Msg("Server listening")
 
 	s.workerPool.Start(s.ctx)
 
@@ -238,7 +237,8 @@ func (s *Server) Start() error {
 			})
 			return fmt.Errorf("failed to start kafka consumer: %w", err)
 		}
-		s.logger.Printf("✅ Started Kafka consumer for all topics")
+		s.logger.Info().
+			Msg("Started Kafka consumer for all topics")
 	}
 
 	mux := http.NewServeMux()
@@ -258,7 +258,9 @@ func (s *Server) Start() error {
 	go func() {
 		defer s.wg.Done()
 		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
-			s.logger.Printf("Server error: %v", err)
+			s.logger.Error().
+				Err(err).
+				Msg("Server accept loop error")
 		}
 	}()
 
@@ -300,7 +302,9 @@ func (s *Server) collectMetrics() {
 	// to provide single source of truth and avoid divergence
 	proc, err := process.NewProcess(int32(os.Getpid()))
 	if err != nil {
-		s.logger.Printf("Failed to get process: %v", err)
+		s.logger.Error().
+			Err(err).
+			Msg("Failed to get process info")
 		proc = nil
 	}
 
@@ -426,7 +430,7 @@ func (s *Server) sampleClientBuffers() {
 				highSaturationPercent := float64(highSaturationCount) / float64(samplesCollected) * 100
 				if highSaturationPercent >= 25 {
 					// Warning: 25%+ of sampled clients are at >90% buffer capacity
-					s.structLogger.Warn().
+					s.logger.Warn().
 						Int("high_saturation_count", highSaturationCount).
 						Int("total_sampled", samplesCollected).
 						Float64("high_saturation_pct", highSaturationPercent).
@@ -461,7 +465,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			"maxConnections":     s.config.MaxConnections,
 			"reason":             reason,
 		})
-		s.structLogger.Warn().
+		s.logger.Warn().
 			Int64("current_connections", currentConnections).
 			Int("max_connections", s.config.MaxConnections).
 			Str("reason", reason).
@@ -494,7 +498,9 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			"remoteAddr": r.RemoteAddr,
 		})
 		connectionsFailed.Inc()
-		s.logger.Printf("Failed to upgrade connection: %v", err)
+		s.logger.Error().
+			Err(err).
+			Msg("Failed to upgrade connection")
 		return
 	}
 
@@ -528,7 +534,7 @@ func (s *Server) disconnectClient(c *Client, reason, initiatedBy string) {
 	bufferCap := cap(c.send)
 	bufferUsagePercent := float64(bufferLen) / float64(bufferCap) * 100
 
-	s.structLogger.Info().
+	s.logger.Info().
 		Int64("client_id", c.id).
 		Str("reason", reason).
 		Str("initiated_by", initiatedBy).
@@ -606,7 +612,11 @@ func (s *Server) readPump(c *Client) {
 			// Rate limit: 100 burst, 10/sec sustained
 			// This allows legitimate bursts (rapid order entry) while preventing abuse
 			if !s.rateLimiter.CheckLimit(c.id) {
-				s.logger.Printf("⚠️  Client %d rate limited (exceeded 100 burst or 10/sec sustained)", c.id)
+				s.logger.Warn().
+					Int64("client_id", c.id).
+					Int("burst_limit", 100).
+					Int("rate_limit_per_sec", 10).
+					Msg("Client rate limited")
 
 				// Audit log rate limiting event
 				s.auditLogger.Warning("ClientRateLimited", "Client exceeded rate limit", map[string]any{
@@ -670,7 +680,7 @@ func (s *Server) writePump(c *Client) {
 		case message, ok := <-c.send:
 			if !ok {
 				// The server closed the channel.
-				s.structLogger.Debug().
+				s.logger.Debug().
 					Int64("client_id", c.id).
 					Str("reason", "send_channel_closed").
 					Msg("Client send channel closed, disconnecting")
@@ -681,7 +691,7 @@ func (s *Server) writePump(c *Client) {
 			}
 
 			if c.conn == nil {
-				s.structLogger.Warn().
+				s.logger.Warn().
 					Int64("client_id", c.id).
 					Str("reason", "connection_nil").
 					Msg("Client connection is nil in writePump")
@@ -691,7 +701,7 @@ func (s *Server) writePump(c *Client) {
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			err := wsutil.WriteServerMessage(c.conn, ws.OpText, message)
 			if err != nil {
-				s.structLogger.Debug().
+				s.logger.Debug().
 					Int64("client_id", c.id).
 					Err(err).
 					Str("reason", "write_error").
@@ -706,7 +716,7 @@ func (s *Server) writePump(c *Client) {
 
 		case <-ticker.C:
 			if c.conn == nil {
-				s.structLogger.Warn().
+				s.logger.Warn().
 					Int64("client_id", c.id).
 					Str("reason", "connection_nil_ping").
 					Msg("Client connection is nil during ping")
@@ -714,7 +724,7 @@ func (s *Server) writePump(c *Client) {
 			}
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := wsutil.WriteServerMessage(c.conn, ws.OpPing, nil); err != nil {
-				s.structLogger.Debug().
+				s.logger.Debug().
 					Int64("client_id", c.id).
 					Err(err).
 					Str("reason", "ping_write_error").
@@ -832,7 +842,10 @@ func (s *Server) broadcast(subject string, message []byte) {
 		envelope, err := WrapMessage(message, "price:update", PRIORITY_HIGH, client.seqGen)
 		if err != nil {
 			RecordBroadcastError(ErrorSeverityWarning)
-			s.logger.Printf("❌ Failed to wrap message for client %d: %v", client.id, err)
+			s.logger.Error().
+				Int64("client_id", client.id).
+				Err(err).
+				Msg("Failed to wrap message")
 			continue // Skip to next client
 		}
 
@@ -845,7 +858,10 @@ func (s *Server) broadcast(subject string, message []byte) {
 		data, err := envelope.Serialize()
 		if err != nil {
 			RecordSerializationError(ErrorSeverityWarning)
-			s.logger.Printf("❌ Failed to serialize message for client %d: %v", client.id, err)
+			s.logger.Error().
+				Int64("client_id", client.id).
+				Err(err).
+				Msg("Failed to serialize message")
 			continue // Skip to next client
 		}
 
@@ -860,8 +876,11 @@ func (s *Server) broadcast(subject string, message []byte) {
 			client.lastMessageSentAt = time.Now()
 			successCount++
 
-			// Log successful broadcast (visibility like publisher)
-			s.logger.Printf("📢 Broadcast to client %d: channel=%s", client.id, channel)
+			// DEBUG level: Zero overhead in production (LOG_LEVEL=info)
+			s.logger.Debug().
+				Int64("client_id", client.id).
+				Str("channel", channel).
+				Msg("Broadcast to client")
 
 		default:
 			// Buffer full - client can't keep up
@@ -883,7 +902,7 @@ func (s *Server) broadcast(subject string, message []byte) {
 			if dropCount%100 == 0 {
 				bufferLen := len(client.send)
 				bufferCap := cap(client.send)
-				s.structLogger.Warn().
+				s.logger.Warn().
 					Int64("client_id", client.id).
 					Str("channel", channel).
 					Str("reason", DropReasonBufferFull).
@@ -898,7 +917,10 @@ func (s *Server) broadcast(subject string, message []byte) {
 			// Log warning on first failure (avoid spam)
 			// Use atomic CompareAndSwap to avoid race condition
 			if attempts == 1 && atomic.CompareAndSwapInt32(&client.slowClientWarned, 0, 1) {
-				s.logger.Printf("⚠️  Client %d is slow (send buffer full)", client.id)
+				s.logger.Warn().
+					Int64("client_id", client.id).
+					Str("reason", "send_buffer_full").
+					Msg("Client is slow")
 			}
 
 			// Disconnect after 3 consecutive failures (industry standard)
@@ -906,7 +928,11 @@ func (s *Server) broadcast(subject string, message []byte) {
 			// - Too low (1-2): False positives from brief network hiccups
 			// - Too high (5+): Slow client wastes resources too long
 			if attempts >= 3 {
-				s.logger.Printf("❌ Disconnecting client %d (too slow: %d consecutive send failures)", client.id, attempts)
+				s.logger.Warn().
+					Int64("client_id", client.id).
+					Int32("consecutive_failures", attempts).
+					Str("reason", "too_slow").
+					Msg("Disconnecting slow client")
 
 				// Record disconnect metrics with proper categorization (both Prometheus and Stats)
 				duration := time.Since(client.connectedAt)
@@ -958,7 +984,7 @@ func (s *Server) broadcast(subject string, message []byte) {
 	// Only logs when LOG_LEVEL=debug (no overhead in production)
 	if channel != "" {
 		successRate := float64(successCount) / float64(totalCount) * 100
-		s.structLogger.Debug().
+		s.logger.Debug().
 			Str("channel", channel).
 			Int("subscribers", totalCount).
 			Int("sent_successfully", successCount).
@@ -993,7 +1019,10 @@ func (s *Server) handleClientMessage(c *Client, data []byte) {
 	}
 
 	if err := json.Unmarshal(data, &req); err != nil {
-		s.logger.Printf("⚠️  Client %d sent invalid JSON: %v", c.id, err)
+		s.logger.Warn().
+			Int64("client_id", c.id).
+			Err(err).
+			Msg("Client sent invalid JSON")
 		return
 	}
 
@@ -1017,11 +1046,18 @@ func (s *Server) handleClientMessage(c *Client, data []byte) {
 		}
 
 		if err := json.Unmarshal(req.Data, &replayReq); err != nil {
-			s.logger.Printf("⚠️  Client %d sent invalid replay request: %v", c.id, err)
+			s.logger.Warn().
+				Int64("client_id", c.id).
+				Err(err).
+				Msg("Client sent invalid replay request")
 			return
 		}
 
-		s.logger.Printf("📬 Client %d requesting replay: seq %d to %d", c.id, replayReq.From, replayReq.To)
+		s.logger.Info().
+			Int64("client_id", c.id).
+			Int64("sequence_from", replayReq.From).
+			Int64("sequence_to", replayReq.To).
+			Msg("Client requesting replay")
 
 		// Get messages from replay buffer
 		var messages []*MessageEnvelope
@@ -1033,7 +1069,10 @@ func (s *Server) handleClientMessage(c *Client, data []byte) {
 			messages = c.replayBuffer.GetRange(replayReq.From, replayReq.To)
 		}
 
-		s.logger.Printf("📬 Replaying %d messages to client %d", len(messages), c.id)
+		s.logger.Info().
+			Int64("client_id", c.id).
+			Int("message_count", len(messages)).
+			Msg("Replaying messages to client")
 
 		// Send each message from replay buffer
 		// Note: These already have sequence numbers (from when originally sent)
@@ -1042,7 +1081,10 @@ func (s *Server) handleClientMessage(c *Client, data []byte) {
 		for i, msg := range messages {
 			data, err := msg.Serialize()
 			if err != nil {
-				s.logger.Printf("❌ Failed to serialize replay message %d: %v", i, err)
+				s.logger.Error().
+					Int("message_index", i).
+					Err(err).
+					Msg("Failed to serialize replay message")
 				continue
 			}
 
@@ -1054,7 +1096,7 @@ func (s *Server) handleClientMessage(c *Client, data []byte) {
 				sentCount++
 			case <-time.After(3 * time.Second):
 				// Client too slow to handle replay - incomplete recovery
-				s.structLogger.Warn().
+				s.logger.Warn().
 					Int64("client_id", c.id).
 					Int("sent", sentCount).
 					Int("total", len(messages)).
@@ -1083,7 +1125,7 @@ func (s *Server) handleClientMessage(c *Client, data []byte) {
 
 		// Log successful replay
 		if sentCount == len(messages) {
-			s.structLogger.Debug().
+			s.logger.Debug().
 				Int64("client_id", c.id).
 				Int("message_count", sentCount).
 				Msg("Replay completed successfully")
@@ -1146,7 +1188,10 @@ func (s *Server) handleClientMessage(c *Client, data []byte) {
 		}
 
 		if err := json.Unmarshal(req.Data, &subReq); err != nil {
-			s.logger.Printf("⚠️  Client %d sent invalid subscribe request: %v", c.id, err)
+			s.logger.Warn().
+				Int64("client_id", c.id).
+				Err(err).
+				Msg("Client sent invalid subscribe request")
 			return
 		}
 
@@ -1156,7 +1201,11 @@ func (s *Server) handleClientMessage(c *Client, data []byte) {
 		// Add to global subscription index for fast broadcast targeting
 		s.subscriptionIndex.AddMultiple(subReq.Channels, c)
 
-		s.logger.Printf("✅ Client %d subscribed to %d channels: %v", c.id, len(subReq.Channels), subReq.Channels)
+		s.logger.Info().
+			Int64("client_id", c.id).
+			Int("channel_count", len(subReq.Channels)).
+			Strs("channels", subReq.Channels).
+			Msg("Client subscribed")
 
 		// Send acknowledgment to client
 		ack := map[string]any{
@@ -1182,7 +1231,10 @@ func (s *Server) handleClientMessage(c *Client, data []byte) {
 		}
 
 		if err := json.Unmarshal(req.Data, &unsubReq); err != nil {
-			s.logger.Printf("⚠️  Client %d sent invalid unsubscribe request: %v", c.id, err)
+			s.logger.Warn().
+				Int64("client_id", c.id).
+				Err(err).
+				Msg("Client sent invalid unsubscribe request")
 			return
 		}
 
@@ -1192,7 +1244,11 @@ func (s *Server) handleClientMessage(c *Client, data []byte) {
 		// Remove from global subscription index
 		s.subscriptionIndex.RemoveMultiple(unsubReq.Channels, c)
 
-		s.logger.Printf("✅ Client %d unsubscribed from %d channels: %v", c.id, len(unsubReq.Channels), unsubReq.Channels)
+		s.logger.Info().
+			Int64("client_id", c.id).
+			Int("channel_count", len(unsubReq.Channels)).
+			Strs("channels", unsubReq.Channels).
+			Msg("Client unsubscribed")
 
 		// Send acknowledgment to client
 		ack := map[string]any{
@@ -1213,7 +1269,10 @@ func (s *Server) handleClientMessage(c *Client, data []byte) {
 	default:
 		// Unknown message type
 		// Log but don't disconnect (might be future feature we haven't implemented yet)
-		s.logger.Printf("⚠️  Client %d sent unknown message type: %s", c.id, req.Type)
+		s.logger.Warn().
+			Int64("client_id", c.id).
+			Str("message_type", req.Type).
+			Msg("Client sent unknown message type")
 	}
 }
 
@@ -1266,7 +1325,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	} else {
 		isHealthy = false
 		errors = append(errors, "Kafka consumer not initialized")
-		s.structLogger.Error().Msg("Health check failed: Kafka consumer not initialized")
+		s.logger.Error().Msg("Health check failed: Kafka consumer not initialized")
 	}
 
 	// Check CPU (against configured reject threshold)
@@ -1275,7 +1334,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		isHealthy = false
 		cpuHealthy = false
 		errors = append(errors, fmt.Sprintf("CPU exceeds reject threshold (%.1f%% > %.1f%%)", cpuPercent, s.config.CPURejectThreshold))
-		s.structLogger.Error().
+		s.logger.Error().
 			Float64("cpu_percent", cpuPercent).
 			Float64("cpu_threshold", s.config.CPURejectThreshold).
 			Msg("Health check failed: CPU exceeds threshold")
@@ -1288,7 +1347,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		isHealthy = false
 		memHealthy = false
 		errors = append(errors, fmt.Sprintf("Memory exceeds limit (%.1fMB > %.1fMB)", memoryMB, memLimitMB))
-		s.structLogger.Error().
+		s.logger.Error().
 			Float64("used_mb", memoryMB).
 			Float64("limit_mb", memLimitMB).
 			Msg("Health check failed: Memory exceeds limit")
@@ -1301,7 +1360,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		isHealthy = false
 		goroutinesHealthy = false
 		errors = append(errors, fmt.Sprintf("Goroutines exceed limit (%d > %d)", goroutinesCurrent, goroutinesLimit))
-		s.structLogger.Error().
+		s.logger.Error().
 			Int("current", goroutinesCurrent).
 			Int("limit", goroutinesLimit).
 			Msg("Health check failed: Goroutines exceed limit")
@@ -1314,14 +1373,14 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		// If it comes here, it means the server is over loaded and the limit check is failing
 		capacityHealthy = false
 		errors = append(errors, fmt.Sprintf("Server at over capacity (%d/%d)", currentConns, maxConns))
-		s.structLogger.Error().
+		s.logger.Error().
 			Int64("current", currentConns).
 			Int64("max", maxConns).
 			Msg("Health check failed: Server at over capacity")
 	} else if capacityPercent == 100 {
 		capacityHealthy = true
 		warnings = append(warnings, fmt.Sprintf("Server at full capacity (%d/%d)", currentConns, maxConns))
-		s.structLogger.Warn().
+		s.logger.Warn().
 			Int64("current", currentConns).
 			Int64("max", maxConns).
 			Msg("Server at full capacity - consider scaling")
@@ -1492,28 +1551,33 @@ func calculateBufferStats(samples []int) map[string]any {
 }
 
 func (s *Server) Shutdown() error {
-	s.logger.Println("Initiating graceful shutdown...")
+	s.logger.Info().Msg("Initiating graceful shutdown")
 
 	// Set shutdown flag to reject new connections
 	atomic.StoreInt32(&s.shuttingDown, 1)
 
 	// Stop accepting new connections
 	if s.listener != nil {
-		s.logger.Println("Closing listener (no new connections accepted)")
+		s.logger.Info().Msg("Closing listener (no new connections accepted)")
 		s.listener.Close()
 	}
 
 	// Stop receiving new messages from Kafka
 	if s.kafkaConsumer != nil {
-		s.logger.Println("Stopping Kafka consumer (no new messages)")
+		s.logger.Info().Msg("Stopping Kafka consumer (no new messages)")
 		if err := s.kafkaConsumer.Stop(); err != nil {
-			s.logger.Printf("Error stopping Kafka consumer: %v", err)
+			s.logger.Error().
+				Err(err).
+				Msg("Error stopping Kafka consumer")
 		}
 	}
 
 	// Count current connections
 	currentConns := atomic.LoadInt64(&s.stats.CurrentConnections)
-	s.logger.Printf("Draining %d active connections (30s grace period)...", currentConns)
+	s.logger.Info().
+		Int64("active_connections", currentConns).
+		Int("grace_period_sec", 30).
+		Msg("Draining active connections")
 
 	// Grace period for connection draining
 	gracePeriod := 30 * time.Second
@@ -1529,7 +1593,9 @@ func (s *Server) Shutdown() error {
 			// Grace period expired, force close remaining connections
 			remaining := atomic.LoadInt64(&s.stats.CurrentConnections)
 			if remaining > 0 {
-				s.logger.Printf("Grace period expired, force closing %d remaining connections", remaining)
+				s.logger.Warn().
+					Int64("remaining_connections", remaining).
+					Msg("Grace period expired, force closing remaining connections")
 			}
 			goto forceClose
 
@@ -1537,10 +1603,12 @@ func (s *Server) Shutdown() error {
 			// Check if all connections drained
 			remaining := atomic.LoadInt64(&s.stats.CurrentConnections)
 			if remaining == 0 {
-				s.logger.Println("All connections drained gracefully")
+				s.logger.Info().Msg("All connections drained gracefully")
 				goto cleanup
 			}
-			s.logger.Printf("Waiting for %d connections to drain...", remaining)
+			s.logger.Info().
+				Int64("remaining_connections", remaining).
+				Msg("Waiting for connections to drain")
 		}
 	}
 
@@ -1562,13 +1630,13 @@ cleanup:
 	s.cancel()
 
 	// Stop worker pool
-	s.logger.Println("Stopping worker pool...")
+	s.logger.Info().Msg("Stopping worker pool")
 	s.workerPool.Stop()
 
 	// Wait for all goroutines to finish
-	s.logger.Println("Waiting for all goroutines to finish...")
+	s.logger.Info().Msg("Waiting for all goroutines to finish")
 	s.wg.Wait()
 
-	s.logger.Println("Graceful shutdown completed")
+	s.logger.Info().Msg("Graceful shutdown completed")
 	return nil
 }
