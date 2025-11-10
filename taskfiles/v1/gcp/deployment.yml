@@ -693,8 +693,8 @@ tasks:
             cd ws_poc && \
             git pull origin {{.GIT_BRANCH}} && \
             cd deployments/v1/gcp/distributed/backend && \
-            docker compose build && \
-            docker compose up -d && \
+            docker-compose build && \
+            docker-compose up -d && \
             sleep 10 && \
             curl -sf http://localhost:3003/status'"
       - echo "✅ Backend rebuilt"
@@ -716,8 +716,8 @@ tasks:
             git pull origin {{.GIT_BRANCH}} && \
             cd deployments/v1/gcp/distributed/ws-server && \
             export BACKEND_INTERNAL_IP=$BACKEND_IP && \
-            docker compose build && \
-            docker compose up -d && \
+            docker-compose build && \
+            docker-compose up -d && \
             sleep 10 && \
             curl -sf http://localhost:3004/health'"
       - echo "✅ WebSocket server rebuilt"
