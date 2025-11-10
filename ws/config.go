@@ -37,9 +37,23 @@ type Config struct {
 	MaxBroadcastRate int `env:"WS_MAX_BROADCAST_RATE" envDefault:"20"`
 	MaxGoroutines    int `env:"WS_MAX_GOROUTINES" envDefault:"1000"`
 
-	// Safety thresholds
-	CPURejectThreshold float64 `env:"WS_CPU_REJECT_THRESHOLD" envDefault:"75.0"`
-	CPUPauseThreshold  float64 `env:"WS_CPU_PAUSE_THRESHOLD" envDefault:"80.0"`
+	// CPU Safety Thresholds (Container-Aware)
+	//
+	// These thresholds are relative to CONTAINER CPU ALLOCATION, not host CPU.
+	// The system uses container-aware cgroup measurement when running in Docker/K8s.
+	//
+	// Example with 1.0 CPU allocation (docker: cpus: "1.0"):
+	//   - 75% = reject when using 0.75 of allocated 1.0 CPU
+	//   - Container can use up to 100% before being throttled by cgroup
+	//
+	// Example with 4.0 CPU allocation (docker: cpus: "4.0"):
+	//   - 75% = reject when using 3.0 of allocated 4.0 CPUs
+	//   - Container can use up to 400% (4.0 cores) before throttling
+	//
+	// In non-containerized environments, falls back to host CPU percentage.
+	//
+	CPURejectThreshold float64 `env:"WS_CPU_REJECT_THRESHOLD" envDefault:"75.0"` // Reject new connections above this %
+	CPUPauseThreshold  float64 `env:"WS_CPU_PAUSE_THRESHOLD" envDefault:"80.0"`  // Pause Kafka consumption above this %
 
 	// Monitoring
 	MetricsInterval time.Duration `env:"METRICS_INTERVAL" envDefault:"15s"`

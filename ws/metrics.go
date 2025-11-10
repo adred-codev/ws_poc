@@ -135,7 +135,33 @@ var (
 
 	cpuUsagePercent = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "ws_cpu_usage_percent",
-		Help: "Current CPU usage percentage",
+		Help: "Current CPU usage percentage (container-aware: % of allocated CPUs)",
+	})
+
+	// Enhanced CPU metrics (container-aware)
+	cpuContainerPercent = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "ws_cpu_container_percent",
+		Help: "CPU usage as percentage of container allocation (0-100%)",
+	})
+
+	cpuHostPercent = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "ws_cpu_host_percent",
+		Help: "CPU usage as percentage of total host CPUs (for reference)",
+	})
+
+	cpuAllocationCores = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "ws_cpu_allocation_cores",
+		Help: "Number of CPU cores allocated to container",
+	})
+
+	cpuThrottledSecondsTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "ws_cpu_throttled_seconds_total",
+		Help: "Total time (seconds) container CPU was throttled by cgroup",
+	})
+
+	cpuThrottleEventsTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "ws_cpu_throttle_events_total",
+		Help: "Total number of times container hit CPU limit and was throttled",
 	})
 
 	goroutinesActive = prometheus.NewGauge(prometheus.GaugeOpts{
@@ -216,6 +242,11 @@ func init() {
 	prometheus.MustRegister(memoryUsageBytes)
 	prometheus.MustRegister(memoryLimitBytes)
 	prometheus.MustRegister(cpuUsagePercent)
+	prometheus.MustRegister(cpuContainerPercent)
+	prometheus.MustRegister(cpuHostPercent)
+	prometheus.MustRegister(cpuAllocationCores)
+	prometheus.MustRegister(cpuThrottledSecondsTotal)
+	prometheus.MustRegister(cpuThrottleEventsTotal)
 	prometheus.MustRegister(goroutinesActive)
 
 	prometheus.MustRegister(kafkaConnected)

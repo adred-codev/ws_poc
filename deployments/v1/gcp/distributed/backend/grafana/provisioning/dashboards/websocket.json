@@ -392,13 +392,24 @@
       "pluginVersion": "8.0.0",
       "targets": [
         {
-          "expr": "ws_cpu_usage_percent",
-          "legendFormat": "CPU Usage %",
+          "expr": "ws_cpu_container_percent",
+          "legendFormat": "Container CPU %",
           "refId": "A"
+        },
+        {
+          "expr": "ws_cpu_host_percent",
+          "legendFormat": "Host CPU % (reference)",
+          "refId": "B"
+        },
+        {
+          "expr": "ws_cpu_allocation_cores * 100",
+          "legendFormat": "Allocation (cores * 100)",
+          "refId": "C"
         }
       ],
-      "title": "CPU Usage",
-      "type": "timeseries"
+      "title": "CPU Usage (Container-Aware)",
+      "type": "timeseries",
+      "description": "Container CPU usage relative to allocated CPUs. Host CPU shown for reference."
     },
     {
       "datasource": "Prometheus",
@@ -1042,6 +1053,95 @@
           "calcs": ["lastNotNull", "mean", "max"]
         }
       }
+    },
+    {
+      "id": 17,
+      "title": "CPU Throttling",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 64
+      },
+      "targets": [
+        {
+          "expr": "rate(ws_cpu_throttle_events_total[1m])",
+          "legendFormat": "Throttle Events/sec",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(ws_cpu_throttled_seconds_total[1m])",
+          "legendFormat": "Throttled Time/sec",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short",
+          "decimals": 2
+        }
+      },
+      "options": {
+        "tooltip": {
+          "mode": "multi"
+        },
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": ["lastNotNull", "mean", "max"]
+        }
+      },
+      "description": "CPU throttling events indicate container is hitting CPU limit"
+    },
+    {
+      "id": 18,
+      "title": "CPU Allocation Info",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 64
+      },
+      "targets": [
+        {
+          "expr": "ws_cpu_allocation_cores",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "textMode": "value_and_name",
+        "graphMode": "none",
+        "colorMode": "value"
+      },
+      "description": "Number of CPU cores allocated to this container"
     }
   ],
   "refresh": "15s",

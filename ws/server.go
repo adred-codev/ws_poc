@@ -17,7 +17,6 @@ import (
 	"github.com/gobwas/ws"
 	"github.com/gobwas/ws/wsutil"
 	"github.com/rs/zerolog"
-	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/mem"
 	"github.com/shirou/gopsutil/v3/process"
 )
@@ -279,7 +278,8 @@ func (s *Server) Start() error {
 	go s.sampleClientBuffers()
 
 	// Start ResourceGuard monitoring (static limits with safety checks)
-	s.resourceGuard.StartMonitoring(s.ctx, s.config.MetricsInterval)
+	// Now also updates server stats for unified CPU measurement
+	s.resourceGuard.StartMonitoring(s.ctx, s.config.MetricsInterval, s.stats)
 
 	s.auditLogger.Info("ServerStarted", "WebSocket server started successfully", map[string]any{
 		"addr":           s.config.Addr,
@@ -295,7 +295,9 @@ func (s *Server) collectMetrics() {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
-	// Get current process
+	// Get current process for memory stats
+	// NOTE: CPU is now measured by ResourceGuard via container-aware CPUMonitor
+	// to provide single source of truth and avoid divergence
 	proc, err := process.NewProcess(int32(os.Getpid()))
 	if err != nil {
 		s.logger.Printf("Failed to get process: %v", err)
@@ -307,13 +309,8 @@ func (s *Server) collectMetrics() {
 		case <-s.ctx.Done():
 			return
 		case <-ticker.C:
-			// Get CPU percentage (measure over 1 second for accuracy)
-			cpuPercent, err := cpu.Percent(1*time.Second, false)
-			if err == nil && len(cpuPercent) > 0 {
-				s.stats.mu.Lock()
-				s.stats.CPUPercent = cpuPercent[0]
-				s.stats.mu.Unlock()
-			}
+			// CPU measurement REMOVED - now handled by ResourceGuard.UpdateResources()
+			// This eliminates dual measurement paths and prevents divergence
 
 			// Get memory usage
 			if proc != nil {
