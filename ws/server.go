@@ -871,7 +871,7 @@ func (s *Server) broadcast(subject string, message []byte) {
 	// Serialize ONCE for all clients (not once per client!)
 	sharedData, err := baseEnvelope.Serialize()
 	if err != nil {
-		RecordSerializationError(ErrorSeverityError)
+		RecordSerializationError(ErrorSeverityCritical)
 		s.logger.Error().
 			Err(err).
 			Str("channel", channel).
