@@ -201,8 +201,8 @@ func (c *Consumer) processRecord(record *kgo.Record) {
 	// Increment processed count
 	c.incrementProcessed()
 
-	// Log every consumed message (visibility like publisher)
-	c.logger.Info().
+	// DEBUG level: Zero overhead in production (LOG_LEVEL=info)
+	c.logger.Debug().
 		Str("token_id", tokenID).
 		Str("event_type", eventType).
 		Str("topic", record.Topic).
