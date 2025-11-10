@@ -460,12 +460,9 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	shouldAccept, reason := s.resourceGuard.ShouldAcceptConnection()
 	if !shouldAccept {
 		currentConnections := atomic.LoadInt64(&s.stats.CurrentConnections)
-		s.auditLogger.Warning("ConnectionRejected", reason, map[string]any{
-			"currentConnections": currentConnections,
-			"maxConnections":     s.config.MaxConnections,
-			"reason":             reason,
-		})
-		s.logger.Warn().
+		// Removed audit logger call - rejections tracked via Prometheus metrics
+		// s.auditLogger.Warning("ConnectionRejected", reason, map[string]any{...})
+		s.logger.Debug().
 			Int64("current_connections", currentConnections).
 			Int("max_connections", s.config.MaxConnections).
 			Str("reason", reason).

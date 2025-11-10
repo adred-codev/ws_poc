@@ -174,7 +174,7 @@ func (rg *ResourceGuard) ShouldAcceptConnection() (accept bool, reason string) {
 	// Check 1: Hard connection limit
 	if currentConns >= int64(rg.config.MaxConnections) {
 		IncrementCapacityRejection("at_max_connections")
-		rg.logger.Warn().
+		rg.logger.Debug().
 			Int64("current_conns", currentConns).
 			Int("max_conns", rg.config.MaxConnections).
 			Msg("Connection rejected: at max connections")
@@ -184,7 +184,7 @@ func (rg *ResourceGuard) ShouldAcceptConnection() (accept bool, reason string) {
 	// Check 2: CPU emergency brake
 	if currentCPU > rg.config.CPURejectThreshold {
 		IncrementCapacityRejection("cpu_overload")
-		rg.logger.Warn().
+		rg.logger.Debug().
 			Float64("current_cpu", currentCPU).
 			Float64("threshold", rg.config.CPURejectThreshold).
 			Msg("Connection rejected: CPU overload")
@@ -194,7 +194,7 @@ func (rg *ResourceGuard) ShouldAcceptConnection() (accept bool, reason string) {
 	// Check 3: Memory emergency brake
 	if currentMemory > rg.config.MemoryLimit {
 		IncrementCapacityRejection("memory_limit")
-		rg.logger.Warn().
+		rg.logger.Debug().
 			Int64("current_memory_mb", currentMemory/(1024*1024)).
 			Int64("limit_mb", rg.config.MemoryLimit/(1024*1024)).
 			Msg("Connection rejected: memory limit exceeded")
@@ -204,7 +204,7 @@ func (rg *ResourceGuard) ShouldAcceptConnection() (accept bool, reason string) {
 	// Check 4: Goroutine limit
 	if currentGoros > rg.config.MaxGoroutines {
 		IncrementCapacityRejection("goroutine_limit")
-		rg.logger.Warn().
+		rg.logger.Debug().
 			Int("current_goroutines", currentGoros).
 			Int("max_goroutines", rg.config.MaxGoroutines).
 			Msg("Connection rejected: goroutine limit exceeded")
