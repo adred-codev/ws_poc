@@ -296,7 +296,7 @@ tasks:
               docker ps -f name=loadtest- && \
               echo \"\" && \
               for container_id in \$containers; do \
-                container_name=\$(docker inspect --format=\"{{{{.Name}}}}\" \$container_id | sed \"s/^\///\") && \
+                container_name=\$(docker inspect --format=\"{{.Name}}\" \$container_id | sed \"s/^\///\") && \
                 echo \"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\" && \
                 echo \"📋 Logs from: \$container_name\" && \
                 echo \"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\" && \
@@ -309,7 +309,7 @@ tasks:
               echo \"Checking for stopped containers...\" && \
               stopped=\$(docker ps -a -f name=loadtest- -q | head -1) && \
               if [ -n \"\$stopped\" ]; then \
-                stopped_name=\$(docker inspect --format=\"{{{{.Name}}}}\" \$stopped | sed \"s/^\///\") && \
+                stopped_name=\$(docker inspect --format=\"{{.Name}}\" \$stopped | sed \"s/^\///\") && \
                 echo \"Last 50 lines from: \$stopped_name\" && \
                 echo \"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\" && \
                 docker logs --tail 50 \$stopped ; \
