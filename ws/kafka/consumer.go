@@ -2,7 +2,6 @@ package kafka
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -251,19 +250,9 @@ func (c *Consumer) processRecord(record *kgo.Record) {
 		return
 	}
 
-	// Parse event from value (validation only, we broadcast raw bytes)
-	var event TokenEvent
-	if err := json.Unmarshal(record.Value, &event); err != nil {
-		c.logger.Error().
-			Err(err).
-			Str("token_id", tokenID).
-			Str("topic", record.Topic).
-			Msg("Failed to unmarshal event")
-		c.incrementFailed()
-		return
-	}
-
 	// Get event type category from topic
+	// NOTE: We broadcast raw bytes without validation for performance
+	// (matching NATS implementation behavior - no unmarshal overhead)
 	eventType := TopicToEventType(record.Topic)
 
 	// ============================================================================

@@ -55,3 +55,4 @@ sessions
 bin
 
 deployments/v1/gcp/.env.gcp
+old_ws/
