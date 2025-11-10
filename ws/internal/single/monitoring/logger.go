@@ -1,4 +1,4 @@
-package main
+package monitoring
 
 import (
 	"io"
@@ -6,33 +6,15 @@ import (
 	"runtime/debug"
 	"time"
 
+	"github.com/adred-codev/ws_poc/internal/single/types"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
 
-// LogLevel represents logging levels
-type LogLevel string
-
-const (
-	LogLevelDebug LogLevel = "debug"
-	LogLevelInfo  LogLevel = "info"
-	LogLevelWarn  LogLevel = "warn"
-	LogLevelError LogLevel = "error"
-	LogLevelFatal LogLevel = "fatal"
-)
-
-// LogFormat represents log output format
-type LogFormat string
-
-const (
-	LogFormatJSON   LogFormat = "json"   // JSON format for Loki
-	LogFormatPretty LogFormat = "pretty" // Human-readable for local dev
-)
-
 // LoggerConfig holds logger configuration
 type LoggerConfig struct {
-	Level  LogLevel  // Minimum log level
-	Format LogFormat // Output format
+	Level  types.LogLevel  // Minimum log level
+	Format types.LogFormat // Output format
 }
 
 // NewLogger creates a structured logger configured for Loki integration
@@ -60,15 +42,15 @@ func NewLogger(config LoggerConfig) zerolog.Logger {
 	// Set log level
 	var level zerolog.Level
 	switch config.Level {
-	case LogLevelDebug:
+	case types.LogLevelDebug:
 		level = zerolog.DebugLevel
-	case LogLevelInfo:
+	case types.LogLevelInfo:
 		level = zerolog.InfoLevel
-	case LogLevelWarn:
+	case types.LogLevelWarn:
 		level = zerolog.WarnLevel
-	case LogLevelError:
+	case types.LogLevelError:
 		level = zerolog.ErrorLevel
-	case LogLevelFatal:
+	case types.LogLevelFatal:
 		level = zerolog.FatalLevel
 	default:
 		level = zerolog.InfoLevel
@@ -76,7 +58,7 @@ func NewLogger(config LoggerConfig) zerolog.Logger {
 	zerolog.SetGlobalLevel(level)
 
 	// Set format
-	if config.Format == LogFormatPretty {
+	if config.Format == types.LogFormatPretty {
 		output = zerolog.ConsoleWriter{
 			Out:        os.Stdout,
 			TimeFormat: time.RFC3339,

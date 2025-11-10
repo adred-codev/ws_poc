@@ -9,6 +9,9 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/adred-codev/ws_poc/internal/single/core"
+	"github.com/adred-codev/ws_poc/internal/single/platform"
+	"github.com/adred-codev/ws_poc/internal/single/types"
 	_ "go.uber.org/automaxprocs"
 )
 
@@ -40,7 +43,7 @@ func main() {
 	logger.Printf("GOMAXPROCS: %d (via automaxprocs - rounds down to integer)", maxProcs)
 
 	// Load configuration from .env file and environment variables
-	cfg, err := LoadConfig(nil) // Pass nil for now, structured logger created after
+	cfg, err := platform.LoadConfig(nil) // Pass nil for now, structured logger created after
 	if err != nil {
 		logger.Fatalf("Failed to load configuration: %v", err)
 	}
@@ -61,7 +64,7 @@ func main() {
 		kafkaBrokers = splitBrokers(cfg.KafkaBrokers)
 	}
 
-	serverConfig := ServerConfig{
+	serverConfig := types.ServerConfig{
 		Addr:           cfg.Addr,
 		KafkaBrokers:   kafkaBrokers,
 		ConsumerGroup:  cfg.ConsumerGroup,
@@ -84,11 +87,11 @@ func main() {
 		MetricsInterval: cfg.MetricsInterval,
 
 		// Logging configuration
-		LogLevel:  LogLevel(cfg.LogLevel),
-		LogFormat: LogFormat(cfg.LogFormat),
+		LogLevel:  types.LogLevel(cfg.LogLevel),
+		LogFormat: types.LogFormat(cfg.LogFormat),
 	}
 
-	server, err := NewServer(serverConfig)
+	server, err := core.NewServer(serverConfig)
 	if err != nil {
 		logger.Fatalf("Failed to create server: %v", err)
 	}

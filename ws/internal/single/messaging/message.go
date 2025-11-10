@@ -1,4 +1,4 @@
-package main
+package messaging
 
 import (
 	"encoding/json"
@@ -124,6 +124,18 @@ func NewSequenceGenerator() *SequenceGenerator {
 // Memory: 8 bytes per generator (negligible)
 func (s *SequenceGenerator) Next() int64 {
 	return atomic.AddInt64(&s.counter, 1)
+}
+
+// Current returns the current sequence number without incrementing
+// Thread-safe using atomic operations
+func (s *SequenceGenerator) Current() int64 {
+	return atomic.LoadInt64(&s.counter)
+}
+
+// Reset sets the sequence counter back to 0
+// Thread-safe using atomic operations
+func (s *SequenceGenerator) Reset() {
+	atomic.StoreInt64(&s.counter, 0)
 }
 
 // WrapMessage creates an envelope for raw Kafka messages

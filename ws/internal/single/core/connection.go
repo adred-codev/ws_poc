@@ -1,10 +1,12 @@
-package main
+package core
 
 import (
 	"net"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/adred-codev/ws_poc/internal/single/messaging"
 )
 
 // Client represents a WebSocket client connection with message reliability features
@@ -44,7 +46,7 @@ type Client struct {
 	// Message reliability fields
 	// Sequence generator - creates monotonically increasing message IDs
 	// Each client gets independent sequence (starts at 1 on connect)
-	seqGen *SequenceGenerator
+	seqGen *messaging.SequenceGenerator
 
 	// Slow client detection fields
 	// Purpose: One slow client shouldn't block messages to 10,000 fast clients
@@ -129,11 +131,11 @@ func (p *ConnectionPool) Get() *Client {
 		// Initialize or reset sequence generator
 		// Each new connection gets fresh sequence starting at 1
 		if client.seqGen == nil {
-			client.seqGen = NewSequenceGenerator()
+			client.seqGen = messaging.NewSequenceGenerator()
 		} else {
 			// Reset counter for reused client
 			// (though with sync.Pool, usually get new instance)
-			atomic.StoreInt64(&client.seqGen.counter, 0)
+			client.seqGen.Reset()
 		}
 
 		// Initialize slow client detection fields

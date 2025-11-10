@@ -7,13 +7,14 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Copy the entire source tree (flat structure - all .go files at root)
+# Copy the entire source tree
+# Structure: cmd/, internal/ with organized packages
 COPY . .
 
-# Build the application from current directory (main.go is at root)
+# Build the single-core variant from cmd/single
 # -ldflags="-s -w" strips debug information, creating a smaller binary
 # CGO_ENABLED=0 ensures a static binary without C dependencies
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /odin-ws-server .
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /odin-ws-server ./cmd/single
 
 # Stage 2: Create the final, minimal image
 FROM alpine:latest

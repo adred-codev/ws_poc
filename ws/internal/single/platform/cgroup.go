@@ -1,4 +1,4 @@
-package main
+package platform
 
 import (
 	"os"
@@ -31,7 +31,7 @@ import (
 //   - 512MB container: Returns 536870912 (512 * 1024 * 1024)
 //   - Unlimited: Returns 0
 //   - Non-containerized: Returns 0 with error
-func getMemoryLimit() (int64, error) {
+func GetMemoryLimit() (int64, error) {
 	// Try cgroup v2 first (newer systems, Cloud Run)
 	// Path: /sys/fs/cgroup/memory.max
 	// Format: "536870912" or "max" (unlimited)

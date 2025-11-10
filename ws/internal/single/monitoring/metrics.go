@@ -1,4 +1,4 @@
-package main
+package monitoring
 
 import (
 	"net/http"
@@ -6,6 +6,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/adred-codev/ws_poc/internal/single/platform"
+	"github.com/adred-codev/ws_poc/internal/single/types"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -29,7 +31,7 @@ var (
 		Help: "Maximum allowed WebSocket connections",
 	})
 
-	connectionsFailed = prometheus.NewCounter(prometheus.CounterOpts{
+	ConnectionsFailed = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "ws_connections_failed_total",
 		Help: "Total number of failed connection attempts",
 	})
@@ -133,33 +135,33 @@ var (
 		Help: "Memory limit in bytes (from cgroup)",
 	})
 
-	cpuUsagePercent = prometheus.NewGauge(prometheus.GaugeOpts{
+	CpuUsagePercent = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "ws_cpu_usage_percent",
 		Help: "Current CPU usage percentage (container-aware: % of allocated CPUs)",
 	})
 
 	// Enhanced CPU metrics (container-aware)
-	cpuContainerPercent = prometheus.NewGauge(prometheus.GaugeOpts{
+	CpuContainerPercent = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "ws_cpu_container_percent",
 		Help: "CPU usage as percentage of container allocation (0-100%)",
 	})
 
-	cpuHostPercent = prometheus.NewGauge(prometheus.GaugeOpts{
+	CpuHostPercent = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "ws_cpu_host_percent",
 		Help: "CPU usage as percentage of total host CPUs (for reference)",
 	})
 
-	cpuAllocationCores = prometheus.NewGauge(prometheus.GaugeOpts{
+	CpuAllocationCores = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "ws_cpu_allocation_cores",
 		Help: "Number of CPU cores allocated to container",
 	})
 
-	cpuThrottledSecondsTotal = prometheus.NewCounter(prometheus.CounterOpts{
+	CpuThrottledSecondsTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "ws_cpu_throttled_seconds_total",
 		Help: "Total time (seconds) container CPU was throttled by cgroup",
 	})
 
-	cpuThrottleEventsTotal = prometheus.NewCounter(prometheus.CounterOpts{
+	CpuThrottleEventsTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "ws_cpu_throttle_events_total",
 		Help: "Total number of times container hit CPU limit and was throttled",
 	})
@@ -218,7 +220,7 @@ func init() {
 	prometheus.MustRegister(connectionsTotal)
 	prometheus.MustRegister(connectionsActive)
 	prometheus.MustRegister(connectionsMax)
-	prometheus.MustRegister(connectionsFailed)
+	prometheus.MustRegister(ConnectionsFailed)
 	prometheus.MustRegister(disconnectsTotal)
 	prometheus.MustRegister(connectionDuration)
 
@@ -241,12 +243,12 @@ func init() {
 
 	prometheus.MustRegister(memoryUsageBytes)
 	prometheus.MustRegister(memoryLimitBytes)
-	prometheus.MustRegister(cpuUsagePercent)
-	prometheus.MustRegister(cpuContainerPercent)
-	prometheus.MustRegister(cpuHostPercent)
-	prometheus.MustRegister(cpuAllocationCores)
-	prometheus.MustRegister(cpuThrottledSecondsTotal)
-	prometheus.MustRegister(cpuThrottleEventsTotal)
+	prometheus.MustRegister(CpuUsagePercent)
+	prometheus.MustRegister(CpuContainerPercent)
+	prometheus.MustRegister(CpuHostPercent)
+	prometheus.MustRegister(CpuAllocationCores)
+	prometheus.MustRegister(CpuThrottledSecondsTotal)
+	prometheus.MustRegister(CpuThrottleEventsTotal)
 	prometheus.MustRegister(goroutinesActive)
 
 	prometheus.MustRegister(kafkaConnected)
@@ -261,9 +263,17 @@ func init() {
 	prometheus.MustRegister(errorsTotal)
 }
 
+// ServerMetrics is an interface that provides metrics access to server state
+// This avoids circular dependencies between monitoring and core packages
+type ServerMetrics interface {
+	GetConfig() types.ServerConfig
+	GetStats() *types.Stats
+	GetKafkaConsumer() interface{} // Returns kafka.Consumer but we only check if nil
+}
+
 // MetricsCollector handles periodic collection of system metrics
 type MetricsCollector struct {
-	server    *Server
+	server    ServerMetrics
 	stopChan  chan struct{}
 	lastStats cpuStats
 }
@@ -273,7 +283,7 @@ type cpuStats struct {
 	lastCPUUsage   time.Duration
 }
 
-func NewMetricsCollector(server *Server) *MetricsCollector {
+func NewMetricsCollector(server ServerMetrics) *MetricsCollector {
 	return &MetricsCollector{
 		server:   server,
 		stopChan: make(chan struct{}),
@@ -282,17 +292,19 @@ func NewMetricsCollector(server *Server) *MetricsCollector {
 
 // Start begins collecting metrics periodically
 func (m *MetricsCollector) Start() {
+	config := m.server.GetConfig()
+
 	// Set static metrics
-	connectionsMax.Set(float64(m.server.config.MaxConnections))
+	connectionsMax.Set(float64(config.MaxConnections))
 
 	// Get memory limit from cgroup
-	memLimit, err := getMemoryLimit()
+	memLimit, err := platform.GetMemoryLimit()
 	if err == nil && memLimit > 0 {
 		memoryLimitBytes.Set(float64(memLimit))
 	}
 
 	// Collect metrics at configured interval
-	ticker := time.NewTicker(m.server.config.MetricsInterval)
+	ticker := time.NewTicker(config.MetricsInterval)
 	go func() {
 		defer ticker.Stop()
 		for {
@@ -313,8 +325,10 @@ func (m *MetricsCollector) Stop() {
 
 // collect gathers current metrics
 func (m *MetricsCollector) collect() {
+	stats := m.server.GetStats()
+
 	// Connection metrics
-	connectionsActive.Set(float64(atomic.LoadInt64(&m.server.stats.CurrentConnections)))
+	connectionsActive.Set(float64(atomic.LoadInt64(&stats.CurrentConnections)))
 
 	// Memory metrics
 	var mem runtime.MemStats
@@ -322,13 +336,13 @@ func (m *MetricsCollector) collect() {
 	memoryUsageBytes.Set(float64(mem.Alloc))
 
 	// CPU metrics (estimated)
-	cpuUsagePercent.Set(m.estimateCPU())
+	CpuUsagePercent.Set(m.estimateCPU())
 
 	// Goroutine metrics
 	goroutinesActive.Set(float64(runtime.NumGoroutine()))
 
 	// Kafka status
-	if m.server.kafkaConsumer != nil {
+	if m.server.GetKafkaConsumer() != nil {
 		kafkaConnected.Set(1)
 	} else {
 		kafkaConnected.Set(0)
@@ -338,16 +352,18 @@ func (m *MetricsCollector) collect() {
 // estimateCPU gets CPU usage from server stats
 func (m *MetricsCollector) estimateCPU() float64 {
 	// Read CPU percentage from server stats (collected by collectMetrics goroutine)
-	m.server.stats.mu.RLock()
-	cpuPercent := m.server.stats.CPUPercent
-	m.server.stats.mu.RUnlock()
+	stats := m.server.GetStats()
+	stats.Mu.RLock()
+	cpuPercent := stats.CPUPercent
+	stats.Mu.RUnlock()
 	return cpuPercent
 }
 
 // UpdateConnectionMetrics updates connection-related metrics
-func UpdateConnectionMetrics(server *Server) {
+func UpdateConnectionMetrics(server ServerMetrics) {
+	stats := server.GetStats()
 	connectionsTotal.Inc()
-	connectionsActive.Set(float64(atomic.LoadInt64(&server.stats.CurrentConnections)))
+	connectionsActive.Set(float64(atomic.LoadInt64(&stats.CurrentConnections)))
 }
 
 // UpdateMessageMetrics updates message-related metrics
@@ -486,15 +502,15 @@ func RecordDisconnect(reason, initiatedBy string, duration time.Duration) {
 }
 
 // RecordDisconnectWithStats tracks a disconnect and updates both Prometheus and Stats
-func RecordDisconnectWithStats(stats *Stats, reason, initiatedBy string, duration time.Duration) {
+func RecordDisconnectWithStats(stats *types.Stats, reason, initiatedBy string, duration time.Duration) {
 	// Update Prometheus metrics
 	disconnectsTotal.WithLabelValues(reason, initiatedBy).Inc()
 	connectionDuration.WithLabelValues(reason).Observe(duration.Seconds())
 
 	// Update Stats struct for /health endpoint
-	stats.disconnectsMu.Lock()
+	stats.DisconnectsMu.Lock()
 	stats.DisconnectsByReason[reason]++
-	stats.disconnectsMu.Unlock()
+	stats.DisconnectsMu.Unlock()
 }
 
 // RecordDroppedBroadcast tracks a dropped broadcast message with channel and reason
@@ -503,14 +519,14 @@ func RecordDroppedBroadcast(channel, reason string) {
 }
 
 // RecordDroppedBroadcastWithStats tracks a dropped broadcast and updates both Prometheus and Stats
-func RecordDroppedBroadcastWithStats(stats *Stats, channel, reason string) {
+func RecordDroppedBroadcastWithStats(stats *types.Stats, channel, reason string) {
 	// Update Prometheus metrics
 	droppedBroadcastsDetailed.WithLabelValues(channel, reason).Inc()
 
 	// Update Stats struct for /health endpoint
-	stats.dropsMu.Lock()
+	stats.DropsMu.Lock()
 	stats.DroppedBroadcastsByChannel[channel]++
-	stats.dropsMu.Unlock()
+	stats.DropsMu.Unlock()
 }
 
 // RecordSlowClientAttempt records the number of send attempts before slow client disconnect
@@ -524,21 +540,21 @@ func RecordClientBufferSize(bufferLen, bufferCap int) {
 }
 
 // RecordClientBufferSizeWithStats samples a client's send buffer and updates both Prometheus and Stats
-func RecordClientBufferSizeWithStats(stats *Stats, bufferLen, bufferCap int) {
+func RecordClientBufferSizeWithStats(stats *types.Stats, bufferLen, bufferCap int) {
 	// Update Prometheus metrics
 	clientSendBufferSize.WithLabelValues("all").Observe(float64(bufferLen))
 
 	// Update Stats struct for /health endpoint (keep last 100 samples)
 	usagePercent := int(float64(bufferLen) / float64(bufferCap) * 100)
-	stats.buffersMu.Lock()
+	stats.BuffersMu.Lock()
 	stats.BufferSaturationSamples = append(stats.BufferSaturationSamples, usagePercent)
 	if len(stats.BufferSaturationSamples) > 100 {
 		stats.BufferSaturationSamples = stats.BufferSaturationSamples[1:]
 	}
-	stats.buffersMu.Unlock()
+	stats.BuffersMu.Unlock()
 }
 
 // handleMetrics serves Prometheus metrics at /metrics endpoint
-func handleMetrics(w http.ResponseWriter, r *http.Request) {
+func HandleMetrics(w http.ResponseWriter, r *http.Request) {
 	promhttp.Handler().ServeHTTP(w, r)
 }

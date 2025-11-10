@@ -1,4 +1,4 @@
-package main
+package core
 
 import (
 	"context"
@@ -12,7 +12,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/adred-codev/ws_poc/kafka"
+	"github.com/adred-codev/ws_poc/internal/single/kafka"
+	"github.com/adred-codev/ws_poc/internal/single/limits"
+	"github.com/adred-codev/ws_poc/internal/single/messaging"
+	"github.com/adred-codev/ws_poc/internal/single/monitoring"
+	"github.com/adred-codev/ws_poc/internal/single/types"
 	"github.com/gobwas/ws"
 	"github.com/gobwas/ws/wsutil"
 	"github.com/rs/zerolog"
@@ -35,35 +39,8 @@ const (
 	pingPeriod = (pongWait * 9) / 10
 )
 
-type ServerConfig struct {
-	Addr            string
-	KafkaBrokers   []string
-	ConsumerGroup  string
-	MaxConnections int
-
-	// Static resource limits (explicit configuration)
-	CPULimit    float64 // CPU cores available (from docker limit)
-	MemoryLimit int64   // Memory bytes available (from docker limit)
-
-	// Rate limiting (prevent overload)
-	MaxKafkaMessagesPerSec int // Max Kafka messages consumed per second
-	MaxBroadcastsPerSec    int // Max broadcasts per second
-	MaxGoroutines          int // Hard goroutine limit
-
-	// Safety thresholds (emergency brakes)
-	CPURejectThreshold float64 // Reject new connections above this CPU % (default: 75)
-	CPUPauseThreshold  float64 // Pause Kafka consumption above this CPU % (default: 80)
-
-	// Monitoring intervals
-	MetricsInterval time.Duration // Metrics collection interval (default: 15s)
-
-	// Logging configuration
-	LogLevel  LogLevel  // Log level (default: info)
-	LogFormat LogFormat // Log format (default: json)
-}
-
 type Server struct {
-	config        ServerConfig
+	config        types.ServerConfig
 	logger        zerolog.Logger // Structured logger
 	listener      net.Listener
 	kafkaConsumer *kafka.Consumer
@@ -77,12 +54,12 @@ type Server struct {
 	subscriptionIndex *SubscriptionIndex // Fast lookup: channel → subscribers (93% CPU savings!)
 
 	// Rate limiting
-	rateLimiter *RateLimiter
+	rateLimiter *limits.RateLimiter
 
 	// Monitoring
-	auditLogger      *AuditLogger
-	metricsCollector *MetricsCollector
-	resourceGuard    *ResourceGuard // Replaces DynamicCapacityManager
+	auditLogger      *monitoring.AuditLogger
+	metricsCollector *monitoring.MetricsCollector
+	resourceGuard    *limits.ResourceGuard // Replaces DynamicCapacityManager
 
 	// Lifecycle
 	ctx          context.Context
@@ -91,43 +68,14 @@ type Server struct {
 	shuttingDown int32 // Atomic flag for graceful shutdown
 
 	// Stats
-	stats *Stats
+	stats *types.Stats
 }
 
-type Stats struct {
-	TotalConnections   int64
-	CurrentConnections int64
-	MessagesSent       int64
-	MessagesReceived   int64
-	BytesSent          int64
-	BytesReceived      int64
-	StartTime          time.Time
-	mu                 sync.RWMutex
-	CPUPercent         float64
-	MemoryMB           float64
-
-	// Message delivery reliability metrics
-	SlowClientsDisconnected int64 // Count of clients disconnected for being too slow
-	RateLimitedMessages     int64 // Count of messages dropped due to rate limiting
-	MessageReplayRequests   int64 // Count of replay requests served (gap recovery)
-
-	// Phase 2 observability metrics
-	DisconnectsByReason        map[string]int64 // Disconnect counts by reason (read_error, write_timeout, etc.)
-	DroppedBroadcastsByChannel map[string]int64 // Dropped broadcast counts by channel
-	BufferSaturationSamples    []int            // Recent buffer saturation samples (last 100)
-	disconnectsMu              sync.RWMutex     // Protects DisconnectsByReason map
-	dropsMu                    sync.RWMutex     // Protects DroppedBroadcastsByChannel map
-	buffersMu                  sync.RWMutex     // Protects BufferSaturationSamples slice
-
-	// Phase 4 logging counters
-	DroppedBroadcastLogCounter int64 // Counter for sampled logging (every 100th drop)
-}
-
-func NewServer(config ServerConfig) (*Server, error) {
+func NewServer(config types.ServerConfig) (*Server, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Initialize structured logger
-	logger := NewLogger(LoggerConfig{
+	logger := monitoring.NewLogger(monitoring.LoggerConfig{
 		Level:  config.LogLevel,
 		Format: config.LogFormat,
 	})
@@ -140,8 +88,8 @@ func NewServer(config ServerConfig) (*Server, error) {
 		connections:       NewConnectionPool(config.MaxConnections),
 		connectionsSem:    make(chan struct{}, config.MaxConnections),
 		subscriptionIndex: NewSubscriptionIndex(), // Fast channel → subscribers lookup
-		rateLimiter:       NewRateLimiter(),
-		stats: &Stats{
+		rateLimiter:       limits.NewRateLimiter(),
+		stats: &types.Stats{
 			StartTime:                  time.Now(),
 			DisconnectsByReason:        make(map[string]int64),
 			DroppedBroadcastsByChannel: make(map[string]int64),
@@ -150,12 +98,12 @@ func NewServer(config ServerConfig) (*Server, error) {
 	}
 
 	// Initialize monitoring
-	s.auditLogger = NewAuditLogger(INFO)          // Log INFO and above
-	s.auditLogger.SetAlerter(NewConsoleAlerter()) // Use console alerter for now
-	s.metricsCollector = NewMetricsCollector(s)
+	s.auditLogger = monitoring.NewAuditLogger(monitoring.INFO) // Log INFO and above
+	s.auditLogger.SetAlerter(monitoring.NewConsoleAlerter())   // Use console alerter for now
+	s.metricsCollector = monitoring.NewMetricsCollector(s)
 
 	// Initialize ResourceGuard with static configuration
-	s.resourceGuard = NewResourceGuard(config, logger, &s.stats.CurrentConnections)
+	s.resourceGuard = limits.NewResourceGuard(config, logger, &s.stats.CurrentConnections)
 
 	logger.Info().
 		Str("addr", config.Addr).
@@ -202,6 +150,21 @@ func NewServer(config ServerConfig) (*Server, error) {
 	return s, nil
 }
 
+// GetConfig implements monitoring.ServerMetrics interface
+func (s *Server) GetConfig() types.ServerConfig {
+	return s.config
+}
+
+// GetStats implements monitoring.ServerMetrics interface
+func (s *Server) GetStats() *types.Stats {
+	return s.stats
+}
+
+// GetKafkaConsumer implements monitoring.ServerMetrics interface
+func (s *Server) GetKafkaConsumer() interface{} {
+	return s.kafkaConsumer
+}
+
 func (s *Server) Start() error {
 	// Simple TCP listener without custom socket control
 	// Custom socket options were causing bind issues in containers
@@ -230,7 +193,7 @@ func (s *Server) Start() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", s.handleWebSocket)
 	mux.HandleFunc("/health", s.handleHealth)
-	mux.HandleFunc("/metrics", handleMetrics) // Prometheus metrics endpoint
+	mux.HandleFunc("/metrics", monitoring.HandleMetrics) // Prometheus metrics endpoint
 
 	server := &http.Server{
 		Handler:        mux,
@@ -307,18 +270,18 @@ func (s *Server) collectMetrics() {
 				memInfo, err := proc.MemoryInfo()
 				if err == nil {
 					memMB := float64(memInfo.RSS) / 1024 / 1024
-					s.stats.mu.Lock()
+					s.stats.Mu.Lock()
 					s.stats.MemoryMB = memMB
-					s.stats.mu.Unlock()
+					s.stats.Mu.Unlock()
 				}
 			} else {
 				// Fallback to system memory
 				vmem, err := mem.VirtualMemory()
 				if err == nil {
 					memMB := float64(vmem.Used) / 1024 / 1024
-					s.stats.mu.Lock()
+					s.stats.Mu.Lock()
 					s.stats.MemoryMB = memMB
-					s.stats.mu.Unlock()
+					s.stats.Mu.Unlock()
 				}
 			}
 		}
@@ -338,9 +301,9 @@ func (s *Server) monitorMemory() {
 		case <-s.ctx.Done():
 			return
 		case <-ticker.C:
-			s.stats.mu.RLock()
+			s.stats.Mu.RLock()
 			memUsedMB := s.stats.MemoryMB
-			s.stats.mu.RUnlock()
+			s.stats.Mu.RUnlock()
 
 			memPercent := (memUsedMB / memLimitMB) * 100
 			currentConns := atomic.LoadInt64(&s.stats.CurrentConnections)
@@ -400,7 +363,7 @@ func (s *Server) sampleClientBuffers() {
 				bufferLen := len(client.send)
 				bufferCap := cap(client.send)
 				usagePercent := float64(bufferLen) / float64(bufferCap) * 100
-				RecordClientBufferSizeWithStats(s.stats, bufferLen, bufferCap)
+				monitoring.RecordClientBufferSizeWithStats(s.stats, bufferLen, bufferCap)
 
 				// Phase 4: Track high saturation clients
 				if usagePercent >= 90 {
@@ -453,7 +416,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			Int("max_connections", s.config.MaxConnections).
 			Str("reason", reason).
 			Msg("Connection rejected by ResourceGuard")
-		connectionsFailed.Inc()
+		monitoring.ConnectionsFailed.Inc()
 		http.Error(w, "Server overloaded", http.StatusServiceUnavailable)
 		return
 	}
@@ -468,7 +431,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			"currentConnections": atomic.LoadInt64(&s.stats.CurrentConnections),
 			"maxConnections":     s.config.MaxConnections,
 		})
-		connectionsFailed.Inc()
+		monitoring.ConnectionsFailed.Inc()
 		http.Error(w, "Server at capacity", http.StatusServiceUnavailable)
 		return
 	}
@@ -480,7 +443,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			"error":      err.Error(),
 			"remoteAddr": r.RemoteAddr,
 		})
-		connectionsFailed.Inc()
+		monitoring.ConnectionsFailed.Inc()
 		s.logger.Error().
 			Err(err).
 			Msg("Failed to upgrade connection")
@@ -497,7 +460,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	atomic.AddInt64(&s.stats.CurrentConnections, 1)
 
 	// Update Prometheus metrics
-	UpdateConnectionMetrics(s)
+	monitoring.UpdateConnectionMetrics(s)
 
 	go s.writePump(client)
 	go s.readPump(client)
@@ -510,7 +473,7 @@ func (s *Server) disconnectClient(c *Client, reason, initiatedBy string) {
 	duration := time.Since(c.connectedAt)
 
 	// Record disconnect metrics (both Prometheus and Stats)
-	RecordDisconnectWithStats(s.stats, reason, initiatedBy, duration)
+	monitoring.RecordDisconnectWithStats(s.stats, reason, initiatedBy, duration)
 
 	// Log disconnect with enhanced context (Phase 4: Structured logging)
 	bufferLen := len(c.send)
@@ -523,7 +486,7 @@ func (s *Server) disconnectClient(c *Client, reason, initiatedBy string) {
 		Str("initiated_by", initiatedBy).
 		Dur("connection_duration", duration).
 		Int("subscriptions_count", c.subscriptions.Count()).
-		Int64("sequence_number", atomic.LoadInt64(&c.seqGen.counter)).
+		Int64("sequence_number", c.seqGen.Current()).
 		Int("send_buffer_len", bufferLen).
 		Int("send_buffer_cap", bufferCap).
 		Float64("send_buffer_usage_pct", bufferUsagePercent).
@@ -561,8 +524,8 @@ func (s *Server) readPump(c *Client) {
 	defer func() {
 		// Determine disconnect reason if not already set
 		if disconnectReason == "" {
-			disconnectReason = DisconnectReasonReadError
-			initiatedBy = DisconnectInitiatedByClient
+			disconnectReason = monitoring.DisconnectReasonReadError
+			initiatedBy = monitoring.DisconnectInitiatedByClient
 		}
 		s.disconnectClient(c, disconnectReason, initiatedBy)
 	}()
@@ -573,8 +536,8 @@ func (s *Server) readPump(c *Client) {
 		msg, op, err := wsutil.ReadClientData(c.conn)
 		if err != nil {
 			// All read errors treated as client-initiated disconnect
-			disconnectReason = DisconnectReasonReadError
-			initiatedBy = DisconnectInitiatedByClient
+			disconnectReason = monitoring.DisconnectReasonReadError
+			initiatedBy = monitoring.DisconnectInitiatedByClient
 			break
 		}
 
@@ -582,8 +545,8 @@ func (s *Server) readPump(c *Client) {
 
 		atomic.AddInt64(&s.stats.MessagesReceived, 1)
 		atomic.AddInt64(&s.stats.BytesReceived, int64(len(msg)))
-		UpdateMessageMetrics(0, 1)
-		UpdateBytesMetrics(0, int64(len(msg)))
+		monitoring.UpdateMessageMetrics(0, 1)
+		monitoring.UpdateBytesMetrics(0, int64(len(msg)))
 
 		if op == ws.OpText {
 			// Rate limiting check - prevent client from flooding server
@@ -626,7 +589,7 @@ func (s *Server) readPump(c *Client) {
 
 				// Increment rate limit counter for monitoring
 				atomic.AddInt64(&s.stats.RateLimitedMessages, 1)
-				IncrementRateLimitedMessages()
+				monitoring.IncrementRateLimitedMessages()
 
 				// Drop the message but don't disconnect
 				// Rationale: Might be temporary spike, give them a chance
@@ -694,8 +657,8 @@ func (s *Server) writePump(c *Client) {
 			}
 			atomic.AddInt64(&s.stats.MessagesSent, 1)
 			atomic.AddInt64(&s.stats.BytesSent, int64(len(message)))
-			UpdateMessageMetrics(1, 0)
-			UpdateBytesMetrics(int64(len(message)), 0)
+			monitoring.UpdateMessageMetrics(1, 0)
+			monitoring.UpdateBytesMetrics(int64(len(message)), 0)
 
 		case <-ticker.C:
 			if c.conn == nil {
@@ -761,7 +724,7 @@ func extractChannel(subject string) string {
 // This is the critical path for message delivery in a trading platform
 //
 // Changes from basic WebSocket broadcast:
-// 1. Wraps raw Kafka messages in MessageEnvelope with sequence numbers
+// 1. Wraps raw Kafka messages in messaging.MessageEnvelope with sequence numbers
 // 2. Stores in replay buffer BEFORE sending (ensures can replay if send fails)
 // 3. Detects slow clients and disconnects them (prevents head-of-line blocking)
 // 4. Never drops messages silently (either deliver or disconnect client)
@@ -833,18 +796,18 @@ func (s *Server) broadcast(subject string, message []byte) {
 	//   - Replay functionality still works (clients store messages)
 	//   - Sequence numbers weren't critical for this use case
 	//   - Performance gain: 6.5K → 12K connections @ 30% CPU
-	baseEnvelope := &MessageEnvelope{
+	baseEnvelope := &messaging.MessageEnvelope{
 		Seq:       0, // Shared sequence for all clients (acceptable for 12K capacity)
 		Timestamp: time.Now().UnixMilli(),
 		Type:      "price:update",
-		Priority:  PRIORITY_HIGH,
+		Priority:  messaging.PRIORITY_HIGH,
 		Data:      json.RawMessage(message),
 	}
 
 	// Serialize ONCE for all clients (not once per client!)
 	sharedData, err := baseEnvelope.Serialize()
 	if err != nil {
-		RecordSerializationError(ErrorSeverityCritical)
+		monitoring.RecordSerializationError(monitoring.ErrorSeverityCritical)
 		s.logger.Error().
 			Err(err).
 			Str("channel", channel).
@@ -890,7 +853,7 @@ func (s *Server) broadcast(subject string, message []byte) {
 			attempts := atomic.AddInt32(&client.sendAttempts, 1)
 
 			// Track dropped broadcast with channel and reason (both Prometheus and Stats)
-			RecordDroppedBroadcastWithStats(s.stats, channel, DropReasonBufferFull)
+			monitoring.RecordDroppedBroadcastWithStats(s.stats, channel, monitoring.DropReasonBufferFull)
 
 			// Phase 4: Sampled structured logging (every 100th drop to avoid log spam)
 			dropCount := atomic.AddInt64(&s.stats.DroppedBroadcastLogCounter, 1)
@@ -900,7 +863,7 @@ func (s *Server) broadcast(subject string, message []byte) {
 				s.logger.Warn().
 					Int64("client_id", client.id).
 					Str("channel", channel).
-					Str("reason", DropReasonBufferFull).
+					Str("reason", monitoring.DropReasonBufferFull).
 					Int32("attempts", attempts).
 					Int("buffer_len", bufferLen).
 					Int("buffer_cap", bufferCap).
@@ -931,10 +894,10 @@ func (s *Server) broadcast(subject string, message []byte) {
 
 				// Record disconnect metrics with proper categorization (both Prometheus and Stats)
 				duration := time.Since(client.connectedAt)
-				RecordDisconnectWithStats(s.stats, DisconnectReasonWriteTimeout, DisconnectInitiatedByServer, duration)
+				monitoring.RecordDisconnectWithStats(s.stats, monitoring.DisconnectReasonWriteTimeout, monitoring.DisconnectInitiatedByServer, duration)
 
 				// Record how many attempts it took before disconnect (for histogram analysis)
-				RecordSlowClientAttempt(int(attempts))
+				monitoring.RecordSlowClientAttempt(int(attempts))
 
 				// Audit log slow client disconnection
 				s.auditLogger.Warning("SlowClientDisconnected", "Client disconnected for being too slow", map[string]any{
@@ -942,7 +905,7 @@ func (s *Server) broadcast(subject string, message []byte) {
 					"consecutiveFails":   attempts,
 					"connectionDuration": duration.Seconds(),
 					"subscriptionsCount": client.subscriptions.Count(),
-					"sequenceNumber":     atomic.LoadInt64(&client.seqGen.counter),
+					"sequenceNumber":     client.seqGen.Current(),
 				})
 
 				// Send WebSocket close frame with reason code
@@ -970,7 +933,7 @@ func (s *Server) broadcast(subject string, message []byte) {
 				// - Client app performance issues
 				// - Need to optimize message size/frequency
 				atomic.AddInt64(&s.stats.SlowClientsDisconnected, 1)
-				IncrementSlowClientDisconnects()
+				monitoring.IncrementSlowClientDisconnects()
 			}
 		}
 	}
@@ -1190,10 +1153,10 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get current metrics
-	s.stats.mu.RLock()
+	s.stats.Mu.RLock()
 	cpuPercent := s.stats.CPUPercent
 	memoryMB := s.stats.MemoryMB
-	s.stats.mu.RUnlock()
+	s.stats.Mu.RUnlock()
 
 	currentConns := atomic.LoadInt64(&s.stats.CurrentConnections)
 	maxConns := int64(s.config.MaxConnections) // Static configuration
@@ -1359,29 +1322,29 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 // getObservabilityStats returns Phase 2 observability metrics for /health endpoint
 func (s *Server) getObservabilityStats() map[string]any {
 	// Get disconnect stats
-	s.stats.disconnectsMu.RLock()
+	s.stats.DisconnectsMu.RLock()
 	disconnects := make(map[string]int64)
 	totalDisconnects := int64(0)
 	for reason, count := range s.stats.DisconnectsByReason {
 		disconnects[reason] = count
 		totalDisconnects += count
 	}
-	s.stats.disconnectsMu.RUnlock()
+	s.stats.DisconnectsMu.RUnlock()
 
 	// Get dropped broadcast stats
-	s.stats.dropsMu.RLock()
+	s.stats.DropsMu.RLock()
 	droppedBroadcasts := make(map[string]int64)
 	totalDropped := int64(0)
 	for channel, count := range s.stats.DroppedBroadcastsByChannel {
 		droppedBroadcasts[channel] = count
 		totalDropped += count
 	}
-	s.stats.dropsMu.RUnlock()
+	s.stats.DropsMu.RUnlock()
 
 	// Calculate buffer saturation statistics
-	s.stats.buffersMu.RLock()
+	s.stats.BuffersMu.RLock()
 	bufferStats := calculateBufferStats(s.stats.BufferSaturationSamples)
-	s.stats.buffersMu.RUnlock()
+	s.stats.BuffersMu.RUnlock()
 
 	return map[string]any{
 		"disconnects": map[string]any{
@@ -1522,7 +1485,7 @@ func (s *Server) handleKafkaReconnect(c *Client, data []byte) {
 
 	// Increment reconnect counter for monitoring
 	atomic.AddInt64(&s.stats.MessageReplayRequests, 1)
-	IncrementReplayRequests()
+	monitoring.IncrementReplayRequests()
 }
 
 func (s *Server) Shutdown() error {
@@ -1593,7 +1556,7 @@ forceClose:
 		if client, ok := key.(*Client); ok {
 			// Record shutdown disconnect (both Prometheus and Stats)
 			duration := time.Since(client.connectedAt)
-			RecordDisconnectWithStats(s.stats, DisconnectReasonServerShutdown, DisconnectInitiatedByServer, duration)
+			monitoring.RecordDisconnectWithStats(s.stats, monitoring.DisconnectReasonServerShutdown, monitoring.DisconnectInitiatedByServer, duration)
 
 			close(client.send)
 		}
