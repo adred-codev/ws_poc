@@ -28,9 +28,12 @@ type ResourceGuard interface {
 	ShouldPauseKafka() bool
 }
 
+// Task represents a work item for the worker pool
+type Task func()
+
 // WorkerPool interface for async task submission
 type WorkerPool interface {
-	Submit(task func())
+	Submit(task Task)
 }
 
 // Consumer wraps franz-go client for consuming from Redpanda
