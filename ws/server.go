@@ -20,6 +20,16 @@ import (
 	"github.com/shirou/gopsutil/v3/process"
 )
 
+// workerPoolAdapter adapts *WorkerPool to kafka.WorkerPool interface
+// This bridges the type difference: WorkerPool.Submit(Task) vs interface Submit(func())
+type workerPoolAdapter struct {
+	pool *WorkerPool
+}
+
+func (a *workerPoolAdapter) Submit(task func()) {
+	a.pool.Submit(Task(task))
+}
+
 const (
 	// Time allowed to write a message to the peer.
 	// Reduced from 10s to 5s for faster detection of slow clients
@@ -186,14 +196,19 @@ func NewServer(config ServerConfig) (*Server, error) {
 			s.broadcast(subject, message)
 		}
 
+		// Create worker pool adapter to bridge type difference
+		// WorkerPool.Submit takes Task (type alias for func())
+		// kafka.WorkerPool interface expects func()
+		workerPoolAdapter := &workerPoolAdapter{pool: s.workerPool}
+
 		consumer, err := kafka.NewConsumer(kafka.ConsumerConfig{
 			Brokers:       config.KafkaBrokers,
 			ConsumerGroup: config.ConsumerGroup,
 			Topics:        kafka.AllTopics(),
 			Logger:        &logger,
 			Broadcast:     broadcastFunc,
-			ResourceGuard: s.resourceGuard, // Enable rate limiting and CPU brake
-			WorkerPool:    s.workerPool,    // Enable async processing (192 workers)
+			ResourceGuard: s.resourceGuard,   // Enable rate limiting and CPU brake
+			WorkerPool:    workerPoolAdapter, // Enable async processing (192 workers)
 		})
 		if err != nil {
 			s.auditLogger.Critical("KafkaConnectionFailed", "Failed to create Kafka consumer", map[string]any{
