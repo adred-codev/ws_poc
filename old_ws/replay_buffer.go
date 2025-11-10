@@ -138,56 +138,6 @@ func (rb *ReplayBuffer) Add(envelope *MessageEnvelope) {
 	rb.entries = append(rb.entries, ReplayEntry{seq: envelope.Seq, buf: stored})
 }
 
-// AddSerialized appends pre-serialized message to buffer, avoiding duplicate marshaling
-// This is the optimized version used by broadcast() which serializes ONCE for all clients
-// instead of once per client in Add() + once for WebSocket send
-//
-// Performance benefit:
-// - Old: 6.5K clients × 25 msg/sec × 600µs (2 serializations) = 98.85 CPU-seconds/sec = 9,885% CPU
-// - New: 25 msg/sec × 300µs (1 serialization) = 0.0075 CPU-seconds/sec = 0.75% CPU
-// - Reduction: 99.92% less CPU spent on serialization
-//
-// Called from broadcast() after single shared serialization:
-//
-//	sharedData := baseEnvelope.Serialize()  // Once
-//	for _, client := range subscribers {
-//	  client.replayBuffer.AddSerialized(baseEnvelope, sharedData)  // Reuse bytes
-//	}
-//
-// Thread-safe: Multiple connections can add concurrently
-func (rb *ReplayBuffer) AddSerialized(envelope *MessageEnvelope, serialized []byte) {
-	if rb == nil || envelope == nil || serialized == nil {
-		return
-	}
-
-	rb.mu.Lock()
-	defer rb.mu.Unlock()
-
-	// Evict oldest if full - RETURN buffer to pool
-	if len(rb.entries) >= rb.maxSize {
-		oldest := rb.entries[0]
-		if rb.pool != nil && oldest.buf != nil {
-			rb.pool.Put(oldest.buf) // Return to pool for reuse
-		}
-		rb.entries = rb.entries[1:]
-	}
-
-	// GET buffer from pool and store pre-serialized bytes
-	var stored *[]byte
-	if rb.pool != nil {
-		buf := rb.pool.Get(len(serialized))
-		*buf = append((*buf)[:0], serialized...) // Clear and copy
-		stored = buf
-	} else {
-		// Fallback if no pool configured
-		copyBuf := make([]byte, len(serialized))
-		copy(copyBuf, serialized)
-		stored = &copyBuf
-	}
-
-	rb.entries = append(rb.entries, ReplayEntry{seq: envelope.Seq, buf: stored})
-}
-
 // GetRange returns messages with sequence numbers from fromSeq to toSeq (inclusive)
 // Used when client detects gap and requests specific range
 //

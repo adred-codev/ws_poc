@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -12,23 +13,14 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/adred-codev/ws_poc/kafka"
 	"github.com/gobwas/ws"
 	"github.com/gobwas/ws/wsutil"
+	"github.com/nats-io/nats.go"
 	"github.com/rs/zerolog"
+	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/mem"
 	"github.com/shirou/gopsutil/v3/process"
 )
-
-// workerPoolAdapter adapts *WorkerPool to kafka.WorkerPool interface
-// This bridges the type difference: WorkerPool.Submit(Task) vs interface Submit(func())
-type workerPoolAdapter struct {
-	pool *WorkerPool
-}
-
-func (a *workerPoolAdapter) Submit(task func()) {
-	a.pool.Submit(Task(task))
-}
 
 const (
 	// Time allowed to write a message to the peer.
@@ -47,8 +39,7 @@ const (
 
 type ServerConfig struct {
 	Addr            string
-	KafkaBrokers    []string
-	ConsumerGroup   string
+	NATSUrl         string
 	MaxConnections  int
 	BufferSize      int
 	WorkerCount     int
@@ -59,13 +50,21 @@ type ServerConfig struct {
 	MemoryLimit int64   // Memory bytes available (from docker limit)
 
 	// Rate limiting (prevent overload)
-	MaxKafkaMessagesPerSec int // Max Kafka messages consumed per second
-	MaxBroadcastsPerSec    int // Max broadcasts per second
-	MaxGoroutines          int // Hard goroutine limit
+	MaxNATSMessagesPerSec int // Max NATS messages consumed per second
+	MaxBroadcastsPerSec   int // Max broadcasts per second
+	MaxGoroutines         int // Hard goroutine limit
 
 	// Safety thresholds (emergency brakes)
 	CPURejectThreshold float64 // Reject new connections above this CPU % (default: 75)
-	CPUPauseThreshold  float64 // Pause Kafka consumption above this CPU % (default: 80)
+	CPUPauseThreshold  float64 // Pause NATS consumption above this CPU % (default: 80)
+
+	// JetStream configuration
+	JSStreamMaxAge    time.Duration // Max message age in stream (default: 30s)
+	JSStreamMaxMsgs   int64         // Max messages in stream (default: 100000)
+	JSStreamMaxBytes  int64         // Max bytes in stream (default: 50MB)
+	JSConsumerAckWait time.Duration // Ack wait timeout (default: 30s)
+	JSStreamName      string        // Stream name (default: "ODIN_TOKENS")
+	JSConsumerName    string        // Consumer name (default: "ws-server")
 
 	// Monitoring intervals
 	MetricsInterval time.Duration // Metrics collection interval (default: 15s)
@@ -76,11 +75,14 @@ type ServerConfig struct {
 }
 
 type Server struct {
-	config        ServerConfig
-	logger        zerolog.Logger // Structured logger
-	listener      net.Listener
-	kafkaConsumer *kafka.Consumer
-	kafkaPaused   int32 // Atomic flag: 1 = paused, 0 = active
+	config          ServerConfig
+	logger          *log.Logger    // Old logger (for backwards compat)
+	structLogger    zerolog.Logger // New structured logger for Loki
+	listener        net.Listener
+	natsConn        *nats.Conn
+	natsJS          nats.JetStreamContext
+	natsSubcription *nats.Subscription
+	natsPaused      int32 // Atomic flag: 1 = paused, 0 = active
 
 	// Connection management
 	connections       *ConnectionPool
@@ -140,11 +142,11 @@ type Stats struct {
 	DroppedBroadcastLogCounter int64 // Counter for sampled logging (every 100th drop)
 }
 
-func NewServer(config ServerConfig) (*Server, error) {
+func NewServer(config ServerConfig, logger *log.Logger) (*Server, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Initialize structured logger
-	logger := NewLogger(LoggerConfig{
+	// Initialize structured logger for Loki
+	structLogger := NewLogger(LoggerConfig{
 		Level:  config.LogLevel,
 		Format: config.LogFormat,
 	})
@@ -153,14 +155,15 @@ func NewServer(config ServerConfig) (*Server, error) {
 
 	s := &Server{
 		config:            config,
-		logger:            logger,
+		logger:            logger,       // Old logger (backwards compat)
+		structLogger:      structLogger, // New structured logger
 		ctx:               ctx,
 		cancel:            cancel,
 		bufferPool:        bufferPool,
 		connections:       NewConnectionPool(config.MaxConnections, bufferPool),
 		connectionsSem:    make(chan struct{}, config.MaxConnections),
 		subscriptionIndex: NewSubscriptionIndex(), // Fast channel → subscribers lookup
-		workerPool:        NewWorkerPool(config.WorkerCount, config.WorkerQueueSize, logger),
+		workerPool:        NewWorkerPool(config.WorkerCount, config.WorkerQueueSize, structLogger),
 		rateLimiter:       NewRateLimiter(),
 		stats: &Stats{
 			StartTime:                  time.Now(),
@@ -176,56 +179,75 @@ func NewServer(config ServerConfig) (*Server, error) {
 	s.metricsCollector = NewMetricsCollector(s)
 
 	// Initialize ResourceGuard with static configuration
-	s.resourceGuard = NewResourceGuard(config, logger, &s.stats.CurrentConnections)
+	s.resourceGuard = NewResourceGuard(config, structLogger, &s.stats.CurrentConnections)
 
-	logger.Info().
+	structLogger.Info().
 		Str("addr", config.Addr).
 		Int("max_connections", config.MaxConnections).
 		Int("worker_count", config.WorkerCount).
 		Int("worker_queue", config.WorkerQueueSize).
-		Int("kafka_rate_limit", config.MaxKafkaMessagesPerSec).
+		Int("nats_rate_limit", config.MaxNATSMessagesPerSec).
 		Int("broadcast_rate_limit", config.MaxBroadcastsPerSec).
 		Msg("Server initialized with ResourceGuard")
 
-	// Initialize Kafka consumer
-	if len(config.KafkaBrokers) > 0 {
-		// Create broadcast function that will be called for each Kafka message
-		broadcastFunc := func(tokenID string, eventType string, message []byte) {
-			// Format subject as: "odin.token.{tokenID}.{eventType}"
-			subject := fmt.Sprintf("odin.token.%s.%s", tokenID, eventType)
-			s.broadcast(subject, message)
-		}
-
-		// Create worker pool adapter to bridge type difference
-		// WorkerPool.Submit takes Task (type alias for func())
-		// kafka.WorkerPool interface expects func()
-		workerPoolAdapter := &workerPoolAdapter{pool: s.workerPool}
-
-		consumer, err := kafka.NewConsumer(kafka.ConsumerConfig{
-			Brokers:       config.KafkaBrokers,
-			ConsumerGroup: config.ConsumerGroup,
-			Topics:        kafka.AllTopics(),
-			Logger:        &logger,
-			Broadcast:     broadcastFunc,
-			ResourceGuard: s.resourceGuard,   // Enable rate limiting and CPU brake
-			WorkerPool:    workerPoolAdapter, // Enable async processing (192 workers)
-		})
+	if config.NATSUrl != "" {
+		nc, err := nats.Connect(config.NATSUrl, nats.MaxReconnects(5), nats.ReconnectWait(2*time.Second))
 		if err != nil {
-			s.auditLogger.Critical("KafkaConnectionFailed", "Failed to create Kafka consumer", map[string]any{
-				"brokers": config.KafkaBrokers,
-				"error":   err.Error(),
+			s.auditLogger.Critical("NATSConnectionFailed", "Failed to connect to NATS", map[string]any{
+				"url":   config.NATSUrl,
+				"error": err.Error(),
 			})
-			return nil, fmt.Errorf("failed to create kafka consumer: %w", err)
+			return nil, fmt.Errorf("failed to connect to nats: %w", err)
 		}
-		s.kafkaConsumer = consumer
-		logger.Printf("Created Kafka consumer for brokers: %v", config.KafkaBrokers)
+		s.natsConn = nc
+		logger.Printf("Connected to NATS at %s", config.NATSUrl)
 
-		s.auditLogger.Info("KafkaConsumerCreated", "Kafka consumer created successfully", map[string]any{
-			"brokers":        config.KafkaBrokers,
-			"consumer_group": config.ConsumerGroup,
-			"topics":         kafka.AllTopics(),
+		s.auditLogger.Info("NATSConnected", "Connected to NATS successfully", map[string]any{
+			"url": config.NATSUrl,
 		})
 
+		// Initialize JetStream
+		js, err := nc.JetStream()
+		if err != nil {
+			RecordJetStreamError(ErrorSeverityFatal)
+			s.auditLogger.Critical("JetStreamInitFailed", "Failed to initialize JetStream", map[string]any{
+				"error": err.Error(),
+			})
+			logger.Printf("❌ FATAL: JetStream init failed: %v", err)
+			return nil, fmt.Errorf("failed to initialize jetstream: %w", err)
+		}
+		s.natsJS = js
+
+		// Create or update stream for token updates
+		streamName := config.JSStreamName
+		streamInfo, err := js.StreamInfo(streamName)
+		if err != nil {
+			// Stream doesn't exist, create it
+			logger.Printf("📦 Creating JetStream stream: %s", streamName)
+			_, err = js.AddStream(&nats.StreamConfig{
+				Name:      streamName,
+				Subjects:  []string{"odin.token.>"},
+				Retention: nats.InterestPolicy,     // Delete after all subscribers ack
+				MaxAge:    config.JSStreamMaxAge,   // Configured max age
+				Storage:   nats.MemoryStorage,      // In-memory for speed
+				Replicas:  1,                       // Single replica for now
+				Discard:   nats.DiscardOld,         // Drop oldest when full
+				MaxMsgs:   config.JSStreamMaxMsgs,  // Configured max messages
+				MaxBytes:  config.JSStreamMaxBytes, // Configured max bytes
+			})
+			if err != nil {
+				RecordJetStreamError(ErrorSeverityFatal)
+				s.auditLogger.Critical("StreamCreationFailed", "Failed to create JetStream stream", map[string]any{
+					"stream": streamName,
+					"error":  err.Error(),
+				})
+				logger.Printf("❌ FATAL: Stream creation failed: %v", err)
+				return nil, fmt.Errorf("failed to create stream: %w", err)
+			}
+			logger.Printf("✅ JetStream stream created: %s", streamName)
+		} else {
+			logger.Printf("✅ JetStream stream exists: %s (messages: %d)", streamName, streamInfo.State.Msgs)
+		}
 	}
 
 	return s, nil
@@ -240,22 +262,115 @@ func (s *Server) Start() error {
 	}
 	s.listener = listener
 
-	s.logger.Info().
-		Str("address", s.config.Addr).
-		Msg("Server listening")
+	s.logger.Printf("Server listening on %s", s.config.Addr)
 
 	s.workerPool.Start(s.ctx)
 
-	// Start Kafka consumer
-	if s.kafkaConsumer != nil {
-		if err := s.kafkaConsumer.Start(); err != nil {
-			s.auditLogger.Critical("KafkaStartFailed", "Failed to start Kafka consumer", map[string]any{
-				"error": err.Error(),
+	if s.natsConn != nil && s.natsJS != nil {
+		msgCount := int64(0)
+		droppedCount := int64(0)
+		ackFailCount := int64(0)
+
+		// Subscribe to JetStream with manual ack + rate limiting
+		// CRITICAL: Rate limiting prevents goroutine explosion and CPU overload
+		sub, err := s.natsJS.Subscribe("odin.token.>", func(msg *nats.Msg) {
+			count := atomic.AddInt64(&msgCount, 1)
+			if count%100 == 0 {
+				s.logger.Printf("📬 Received %d messages from JetStream", count)
+			}
+
+			// STEP 1: Rate limiting (CRITICAL - prevents overload)
+			// Check if we're allowed to process this message based on configured rate limit
+			allow, waitDuration := s.resourceGuard.AllowNATSMessage(s.ctx)
+			if !allow {
+				// Rate limit exceeded - NAK for redelivery
+				if err := msg.Nak(); err != nil {
+					RecordJetStreamError(ErrorSeverityWarning)
+					s.structLogger.Error().
+						Err(err).
+						Str("reason", "rate_limit_nak_failed").
+						Msg("Failed to NAK message during rate limiting")
+				}
+				dropped := atomic.AddInt64(&droppedCount, 1)
+				IncrementNATSDropped()
+				if dropped%100 == 0 {
+					s.structLogger.Warn().
+						Int64("dropped_count", dropped).
+						Dur("would_wait", waitDuration).
+						Int("rate_limit", s.config.MaxNATSMessagesPerSec).
+						Msg("NATS rate limit exceeded - NAK'ing messages for redelivery")
+				}
+				return
+			}
+
+			// STEP 2: CPU emergency brake
+			if s.resourceGuard.ShouldPauseNATS() {
+				// CPU critically high - NAK message for redelivery
+				if err := msg.Nak(); err != nil {
+					RecordJetStreamError(ErrorSeverityWarning)
+					s.structLogger.Error().
+						Err(err).
+						Str("reason", "cpu_brake_nak_failed").
+						Msg("Failed to NAK message during CPU emergency brake")
+				}
+				dropped := atomic.AddInt64(&droppedCount, 1)
+				IncrementNATSDropped()
+				if dropped%100 == 0 {
+					s.structLogger.Warn().
+						Int64("dropped_count", dropped).
+						Float64("cpu_threshold", s.config.CPUPauseThreshold).
+						Msg("CPU emergency brake - pausing NATS consumption")
+				}
+				return
+			}
+
+			// Track NATS message in Prometheus
+			IncrementNATSMessages()
+
+			// STEP 3: Submit to worker pool (can still drop if queue full)
+			s.workerPool.Submit(func() {
+				// CRITICAL: Pass NATS subject to broadcast for subscription filtering
+				// Subject format: "odin.token.BTC" → extracts "BTC" for filtering
+				// This reduces broadcast fanout from O(all_clients) to O(subscribed_clients)
+				// Performance gain: 10-20x CPU reduction with subscription filtering
+				s.broadcast(msg.Subject, msg.Data)
+
+				// Acknowledge message after successful broadcast
+				if err := msg.Ack(); err != nil {
+					RecordJetStreamError(ErrorSeverityWarning)
+					ackFails := atomic.AddInt64(&ackFailCount, 1)
+
+					// Log every ack failure at debug level, summary every 100 at warn level
+					s.structLogger.Debug().
+						Err(err).
+						Int64("total_ack_failures", ackFails).
+						Str("subject", msg.Subject).
+						Msg("Failed to ACK NATS message")
+
+					if ackFails%100 == 0 {
+						s.structLogger.Warn().
+							Int64("ack_failures", ackFails).
+							Err(err).
+							Msg("High NATS ACK failure rate - check NATS connection health")
+					}
+				}
 			})
-			return fmt.Errorf("failed to start kafka consumer: %w", err)
+		}, nats.Durable(s.config.JSConsumerName), nats.ManualAck(), nats.AckWait(s.config.JSConsumerAckWait))
+
+		if err != nil {
+			RecordJetStreamError(ErrorSeverityCritical)
+			s.auditLogger.Critical("JetStreamSubscriptionFailed", "Failed to subscribe to JetStream", map[string]any{
+				"subject": "odin.token.>",
+				"error":   err.Error(),
+			})
+			return fmt.Errorf("failed to subscribe to jetstream: %w", err)
 		}
-		s.logger.Info().
-			Msg("Started Kafka consumer for all topics")
+		s.natsSubcription = sub
+		s.logger.Printf("✅ Subscribed to JetStream: odin.token.> (durable, manual ack)")
+
+		// Monitor NATS connection status
+		s.wg.Add(1)
+		go s.monitorNATS()
 	}
 
 	mux := http.NewServeMux()
@@ -275,9 +390,7 @@ func (s *Server) Start() error {
 	go func() {
 		defer s.wg.Done()
 		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
-			s.logger.Error().
-				Err(err).
-				Msg("Server accept loop error")
+			s.logger.Printf("Server error: %v", err)
 		}
 	}()
 
@@ -297,8 +410,7 @@ func (s *Server) Start() error {
 	go s.sampleClientBuffers()
 
 	// Start ResourceGuard monitoring (static limits with safety checks)
-	// Now also updates server stats for unified CPU measurement
-	s.resourceGuard.StartMonitoring(s.ctx, s.config.MetricsInterval, s.stats)
+	s.resourceGuard.StartMonitoring(s.ctx, s.config.MetricsInterval)
 
 	s.auditLogger.Info("ServerStarted", "WebSocket server started successfully", map[string]any{
 		"addr":           s.config.Addr,
@@ -314,14 +426,10 @@ func (s *Server) collectMetrics() {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
-	// Get current process for memory stats
-	// NOTE: CPU is now measured by ResourceGuard via container-aware CPUMonitor
-	// to provide single source of truth and avoid divergence
+	// Get current process
 	proc, err := process.NewProcess(int32(os.Getpid()))
 	if err != nil {
-		s.logger.Error().
-			Err(err).
-			Msg("Failed to get process info")
+		s.logger.Printf("Failed to get process: %v", err)
 		proc = nil
 	}
 
@@ -330,8 +438,13 @@ func (s *Server) collectMetrics() {
 		case <-s.ctx.Done():
 			return
 		case <-ticker.C:
-			// CPU measurement REMOVED - now handled by ResourceGuard.UpdateResources()
-			// This eliminates dual measurement paths and prevents divergence
+			// Get CPU percentage (measure over 1 second for accuracy)
+			cpuPercent, err := cpu.Percent(1*time.Second, false)
+			if err == nil && len(cpuPercent) > 0 {
+				s.stats.mu.Lock()
+				s.stats.CPUPercent = cpuPercent[0]
+				s.stats.mu.Unlock()
+			}
 
 			// Get memory usage
 			if proc != nil {
@@ -352,6 +465,71 @@ func (s *Server) collectMetrics() {
 					s.stats.mu.Unlock()
 				}
 			}
+		}
+	}
+}
+
+func (s *Server) monitorNATS() {
+	defer s.wg.Done()
+
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	wasConnected := s.natsConn.IsConnected()
+	lastSubCheck := time.Now()
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-ticker.C:
+			isConnected := s.natsConn.IsConnected()
+
+			// Detect connection state changes
+			if wasConnected && !isConnected {
+				// Connection lost
+				s.auditLogger.Critical("NATSDisconnected", "Lost connection to NATS server", map[string]any{
+					"url": s.config.NATSUrl,
+				})
+				s.structLogger.Error().
+					Str("url", s.config.NATSUrl).
+					Msg("NATS connection lost")
+			} else if !wasConnected && isConnected {
+				// Connection restored
+				s.auditLogger.Info("NATSReconnected", "Reconnected to NATS server", map[string]any{
+					"url": s.config.NATSUrl,
+				})
+				s.structLogger.Info().
+					Str("url", s.config.NATSUrl).
+					Msg("NATS connection restored")
+			}
+
+			// Check subscription health every 30 seconds
+			if time.Since(lastSubCheck) >= 30*time.Second {
+				if s.natsSubcription != nil {
+					// Check if subscription is still valid
+					if !s.natsSubcription.IsValid() {
+						s.auditLogger.Critical("NATSSubscriptionInvalid", "NATS subscription is invalid", map[string]any{
+							"subject": "odin.token.>",
+						})
+						s.structLogger.Error().
+							Str("subject", "odin.token.>").
+							Msg("NATS subscription is invalid - clients will not receive updates")
+					}
+
+					// Get pending message count for monitoring
+					pending, _, err := s.natsSubcription.Pending()
+					if err == nil && pending > 1000 {
+						// High pending count indicates subscription isn't keeping up
+						s.structLogger.Warn().
+							Int("pending_messages", pending).
+							Msg("High NATS pending message count - subscription may be falling behind")
+					}
+				}
+				lastSubCheck = time.Now()
+			}
+
+			wasConnected = isConnected
 		}
 	}
 }
@@ -447,7 +625,7 @@ func (s *Server) sampleClientBuffers() {
 				highSaturationPercent := float64(highSaturationCount) / float64(samplesCollected) * 100
 				if highSaturationPercent >= 25 {
 					// Warning: 25%+ of sampled clients are at >90% buffer capacity
-					s.logger.Warn().
+					s.structLogger.Warn().
 						Int("high_saturation_count", highSaturationCount).
 						Int("total_sampled", samplesCollected).
 						Float64("high_saturation_pct", highSaturationPercent).
@@ -477,9 +655,12 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	shouldAccept, reason := s.resourceGuard.ShouldAcceptConnection()
 	if !shouldAccept {
 		currentConnections := atomic.LoadInt64(&s.stats.CurrentConnections)
-		// Removed audit logger call - rejections tracked via Prometheus metrics
-		// s.auditLogger.Warning("ConnectionRejected", reason, map[string]any{...})
-		s.logger.Debug().
+		s.auditLogger.Warning("ConnectionRejected", reason, map[string]any{
+			"currentConnections": currentConnections,
+			"maxConnections":     s.config.MaxConnections,
+			"reason":             reason,
+		})
+		s.structLogger.Warn().
 			Int64("current_connections", currentConnections).
 			Int("max_connections", s.config.MaxConnections).
 			Str("reason", reason).
@@ -512,9 +693,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			"remoteAddr": r.RemoteAddr,
 		})
 		connectionsFailed.Inc()
-		s.logger.Error().
-			Err(err).
-			Msg("Failed to upgrade connection")
+		s.logger.Printf("Failed to upgrade connection: %v", err)
 		return
 	}
 
@@ -548,7 +727,7 @@ func (s *Server) disconnectClient(c *Client, reason, initiatedBy string) {
 	bufferCap := cap(c.send)
 	bufferUsagePercent := float64(bufferLen) / float64(bufferCap) * 100
 
-	s.logger.Info().
+	s.structLogger.Info().
 		Int64("client_id", c.id).
 		Str("reason", reason).
 		Str("initiated_by", initiatedBy).
@@ -626,11 +805,7 @@ func (s *Server) readPump(c *Client) {
 			// Rate limit: 100 burst, 10/sec sustained
 			// This allows legitimate bursts (rapid order entry) while preventing abuse
 			if !s.rateLimiter.CheckLimit(c.id) {
-				s.logger.Warn().
-					Int64("client_id", c.id).
-					Int("burst_limit", 100).
-					Int("rate_limit_per_sec", 10).
-					Msg("Client rate limited")
+				s.logger.Printf("⚠️  Client %d rate limited (exceeded 100 burst or 10/sec sustained)", c.id)
 
 				// Audit log rate limiting event
 				s.auditLogger.Warning("ClientRateLimited", "Client exceeded rate limit", map[string]any{
@@ -694,7 +869,7 @@ func (s *Server) writePump(c *Client) {
 		case message, ok := <-c.send:
 			if !ok {
 				// The server closed the channel.
-				s.logger.Debug().
+				s.structLogger.Debug().
 					Int64("client_id", c.id).
 					Str("reason", "send_channel_closed").
 					Msg("Client send channel closed, disconnecting")
@@ -705,7 +880,7 @@ func (s *Server) writePump(c *Client) {
 			}
 
 			if c.conn == nil {
-				s.logger.Warn().
+				s.structLogger.Warn().
 					Int64("client_id", c.id).
 					Str("reason", "connection_nil").
 					Msg("Client connection is nil in writePump")
@@ -715,7 +890,7 @@ func (s *Server) writePump(c *Client) {
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			err := wsutil.WriteServerMessage(c.conn, ws.OpText, message)
 			if err != nil {
-				s.logger.Debug().
+				s.structLogger.Debug().
 					Int64("client_id", c.id).
 					Err(err).
 					Str("reason", "write_error").
@@ -730,7 +905,7 @@ func (s *Server) writePump(c *Client) {
 
 		case <-ticker.C:
 			if c.conn == nil {
-				s.logger.Warn().
+				s.structLogger.Warn().
 					Int64("client_id", c.id).
 					Str("reason", "connection_nil_ping").
 					Msg("Client connection is nil during ping")
@@ -738,7 +913,7 @@ func (s *Server) writePump(c *Client) {
 			}
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 			if err := wsutil.WriteServerMessage(c.conn, ws.OpPing, nil); err != nil {
-				s.logger.Debug().
+				s.structLogger.Debug().
 					Int64("client_id", c.id).
 					Err(err).
 					Str("reason", "ping_write_error").
@@ -749,8 +924,8 @@ func (s *Server) writePump(c *Client) {
 	}
 }
 
-// extractChannel extracts the hierarchical channel identifier from a Kafka topic subject
-// Subject format: "odin.token.BTC.trade" → extracts "BTC.trade"
+// extractChannel extracts the hierarchical channel identifier from a NATS subject
+// NATS subject format: "odin.token.BTC.trade" → extracts "BTC.trade"
 //
 // Subject structure:
 // - Part 0: Namespace ("odin")
@@ -792,7 +967,7 @@ func extractChannel(subject string) string {
 // This is the critical path for message delivery in a trading platform
 //
 // Changes from basic WebSocket broadcast:
-// 1. Wraps raw Kafka messages in MessageEnvelope with sequence numbers
+// 1. Wraps raw NATS messages in MessageEnvelope with sequence numbers
 // 2. Stores in replay buffer BEFORE sending (ensures can replay if send fails)
 // 3. Detects slow clients and disconnects them (prevents head-of-line blocking)
 // 4. Never drops messages silently (either deliver or disconnect client)
@@ -806,7 +981,7 @@ func extractChannel(subject string) string {
 // Performance characteristics WITH hierarchical filtering:
 // - O(m) where m = number of subscribed clients to specific event type
 // - With 10,000 clients, 500 subscribers per channel: ~0.1ms per broadcast
-// - Called ~12 times/second from Kafka consumer (varies by event type)
+// - Called ~12 times/second from NATS subscription (varies by event type)
 // - Total CPU: ~1-2% (vs 99%+ without filtering) - 50-100x improvement!
 //
 // Example savings with hierarchical channels:
@@ -817,11 +992,11 @@ func extractChannel(subject string) string {
 // - With hierarchical filtering: 12 × 500 = 6,000 writes/sec (CPU <30%)
 // - Result: 160x reduction vs no filtering, 8x reduction vs symbol-only filtering
 func (s *Server) broadcast(subject string, message []byte) {
-	// Extract hierarchical channel from subject for subscription filtering
+	// Extract hierarchical channel from NATS subject for subscription filtering
 	// Example: "odin.token.BTC.trade" → "BTC.trade"
 	channel := extractChannel(subject)
 
-	// Edge case: If channel is empty (malformed subject), skip broadcast entirely
+	// Edge case: If channel is empty (malformed NATS subject), skip broadcast entirely
 	// Invalid subjects indicate misconfigured publisher - should never happen in production
 	if channel == "" {
 		return
@@ -848,66 +1023,41 @@ func (s *Server) broadcast(subject string, message []byte) {
 	totalCount := len(subscribers)
 	successCount := 0
 
-	// CRITICAL OPTIMIZATION: Serialize message ONCE for all clients
-	// Without this optimization (old code):
-	//   - 6,590 clients × 25 msg/sec = 164,750 json.Marshal() calls/sec
-	//   - 164,750 × 600µs (2 serializations) = 98.85 CPU seconds/second
-	//   - On 1 core: 9,885% CPU needed → plateaus at ~6.5K connections
-	//
-	// With this optimization:
-	//   - 25 msg/sec × 1 marshal/msg = 25 json.Marshal() calls/sec
-	//   - 25 × 300µs = 7.5ms CPU/second = 0.75% CPU
-	//   - Result: 99.92% reduction in serialization overhead
-	//
-	// Trade-off: All clients receive seq=0 instead of unique sequence numbers
-	// This is acceptable because:
-	//   - Replay functionality still works (clients store messages)
-	//   - Sequence numbers weren't critical for this use case
-	//   - Performance gain: 6.5K → 12K connections @ 30% CPU
-	baseEnvelope := &MessageEnvelope{
-		Seq:       0, // Shared sequence for all clients (acceptable for 12K capacity)
-		Timestamp: time.Now().UnixMilli(),
-		Type:      "price:update",
-		Priority:  PRIORITY_HIGH,
-		Data:      json.RawMessage(message),
-	}
-
-	// Serialize ONCE for all clients (not once per client!)
-	sharedData, err := baseEnvelope.Serialize()
-	if err != nil {
-		RecordSerializationError(ErrorSeverityCritical)
-		s.logger.Error().
-			Err(err).
-			Str("channel", channel).
-			Int("subscribers", totalCount).
-			Msg("Failed to serialize broadcast message - affects all subscribers")
-		return // Cannot broadcast if serialization fails
-	}
-
 	// Iterate ONLY subscribed clients (not all clients!)
 	for _, client := range subscribers {
+		// Wrap raw NATS message in envelope with sequence number
+		// Message type: "price:update" (could be parsed from NATS subject)
+		// Priority: HIGH (trading data is critical but not life-or-death)
+		envelope, err := WrapMessage(message, "price:update", PRIORITY_HIGH, client.seqGen)
+		if err != nil {
+			RecordBroadcastError(ErrorSeverityWarning)
+			s.logger.Printf("❌ Failed to wrap message for client %d: %v", client.id, err)
+			continue // Skip to next client
+		}
+
 		// Add to replay buffer BEFORE sending
 		// Critical: If send fails, client can request replay
-		// Store the shared serialized data directly (already marshaled)
-		client.replayBuffer.AddSerialized(baseEnvelope, sharedData)
+		// If we added AFTER send, failed sends wouldn't be replayable
+		client.replayBuffer.Add(envelope)
+
+		// Serialize envelope to JSON for WebSocket transmission
+		data, err := envelope.Serialize()
+		if err != nil {
+			RecordSerializationError(ErrorSeverityWarning)
+			s.logger.Printf("❌ Failed to serialize message for client %d: %v", client.id, err)
+			continue // Skip to next client
+		}
 
 		// Attempt to send - COMPLETELY NON-BLOCKING
 		// Critical fix: Do not use time.After() which blocks the entire broadcast
 		// Instead, immediately detect full buffers and mark client as slow
-		// Send pre-serialized data (same bytes for all clients - zero per-client marshaling)
 		select {
-		case client.send <- sharedData:
+		case client.send <- data:
 			// Success - message queued for writePump to send
 			// Reset failure counter (client is healthy)
 			atomic.StoreInt32(&client.sendAttempts, 0)
 			client.lastMessageSentAt = time.Now()
 			successCount++
-
-			// DEBUG level: Zero overhead in production (LOG_LEVEL=info)
-			s.logger.Debug().
-				Int64("client_id", client.id).
-				Str("channel", channel).
-				Msg("Broadcast to client")
 
 		default:
 			// Buffer full - client can't keep up
@@ -929,7 +1079,7 @@ func (s *Server) broadcast(subject string, message []byte) {
 			if dropCount%100 == 0 {
 				bufferLen := len(client.send)
 				bufferCap := cap(client.send)
-				s.logger.Warn().
+				s.structLogger.Warn().
 					Int64("client_id", client.id).
 					Str("channel", channel).
 					Str("reason", DropReasonBufferFull).
@@ -944,10 +1094,7 @@ func (s *Server) broadcast(subject string, message []byte) {
 			// Log warning on first failure (avoid spam)
 			// Use atomic CompareAndSwap to avoid race condition
 			if attempts == 1 && atomic.CompareAndSwapInt32(&client.slowClientWarned, 0, 1) {
-				s.logger.Warn().
-					Int64("client_id", client.id).
-					Str("reason", "send_buffer_full").
-					Msg("Client is slow")
+				s.logger.Printf("⚠️  Client %d is slow (send buffer full)", client.id)
 			}
 
 			// Disconnect after 3 consecutive failures (industry standard)
@@ -955,11 +1102,7 @@ func (s *Server) broadcast(subject string, message []byte) {
 			// - Too low (1-2): False positives from brief network hiccups
 			// - Too high (5+): Slow client wastes resources too long
 			if attempts >= 3 {
-				s.logger.Warn().
-					Int64("client_id", client.id).
-					Int32("consecutive_failures", attempts).
-					Str("reason", "too_slow").
-					Msg("Disconnecting slow client")
+				s.logger.Printf("❌ Disconnecting client %d (too slow: %d consecutive send failures)", client.id, attempts)
 
 				// Record disconnect metrics with proper categorization (both Prometheus and Stats)
 				duration := time.Since(client.connectedAt)
@@ -1011,7 +1154,7 @@ func (s *Server) broadcast(subject string, message []byte) {
 	// Only logs when LOG_LEVEL=debug (no overhead in production)
 	if channel != "" {
 		successRate := float64(successCount) / float64(totalCount) * 100
-		s.logger.Debug().
+		s.structLogger.Debug().
 			Str("channel", channel).
 			Int("subscribers", totalCount).
 			Int("sent_successfully", successCount).
@@ -1036,8 +1179,9 @@ func (s *Server) broadcast(subject string, message []byte) {
 //
 // Industry patterns:
 // - FIX protocol: Gap fill requests are standard
+// - NATS JetStream: Consumers can request replay by sequence
 // - Kafka: Consumers can seek to specific offsets
-// - Our implementation: Similar to Kafka consumer offset seeking
+// - Our implementation: Similar to NATS JetStream
 func (s *Server) handleClientMessage(c *Client, data []byte) {
 	// Parse outer message structure
 	var req struct {
@@ -1046,10 +1190,7 @@ func (s *Server) handleClientMessage(c *Client, data []byte) {
 	}
 
 	if err := json.Unmarshal(data, &req); err != nil {
-		s.logger.Warn().
-			Int64("client_id", c.id).
-			Err(err).
-			Msg("Client sent invalid JSON")
+		s.logger.Printf("⚠️  Client %d sent invalid JSON: %v", c.id, err)
 		return
 	}
 
@@ -1073,18 +1214,11 @@ func (s *Server) handleClientMessage(c *Client, data []byte) {
 		}
 
 		if err := json.Unmarshal(req.Data, &replayReq); err != nil {
-			s.logger.Warn().
-				Int64("client_id", c.id).
-				Err(err).
-				Msg("Client sent invalid replay request")
+			s.logger.Printf("⚠️  Client %d sent invalid replay request: %v", c.id, err)
 			return
 		}
 
-		s.logger.Info().
-			Int64("client_id", c.id).
-			Int64("sequence_from", replayReq.From).
-			Int64("sequence_to", replayReq.To).
-			Msg("Client requesting replay")
+		s.logger.Printf("📬 Client %d requesting replay: seq %d to %d", c.id, replayReq.From, replayReq.To)
 
 		// Get messages from replay buffer
 		var messages []*MessageEnvelope
@@ -1096,10 +1230,7 @@ func (s *Server) handleClientMessage(c *Client, data []byte) {
 			messages = c.replayBuffer.GetRange(replayReq.From, replayReq.To)
 		}
 
-		s.logger.Info().
-			Int64("client_id", c.id).
-			Int("message_count", len(messages)).
-			Msg("Replaying messages to client")
+		s.logger.Printf("📬 Replaying %d messages to client %d", len(messages), c.id)
 
 		// Send each message from replay buffer
 		// Note: These already have sequence numbers (from when originally sent)
@@ -1108,10 +1239,7 @@ func (s *Server) handleClientMessage(c *Client, data []byte) {
 		for i, msg := range messages {
 			data, err := msg.Serialize()
 			if err != nil {
-				s.logger.Error().
-					Int("message_index", i).
-					Err(err).
-					Msg("Failed to serialize replay message")
+				s.logger.Printf("❌ Failed to serialize replay message %d: %v", i, err)
 				continue
 			}
 
@@ -1123,7 +1251,7 @@ func (s *Server) handleClientMessage(c *Client, data []byte) {
 				sentCount++
 			case <-time.After(3 * time.Second):
 				// Client too slow to handle replay - incomplete recovery
-				s.logger.Warn().
+				s.structLogger.Warn().
 					Int64("client_id", c.id).
 					Int("sent", sentCount).
 					Int("total", len(messages)).
@@ -1152,7 +1280,7 @@ func (s *Server) handleClientMessage(c *Client, data []byte) {
 
 		// Log successful replay
 		if sentCount == len(messages) {
-			s.logger.Debug().
+			s.structLogger.Debug().
 				Int64("client_id", c.id).
 				Int("message_count", sentCount).
 				Msg("Replay completed successfully")
@@ -1215,10 +1343,7 @@ func (s *Server) handleClientMessage(c *Client, data []byte) {
 		}
 
 		if err := json.Unmarshal(req.Data, &subReq); err != nil {
-			s.logger.Warn().
-				Int64("client_id", c.id).
-				Err(err).
-				Msg("Client sent invalid subscribe request")
+			s.logger.Printf("⚠️  Client %d sent invalid subscribe request: %v", c.id, err)
 			return
 		}
 
@@ -1228,11 +1353,7 @@ func (s *Server) handleClientMessage(c *Client, data []byte) {
 		// Add to global subscription index for fast broadcast targeting
 		s.subscriptionIndex.AddMultiple(subReq.Channels, c)
 
-		s.logger.Info().
-			Int64("client_id", c.id).
-			Int("channel_count", len(subReq.Channels)).
-			Strs("channels", subReq.Channels).
-			Msg("Client subscribed")
+		s.logger.Printf("✅ Client %d subscribed to %d channels: %v", c.id, len(subReq.Channels), subReq.Channels)
 
 		// Send acknowledgment to client
 		ack := map[string]any{
@@ -1258,10 +1379,7 @@ func (s *Server) handleClientMessage(c *Client, data []byte) {
 		}
 
 		if err := json.Unmarshal(req.Data, &unsubReq); err != nil {
-			s.logger.Warn().
-				Int64("client_id", c.id).
-				Err(err).
-				Msg("Client sent invalid unsubscribe request")
+			s.logger.Printf("⚠️  Client %d sent invalid unsubscribe request: %v", c.id, err)
 			return
 		}
 
@@ -1271,11 +1389,7 @@ func (s *Server) handleClientMessage(c *Client, data []byte) {
 		// Remove from global subscription index
 		s.subscriptionIndex.RemoveMultiple(unsubReq.Channels, c)
 
-		s.logger.Info().
-			Int64("client_id", c.id).
-			Int("channel_count", len(unsubReq.Channels)).
-			Strs("channels", unsubReq.Channels).
-			Msg("Client unsubscribed")
+		s.logger.Printf("✅ Client %d unsubscribed from %d channels: %v", c.id, len(unsubReq.Channels), unsubReq.Channels)
 
 		// Send acknowledgment to client
 		ack := map[string]any{
@@ -1296,10 +1410,7 @@ func (s *Server) handleClientMessage(c *Client, data []byte) {
 	default:
 		// Unknown message type
 		// Log but don't disconnect (might be future feature we haven't implemented yet)
-		s.logger.Warn().
-			Int64("client_id", c.id).
-			Str("message_type", req.Type).
-			Msg("Client sent unknown message type")
+		s.logger.Printf("⚠️  Client %d sent unknown message type: %s", c.id, req.Type)
 	}
 }
 
@@ -1343,16 +1454,16 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	warnings := []string{}
 	errors := []string{}
 
-	// Check Kafka consumer (critical dependency)
-	kafkaStatus := "stopped"
-	kafkaHealthy := false
-	if s.kafkaConsumer != nil {
-		kafkaStatus = "running"
-		kafkaHealthy = true
+	// Check NATS (critical dependency)
+	natsStatus := "disconnected"
+	natsHealthy := false
+	if s.natsConn != nil && s.natsConn.IsConnected() {
+		natsStatus = "connected"
+		natsHealthy = true
 	} else {
 		isHealthy = false
-		errors = append(errors, "Kafka consumer not initialized")
-		s.logger.Error().Msg("Health check failed: Kafka consumer not initialized")
+		errors = append(errors, "NATS connection lost")
+		s.structLogger.Error().Msg("Health check failed: NATS connection lost")
 	}
 
 	// Check CPU (against configured reject threshold)
@@ -1361,7 +1472,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		isHealthy = false
 		cpuHealthy = false
 		errors = append(errors, fmt.Sprintf("CPU exceeds reject threshold (%.1f%% > %.1f%%)", cpuPercent, s.config.CPURejectThreshold))
-		s.logger.Error().
+		s.structLogger.Error().
 			Float64("cpu_percent", cpuPercent).
 			Float64("cpu_threshold", s.config.CPURejectThreshold).
 			Msg("Health check failed: CPU exceeds threshold")
@@ -1374,7 +1485,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		isHealthy = false
 		memHealthy = false
 		errors = append(errors, fmt.Sprintf("Memory exceeds limit (%.1fMB > %.1fMB)", memoryMB, memLimitMB))
-		s.logger.Error().
+		s.structLogger.Error().
 			Float64("used_mb", memoryMB).
 			Float64("limit_mb", memLimitMB).
 			Msg("Health check failed: Memory exceeds limit")
@@ -1387,7 +1498,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		isHealthy = false
 		goroutinesHealthy = false
 		errors = append(errors, fmt.Sprintf("Goroutines exceed limit (%d > %d)", goroutinesCurrent, goroutinesLimit))
-		s.logger.Error().
+		s.structLogger.Error().
 			Int("current", goroutinesCurrent).
 			Int("limit", goroutinesLimit).
 			Msg("Health check failed: Goroutines exceed limit")
@@ -1400,14 +1511,14 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		// If it comes here, it means the server is over loaded and the limit check is failing
 		capacityHealthy = false
 		errors = append(errors, fmt.Sprintf("Server at over capacity (%d/%d)", currentConns, maxConns))
-		s.logger.Error().
+		s.structLogger.Error().
 			Int64("current", currentConns).
 			Int64("max", maxConns).
 			Msg("Health check failed: Server at over capacity")
 	} else if capacityPercent == 100 {
 		capacityHealthy = true
 		warnings = append(warnings, fmt.Sprintf("Server at full capacity (%d/%d)", currentConns, maxConns))
-		s.logger.Warn().
+		s.structLogger.Warn().
 			Int64("current", currentConns).
 			Int64("max", maxConns).
 			Msg("Server at full capacity - consider scaling")
@@ -1441,9 +1552,9 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"status":  status,
 		"healthy": isHealthy,
 		"checks": map[string]any{
-			"kafka": map[string]any{
-				"status":  kafkaStatus,
-				"healthy": kafkaHealthy,
+			"nats": map[string]any{
+				"status":  natsStatus,
+				"healthy": natsHealthy,
 			},
 			"capacity": map[string]any{
 				"current":    currentConns,
@@ -1473,7 +1584,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 				"max_goroutines":   s.config.MaxGoroutines,
 				"cpu_threshold":    s.config.CPURejectThreshold,
 				"memory_limit_mb":  memLimitMB,
-				"kafka_rate":       resourceStats["kafka_rate_limit"],
+				"nats_rate":        resourceStats["nats_rate_limit"],
 				"broadcast_rate":   resourceStats["broadcast_rate_limit"],
 				"worker_pool_size": resourceStats["worker_pool_size"],
 			},
@@ -1578,33 +1689,26 @@ func calculateBufferStats(samples []int) map[string]any {
 }
 
 func (s *Server) Shutdown() error {
-	s.logger.Info().Msg("Initiating graceful shutdown")
+	s.logger.Println("Initiating graceful shutdown...")
 
 	// Set shutdown flag to reject new connections
 	atomic.StoreInt32(&s.shuttingDown, 1)
 
 	// Stop accepting new connections
 	if s.listener != nil {
-		s.logger.Info().Msg("Closing listener (no new connections accepted)")
+		s.logger.Println("Closing listener (no new connections accepted)")
 		s.listener.Close()
 	}
 
-	// Stop receiving new messages from Kafka
-	if s.kafkaConsumer != nil {
-		s.logger.Info().Msg("Stopping Kafka consumer (no new messages)")
-		if err := s.kafkaConsumer.Stop(); err != nil {
-			s.logger.Error().
-				Err(err).
-				Msg("Error stopping Kafka consumer")
-		}
+	// Stop receiving new messages from NATS
+	if s.natsConn != nil {
+		s.logger.Println("Closing NATS connection (no new messages)")
+		s.natsConn.Close()
 	}
 
 	// Count current connections
 	currentConns := atomic.LoadInt64(&s.stats.CurrentConnections)
-	s.logger.Info().
-		Int64("active_connections", currentConns).
-		Int("grace_period_sec", 30).
-		Msg("Draining active connections")
+	s.logger.Printf("Draining %d active connections (30s grace period)...", currentConns)
 
 	// Grace period for connection draining
 	gracePeriod := 30 * time.Second
@@ -1620,9 +1724,7 @@ func (s *Server) Shutdown() error {
 			// Grace period expired, force close remaining connections
 			remaining := atomic.LoadInt64(&s.stats.CurrentConnections)
 			if remaining > 0 {
-				s.logger.Warn().
-					Int64("remaining_connections", remaining).
-					Msg("Grace period expired, force closing remaining connections")
+				s.logger.Printf("Grace period expired, force closing %d remaining connections", remaining)
 			}
 			goto forceClose
 
@@ -1630,12 +1732,10 @@ func (s *Server) Shutdown() error {
 			// Check if all connections drained
 			remaining := atomic.LoadInt64(&s.stats.CurrentConnections)
 			if remaining == 0 {
-				s.logger.Info().Msg("All connections drained gracefully")
+				s.logger.Println("All connections drained gracefully")
 				goto cleanup
 			}
-			s.logger.Info().
-				Int64("remaining_connections", remaining).
-				Msg("Waiting for connections to drain")
+			s.logger.Printf("Waiting for %d connections to drain...", remaining)
 		}
 	}
 
@@ -1657,13 +1757,13 @@ cleanup:
 	s.cancel()
 
 	// Stop worker pool
-	s.logger.Info().Msg("Stopping worker pool")
+	s.logger.Println("Stopping worker pool...")
 	s.workerPool.Stop()
 
 	// Wait for all goroutines to finish
-	s.logger.Info().Msg("Waiting for all goroutines to finish")
+	s.logger.Println("Waiting for all goroutines to finish...")
 	s.wg.Wait()
 
-	s.logger.Info().Msg("Graceful shutdown completed")
+	s.logger.Println("Graceful shutdown completed")
 	return nil
 }
