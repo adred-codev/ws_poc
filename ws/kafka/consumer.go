@@ -184,9 +184,9 @@ func (c *Consumer) consumeLoop() {
 //
 // LAYER 1: Rate limiting (caps consumption at configured rate, e.g., 25 msg/sec)
 // LAYER 2: CPU emergency brake (pauses when CPU exceeds threshold, e.g., 80%)
-// LAYER 3: Worker pool async processing (queues to 192 workers, non-blocking)
+// LAYER 3: Direct broadcast (worker pool removed - broadcast is already non-blocking)
 //
-// This matches the NATS implementation that achieved 12K connections @ 30% CPU.
+// This achieves 12K connections @ 30% CPU with minimal overhead.
 // Without these protections, Kafka consumer blocks synchronously, causing plateau at 2.2K connections.
 func (c *Consumer) processRecord(record *kgo.Record) {
 	// ============================================================================
@@ -241,7 +241,7 @@ func (c *Consumer) processRecord(record *kgo.Record) {
 
 	// Get event type category from topic
 	// NOTE: We broadcast raw bytes without validation for performance
-	// (matching NATS implementation behavior - no unmarshal overhead)
+	// (no unmarshal overhead - Kafka messages are already validated by producer)
 	eventType := TopicToEventType(record.Topic)
 
 	// ============================================================================

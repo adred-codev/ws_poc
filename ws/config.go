@@ -28,10 +28,6 @@ type Config struct {
 	// Capacity
 	MaxConnections int `env:"WS_MAX_CONNECTIONS" envDefault:"500"`
 
-	// Worker pool (computed from CPU if not set)
-	WorkerPoolSize  int `env:"WS_WORKER_POOL_SIZE" envDefault:"0"`  // 0 = auto-calculate
-	WorkerQueueSize int `env:"WS_WORKER_QUEUE_SIZE" envDefault:"0"` // 0 = auto-calculate
-
 	// Rate limiting
 	MaxKafkaRate     int `env:"WS_MAX_KAFKA_RATE" envDefault:"1000"` // Kafka message consumption rate
 	MaxBroadcastRate int `env:"WS_MAX_BROADCAST_RATE" envDefault:"20"`
@@ -95,26 +91,6 @@ func LoadConfig(logger *zerolog.Logger) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config: %w", err)
 	}
 
-	// Post-processing: Auto-calculate worker pool if not set
-	if cfg.WorkerPoolSize == 0 {
-		cfg.WorkerPoolSize = int(cfg.CPULimit * 2)
-		if logger != nil {
-			logger.Info().
-				Float64("cpu_limit", cfg.CPULimit).
-				Int("worker_pool_size", cfg.WorkerPoolSize).
-				Msg("Auto-calculated worker pool size from CPU limit")
-		}
-	}
-	if cfg.WorkerQueueSize == 0 {
-		cfg.WorkerQueueSize = cfg.WorkerPoolSize * 100
-		if logger != nil {
-			logger.Info().
-				Int("worker_pool_size", cfg.WorkerPoolSize).
-				Int("worker_queue_size", cfg.WorkerQueueSize).
-				Msg("Auto-calculated worker queue size")
-		}
-	}
-
 	// Validation
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("config validation failed: %w", err)
@@ -137,9 +113,6 @@ func (c *Config) Validate() error {
 	// Range checks
 	if c.MaxConnections < 1 {
 		return fmt.Errorf("WS_MAX_CONNECTIONS must be > 0, got %d", c.MaxConnections)
-	}
-	if c.WorkerPoolSize < 1 {
-		return fmt.Errorf("WS_WORKER_POOL_SIZE must be > 0, got %d", c.WorkerPoolSize)
 	}
 	if c.CPURejectThreshold < 0 || c.CPURejectThreshold > 100 {
 		return fmt.Errorf("WS_CPU_REJECT_THRESHOLD must be 0-100, got %.1f", c.CPURejectThreshold)
@@ -180,9 +153,6 @@ func (c *Config) Print() {
 	fmt.Printf("CPU Limit:       %.1f cores\n", c.CPULimit)
 	fmt.Printf("Memory Limit:    %d MB\n", c.MemoryLimit/(1024*1024))
 	fmt.Printf("Max Connections: %d\n", c.MaxConnections)
-	fmt.Println("\n=== Worker Pool ===")
-	fmt.Printf("Workers:         %d\n", c.WorkerPoolSize)
-	fmt.Printf("Queue Size:      %d\n", c.WorkerQueueSize)
 	fmt.Println("\n=== Rate Limits ===")
 	fmt.Printf("Kafka Messages:  %d/sec\n", c.MaxKafkaRate)
 	fmt.Printf("Broadcasts:      %d/sec\n", c.MaxBroadcastRate)
@@ -206,8 +176,6 @@ func (c *Config) LogConfig(logger zerolog.Logger) {
 		Float64("cpu_limit", c.CPULimit).
 		Int64("memory_limit_mb", c.MemoryLimit/(1024*1024)).
 		Int("max_connections", c.MaxConnections).
-		Int("worker_pool_size", c.WorkerPoolSize).
-		Int("worker_queue_size", c.WorkerQueueSize).
 		Int("max_kafka_rate", c.MaxKafkaRate).
 		Int("max_broadcast_rate", c.MaxBroadcastRate).
 		Int("max_goroutines", c.MaxGoroutines).

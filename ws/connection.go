@@ -12,21 +12,20 @@ import (
 //
 // Reliability features added:
 // 1. Sequence numbers - Client can detect missing messages
-// 2. Replay buffer - Client can request missed messages
+// 2. Kafka-based replay - Client can request missed messages from Kafka offset tracking
 // 3. Slow client detection - Automatically disconnect laggy clients
 // 4. Rate limiting - Prevent client from DoS-ing server
 //
-// Memory per client: ~300KB (optimized from 1.1MB)
+// Memory per client: ~256KB (optimized from 1.1MB, replay buffer removed)
 // - Base struct: ~200 bytes
 // - send channel: 512 slots × 500 bytes avg = 256KB (optimized from 1MB)
-// - replay buffer: 100 msgs × 500 bytes avg = 50KB
 // - sequence generator: 8 bytes
 // - Other fields: ~50 bytes
 //
-// Memory scaling (after optimization):
-// - 7,000 clients: 7K × 0.3MB = ~2.1GB (was 7.7GB)
-// - 15,000 clients: 15K × 0.3MB = ~4.5GB (was 16.5GB)
-// - 40,000 clients: 40K × 0.3MB = ~12GB (now possible on e2-standard-4!)
+// Memory scaling (after removing replay buffer):
+// - 7,000 clients: 7K × 0.256MB = ~1.8GB (was 2.1GB)
+// - 15,000 clients: 15K × 0.256MB = ~3.8GB (was 4.5GB)
+// - 40,000 clients: 40K × 0.256MB = ~10GB (even better capacity!)
 //
 // Buffer sizing rationale:
 // - 256 buffer = 54 sec @ 4.7 msg/sec (current rate), 2.6s @ 100 msg/sec (too small)
@@ -46,12 +45,6 @@ type Client struct {
 	// Sequence generator - creates monotonically increasing message IDs
 	// Each client gets independent sequence (starts at 1 on connect)
 	seqGen *SequenceGenerator
-
-	// Replay buffer - stores recent messages for gap recovery
-	// Size: 100 messages (reduced from 1000 for memory efficiency)
-	// Covers: ~10 seconds of messages at 10 msg/sec
-	// Tradeoff: Shorter buffer = less recovery, but more clients fit in memory
-	replayBuffer *ReplayBuffer
 
 	// Slow client detection fields
 	// Purpose: One slow client shouldn't block messages to 10,000 fast clients
@@ -95,13 +88,12 @@ type Client struct {
 
 // ConnectionPool manages a pool of reusable client objects
 type ConnectionPool struct {
-	pool       sync.Pool
-	maxSize    int
-	bufferPool *BufferPool
+	pool    sync.Pool
+	maxSize int
 }
 
-func NewConnectionPool(maxSize int, bufferPool *BufferPool) *ConnectionPool {
-	cp := &ConnectionPool{maxSize: maxSize, bufferPool: bufferPool}
+func NewConnectionPool(maxSize int) *ConnectionPool {
+	cp := &ConnectionPool{maxSize: maxSize}
 
 	cp.pool = sync.Pool{
 		New: func() interface{} {
@@ -117,7 +109,6 @@ func NewConnectionPool(maxSize int, bufferPool *BufferPool) *ConnectionPool {
 				send: make(chan []byte, 512),
 			}
 
-			client.replayBuffer = NewReplayBuffer(100, bufferPool)
 			return client
 		},
 	}
@@ -143,19 +134,6 @@ func (p *ConnectionPool) Get() *Client {
 			// Reset counter for reused client
 			// (though with sync.Pool, usually get new instance)
 			atomic.StoreInt64(&client.seqGen.counter, 0)
-		}
-
-		// Initialize or reset replay buffer
-		// Using smaller buffer (100 instead of 1000) for memory efficiency
-		// Memory calculation: 100 messages × ~500 bytes = ~50KB per client
-		// With 7,864 max clients: 50KB × 7,864 = 393MB (fits in 512MB container)
-		if client.replayBuffer == nil {
-			client.replayBuffer = NewReplayBuffer(100, p.bufferPool)
-		} else {
-			if p.bufferPool != nil {
-				client.replayBuffer.withPool(p.bufferPool)
-			}
-			client.replayBuffer.Clear()
 		}
 
 		// Initialize slow client detection fields
@@ -191,10 +169,6 @@ func (p *ConnectionPool) Put(c *Client) {
 	// Clear subscriptions before returning to pool
 	if c.subscriptions != nil {
 		c.subscriptions.Clear()
-	}
-
-	if c.replayBuffer != nil {
-		c.replayBuffer.Clear()
 	}
 
 	p.pool.Put(c)

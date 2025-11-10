@@ -327,22 +327,6 @@ func (m *MetricsCollector) collect() {
 	// Goroutine metrics
 	goroutinesActive.Set(float64(runtime.NumGoroutine()))
 
-	// Worker pool metrics
-	droppedBroadcasts.Set(float64(m.server.workerPool.GetDroppedTasks()))
-
-	// Worker pool queue metrics
-	queueDepth := m.server.workerPool.GetQueueDepth()
-	queueCapacity := m.server.workerPool.GetQueueCapacity()
-	workerQueueDepth.Set(float64(queueDepth))
-	workerQueueCapacity.Set(float64(queueCapacity))
-
-	// Calculate queue utilization percentage
-	var utilization float64
-	if queueCapacity > 0 {
-		utilization = (float64(queueDepth) / float64(queueCapacity)) * 100
-	}
-	workerQueueUtilization.Set(utilization)
-
 	// Kafka status
 	if m.server.kafkaConsumer != nil {
 		kafkaConnected.Set(1)

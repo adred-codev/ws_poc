@@ -20,7 +20,7 @@ FROM alpine:latest
 
 WORKDIR /root/
 
-# Install ca-certificates for HTTPS connections (NATS might use TLS)
+# Install ca-certificates for HTTPS connections (Kafka/Redpanda TLS support)
 RUN apk --no-cache add ca-certificates
 
 # Copy the static binary from the builder stage

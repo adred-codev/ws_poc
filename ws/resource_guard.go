@@ -405,7 +405,5 @@ func (rg *ResourceGuard) GetStats() map[string]any {
 		"goroutines_limit":     rg.config.MaxGoroutines,
 		"kafka_rate_limit":     rg.config.MaxKafkaMessagesPerSec,
 		"broadcast_rate_limit": rg.config.MaxBroadcastsPerSec,
-		"worker_pool_size":     rg.config.WorkerCount,
-		"worker_pool_queue":    rg.config.WorkerQueueSize,
 	}
 }

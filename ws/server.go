@@ -20,11 +20,6 @@ import (
 	"github.com/shirou/gopsutil/v3/process"
 )
 
-// workerPoolAdapter adapts *WorkerPool to kafka.WorkerPool interface
-// This bridges the type difference: WorkerPool.Submit(Task) vs interface Submit(func())
-// workerPoolAdapter removed - worker pool no longer needed for Kafka consumer
-// Kafka consumer now calls broadcast() directly for better performance
-
 const (
 	// Time allowed to write a message to the peer.
 	// Reduced from 10s to 5s for faster detection of slow clients
@@ -42,12 +37,9 @@ const (
 
 type ServerConfig struct {
 	Addr            string
-	KafkaBrokers    []string
-	ConsumerGroup   string
-	MaxConnections  int
-	BufferSize      int
-	WorkerCount     int
-	WorkerQueueSize int // Worker pool queue size
+	KafkaBrokers   []string
+	ConsumerGroup  string
+	MaxConnections int
 
 	// Static resource limits (explicit configuration)
 	CPULimit    float64 // CPU cores available (from docker limit)
@@ -83,10 +75,6 @@ type Server struct {
 	clientCount       int64
 	connectionsSem    chan struct{}      // Semaphore for max connections
 	subscriptionIndex *SubscriptionIndex // Fast lookup: channel → subscribers (93% CPU savings!)
-
-	// Performance optimization
-	bufferPool *BufferPool
-	workerPool *WorkerPool
 
 	// Rate limiting
 	rateLimiter *RateLimiter
@@ -144,18 +132,14 @@ func NewServer(config ServerConfig) (*Server, error) {
 		Format: config.LogFormat,
 	})
 
-	bufferPool := NewBufferPool(config.BufferSize)
-
 	s := &Server{
 		config:            config,
 		logger:            logger,
 		ctx:               ctx,
 		cancel:            cancel,
-		bufferPool:        bufferPool,
-		connections:       NewConnectionPool(config.MaxConnections, bufferPool),
+		connections:       NewConnectionPool(config.MaxConnections),
 		connectionsSem:    make(chan struct{}, config.MaxConnections),
 		subscriptionIndex: NewSubscriptionIndex(), // Fast channel → subscribers lookup
-		workerPool:        NewWorkerPool(config.WorkerCount, config.WorkerQueueSize, logger),
 		rateLimiter:       NewRateLimiter(),
 		stats: &Stats{
 			StartTime:                  time.Now(),
@@ -176,8 +160,6 @@ func NewServer(config ServerConfig) (*Server, error) {
 	logger.Info().
 		Str("addr", config.Addr).
 		Int("max_connections", config.MaxConnections).
-		Int("worker_count", config.WorkerCount).
-		Int("worker_queue", config.WorkerQueueSize).
 		Int("kafka_rate_limit", config.MaxKafkaMessagesPerSec).
 		Int("broadcast_rate_limit", config.MaxBroadcastsPerSec).
 		Msg("Server initialized with ResourceGuard")
@@ -198,8 +180,6 @@ func NewServer(config ServerConfig) (*Server, error) {
 			Logger:        &logger,
 			Broadcast:     broadcastFunc,
 			ResourceGuard: s.resourceGuard, // Enable rate limiting and CPU brake
-			// WorkerPool removed - direct broadcast call is more efficient
-			// (broadcast is already non-blocking, 192 workers were 87% idle at 25 msg/sec)
 		})
 		if err != nil {
 			s.auditLogger.Critical("KafkaConnectionFailed", "Failed to create Kafka consumer", map[string]any{
@@ -234,8 +214,6 @@ func (s *Server) Start() error {
 	s.logger.Info().
 		Str("address", s.config.Addr).
 		Msg("Server listening")
-
-	s.workerPool.Start(s.ctx)
 
 	// Start Kafka consumer
 	if s.kafkaConsumer != nil {
@@ -1625,10 +1603,6 @@ forceClose:
 cleanup:
 	// Cancel context to stop all goroutines
 	s.cancel()
-
-	// Stop worker pool
-	s.logger.Info().Msg("Stopping worker pool")
-	s.workerPool.Stop()
 
 	// Wait for all goroutines to finish
 	s.logger.Info().Msg("Waiting for all goroutines to finish")

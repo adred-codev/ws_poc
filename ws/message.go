@@ -83,7 +83,7 @@ type MessageEnvelope struct {
 
 	// Actual message payload (varies by type)
 	// Stored as json.RawMessage to avoid double-encoding
-	// Server doesn't need to parse NATS messages, just wrap and forward
+	// Server doesn't need to parse Kafka messages, just wrap and forward
 	//
 	// Example for "price:update":
 	//   {"tokenId": "BTC", "price": 45000.50, "volume24h": 1234567}
@@ -103,9 +103,9 @@ type MessageEnvelope struct {
 //
 // Industry standard: Every message delivery system needs sequence numbers
 // - FIX protocol: BeginSeqNo, EndSeqNo fields
-// - NATS: Message sequence numbers for JetStream
-// - Kafka: Partition offsets
-// - Our implementation: Per-connection sequences
+// - Kafka: Partition offsets and message sequence numbers
+// - WebSocket implementations: Per-connection sequences
+// - Our implementation: Per-connection sequences for gap detection
 type SequenceGenerator struct {
 	counter int64
 }
@@ -126,12 +126,12 @@ func (s *SequenceGenerator) Next() int64 {
 	return atomic.AddInt64(&s.counter, 1)
 }
 
-// WrapMessage creates an envelope for raw NATS/internal messages
+// WrapMessage creates an envelope for raw Kafka messages
 // This is called in broadcast() before sending to clients
 //
 // Parameters:
 //
-//	data     - Raw message payload from NATS (JSON bytes)
+//	data     - Raw message payload from Kafka (JSON bytes)
 //	msgType  - Message type for client routing ("price:update", etc.)
 //	priority - Delivery priority (CRITICAL, HIGH, NORMAL)
 //	seqGen   - Per-client sequence generator
@@ -142,7 +142,7 @@ func (s *SequenceGenerator) Next() int64 {
 //
 // Example usage:
 //
-//	envelope, _ := WrapMessage(natsData, "price:update", PRIORITY_HIGH, client.seqGen)
+//	envelope, _ := WrapMessage(kafkaData, "price:update", PRIORITY_HIGH, client.seqGen)
 //	jsonBytes, _ := envelope.Serialize()
 //	client.send <- jsonBytes
 func WrapMessage(data []byte, msgType string, priority MessagePriority, seqGen *SequenceGenerator) (*MessageEnvelope, error) {

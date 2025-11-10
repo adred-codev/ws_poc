@@ -62,13 +62,10 @@ func main() {
 	}
 
 	serverConfig := ServerConfig{
-		Addr:            cfg.Addr,
-		KafkaBrokers:    kafkaBrokers,
-		ConsumerGroup:   cfg.ConsumerGroup,
-		MaxConnections:  cfg.MaxConnections,
-		BufferSize:      4096, // Constant
-		WorkerCount:     cfg.WorkerPoolSize,
-		WorkerQueueSize: cfg.WorkerQueueSize,
+		Addr:           cfg.Addr,
+		KafkaBrokers:   kafkaBrokers,
+		ConsumerGroup:  cfg.ConsumerGroup,
+		MaxConnections: cfg.MaxConnections,
 
 		// Static resource limits (explicit from config)
 		CPULimit:    cfg.CPULimit,
