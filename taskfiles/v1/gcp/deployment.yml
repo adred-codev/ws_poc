@@ -631,10 +631,10 @@ tasks:
         fi
 
         echo "⚙️  Configuring environment..."
-        gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo -i -u deploy bash -c 'KAFKA_PORT=\$(grep \"^KAFKA_INTERNAL_PORT=\" /home/deploy/ws_poc/deployments/v1/shared/ports.env | cut -d\"=\" -f2) && printf \"BACKEND_INTERNAL_IP=$BACKEND_IP\\nKAFKA_BROKERS=$BACKEND_IP:\${KAFKA_PORT}\\n\" > /home/deploy/ws_poc/deployments/v1/gcp/distributed/ws-server/.env.production && chmod 600 /home/deploy/ws_poc/deployments/v1/gcp/distributed/ws-server/.env.production'" 2>/dev/null
+        gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo -i -u deploy bash -c 'KAFKA_PORT=\$(grep \"^KAFKA_INTERNAL_PORT=\" /home/deploy/ws_poc/deployments/v1/shared/ports.env | cut -d\"=\" -f2) && printf \"WS_MODE=single\\nBACKEND_INTERNAL_IP=$BACKEND_IP\\nKAFKA_BROKERS=$BACKEND_IP:\${KAFKA_PORT}\\n\" > /home/deploy/ws_poc/deployments/v1/gcp/distributed/ws-server/.env.production && chmod 600 /home/deploy/ws_poc/deployments/v1/gcp/distributed/ws-server/.env.production'" 2>/dev/null
 
-        echo "🐳 Starting Docker services..."
-        gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo -i -u deploy bash -c 'cd /home/deploy/ws_poc/deployments/v1/gcp/distributed/ws-server && export BACKEND_INTERNAL_IP=$BACKEND_IP && docker-compose up -d 2>&1 | grep -E \"(Created|Started|Running)\"'" 2>/dev/null || true
+        echo "🐳 Starting Docker services (mode-aware)..."
+        gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --project={{.GCP_PROJECT}} --command="sudo -i -u deploy bash -c 'cd /home/deploy/ws_poc/deployments/v1/gcp/distributed/ws-server && source .env.production && export BACKEND_INTERNAL_IP=$BACKEND_IP && COMPOSE_FILE=\$([ \"\$WS_MODE\" = \"multi\" ] && echo \"docker-compose.multi.yml\" || echo \"docker-compose.yml\") && echo \"Mode: \$WS_MODE, Using: \$COMPOSE_FILE\" && docker-compose -f \$COMPOSE_FILE up -d 2>&1 | grep -E \"(Created|Started|Running)\"'" 2>/dev/null || true
         sleep 15
 
         echo "✅ WS server setup complete"
@@ -701,7 +701,7 @@ tasks:
       - task: :gcp:health:backend
 
   rebuild:ws:
-    desc: Rebuild WebSocket server with latest code
+    desc: Rebuild WebSocket server with latest code (mode-aware)
     cmds:
       - echo "🔄 Rebuilding WebSocket server code..."
       - |
@@ -715,9 +715,12 @@ tasks:
             cd ws_poc && \
             git pull origin {{.GIT_BRANCH}} && \
             cd deployments/v1/gcp/distributed/ws-server && \
+            source .env.production && \
             export BACKEND_INTERNAL_IP=$BACKEND_IP && \
-            docker-compose build && \
-            docker-compose up -d && \
+            COMPOSE_FILE=\$([ \"\$WS_MODE\" = \"multi\" ] && echo \"docker-compose.multi.yml\" || echo \"docker-compose.yml\") && \
+            echo \"Mode: \$WS_MODE, Rebuilding with: \$COMPOSE_FILE\" && \
+            docker-compose -f \$COMPOSE_FILE build && \
+            docker-compose -f \$COMPOSE_FILE up -d && \
             sleep 10 && \
             curl -sf http://localhost:3004/health'"
       - echo "✅ WebSocket server rebuilt"

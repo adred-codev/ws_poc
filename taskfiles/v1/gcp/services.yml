@@ -45,7 +45,7 @@ tasks:
   # === WEBSOCKET SERVER ===
 
   start:ws:
-    desc: Start WebSocket server
+    desc: Start WebSocket server (mode-aware: reads WS_MODE from .env.production)
     cmds:
       - echo "🚀 Starting WebSocket server on {{.WS_INSTANCE}}..."
       - |
@@ -57,28 +57,42 @@ tasks:
         echo "Backend Internal IP: $BACKEND_IP"
 
         gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
-          sudo -i -u deploy bash -c 'cd /home/deploy/ws_poc/deployments/v1/gcp/distributed/ws-server && export BACKEND_INTERNAL_IP=$BACKEND_IP && docker-compose up -d'"
+          sudo -i -u deploy bash -c '\
+            cd /home/deploy/ws_poc/deployments/v1/gcp/distributed/ws-server && \
+            source .env.production && \
+            export BACKEND_INTERNAL_IP=$BACKEND_IP && \
+            COMPOSE_FILE=\$([ \"\$WS_MODE\" = \"multi\" ] && echo \"docker-compose.multi.yml\" || echo \"docker-compose.yml\") && \
+            echo \"Mode: \$WS_MODE, Using: \$COMPOSE_FILE\" && \
+            docker-compose -f \$COMPOSE_FILE up -d'"
       - echo "⏳ Waiting for WebSocket server to be ready..."
       - sleep 10
       - task: :health:ws
       - echo "✅ WebSocket server started"
 
   stop:ws:
-    desc: Stop WebSocket server
+    desc: Stop WebSocket server (mode-aware)
     cmds:
       - echo "⏸️  Stopping WebSocket server on {{.WS_INSTANCE}}..."
       - |
         gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
-          sudo -i -u deploy bash -c 'cd /home/deploy/ws_poc/deployments/v1/gcp/distributed/ws-server && docker-compose down'"
+          sudo -i -u deploy bash -c '\
+            cd /home/deploy/ws_poc/deployments/v1/gcp/distributed/ws-server && \
+            source .env.production && \
+            COMPOSE_FILE=\$([ \"\$WS_MODE\" = \"multi\" ] && echo \"docker-compose.multi.yml\" || echo \"docker-compose.yml\") && \
+            docker-compose -f \$COMPOSE_FILE down'"
       - echo "✅ WebSocket server stopped"
 
   restart:ws:
-    desc: Restart WebSocket server
+    desc: Restart WebSocket server (mode-aware)
     cmds:
       - echo "🔄 Restarting WebSocket server on {{.WS_INSTANCE}}..."
       - |
         gcloud compute ssh {{.WS_INSTANCE}} --zone={{.GCP_ZONE}} --command="\
-          sudo -i -u deploy bash -c 'cd /home/deploy/ws_poc/deployments/v1/gcp/distributed/ws-server && docker-compose restart'"
+          sudo -i -u deploy bash -c '\
+            cd /home/deploy/ws_poc/deployments/v1/gcp/distributed/ws-server && \
+            source .env.production && \
+            COMPOSE_FILE=\$([ \"\$WS_MODE\" = \"multi\" ] && echo \"docker-compose.multi.yml\" || echo \"docker-compose.yml\") && \
+            docker-compose -f \$COMPOSE_FILE restart'"
       - echo "⏳ Waiting for WebSocket server to be ready..."
       - sleep 10
       - task: :health:ws

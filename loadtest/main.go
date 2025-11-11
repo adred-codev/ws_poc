@@ -205,6 +205,7 @@ func main() {
 	printReport()
 
 	log.Printf("🎉 Sustained load test finished!")
+	log.Printf("Program finished.")
 }
 
 func parseFlags() *Config {
@@ -289,6 +290,7 @@ func rampUpConnections(ctx context.Context) error {
 
 				go func(connID int) {
 					defer wg.Done()
+					log.Printf("Creating connection %d", connID)
 					conn := NewConnection(connID, ctx)
 					if err := conn.Connect(); err != nil {
 						atomic.AddInt64(&state.failedConnections, 1)
@@ -310,6 +312,7 @@ func rampUpConnections(ctx context.Context) error {
 
 func NewConnection(id int, ctx context.Context) *Connection {
 	connCtx, cancel := context.WithCancel(ctx)
+	log.Printf("NewConnection: %d", id)
 	return &Connection{
 		id:     id,
 		ctx:    connCtx,
@@ -318,6 +321,7 @@ func NewConnection(id int, ctx context.Context) *Connection {
 }
 
 func (c *Connection) Connect() error {
+	log.Printf("Connecting connection %d", c.id)
 	// Configure dialer to match Node.js WebSocket client behavior
 	// ONLY difference: TCP keep-alive for Docker/GCE (Node.js doesn't expose this)
 	dialer := websocket.Dialer{
@@ -332,6 +336,7 @@ func (c *Connection) Connect() error {
 			}
 			conn, err := d.DialContext(ctx, network, addr)
 			if err != nil {
+				log.Printf("Connection %d: dial context error: %v", c.id, err)
 				return nil, err
 			}
 
@@ -346,14 +351,17 @@ func (c *Connection) Connect() error {
 
 	u, err := url.Parse(config.WSURL)
 	if err != nil {
+		log.Printf("Connection %d: url parse error: %v", c.id, err)
 		return fmt.Errorf("invalid URL: %w", err)
 	}
 
 	ws, _, err := dialer.Dial(u.String(), nil)
 	if err != nil {
+		log.Printf("Connection %d: dial error: %v", c.id, err)
 		return fmt.Errorf("dial failed: %w", err)
 	}
 
+	log.Printf("Connection %d: connected", c.id)
 	c.ws = ws
 	c.connected = true
 	c.connectTime = time.Now()

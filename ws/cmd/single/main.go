@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"flag"
 	"log"
 	"os"
@@ -9,9 +10,9 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/adred-codev/ws_poc/internal/single/core"
-	"github.com/adred-codev/ws_poc/internal/single/platform"
-	"github.com/adred-codev/ws_poc/internal/single/types"
+	"github.com/adred-codev/ws_poc/internal/shared"
+	"github.com/adred-codev/ws_poc/internal/shared/platform"
+	"github.com/adred-codev/ws_poc/internal/shared/types"
 	_ "go.uber.org/automaxprocs"
 )
 
@@ -91,7 +92,17 @@ func main() {
 		LogFormat: types.LogFormat(cfg.LogFormat),
 	}
 
-	server, err := core.NewServer(serverConfig)
+	var server *shared.Server
+
+	// Create broadcast function that will be called for each Kafka message
+	// For the single-core server, this directly calls the server's broadcast method.
+	broadcastFunc := func(tokenID string, eventType string, message []byte) {
+		// Format subject as: "odin.token.{tokenID}.{eventType}"
+		subject := fmt.Sprintf("odin.token.%s.%s", tokenID, eventType)
+		server.Broadcast(subject, message)
+	}
+
+	server, err = shared.NewServer(serverConfig, broadcastFunc)
 	if err != nil {
 		logger.Fatalf("Failed to create server: %v", err)
 	}

@@ -6,7 +6,7 @@
 
 services:
   redpanda:
-    image: docker.redpanda.com/redpandadata/redpanda:v24.2.11
+    image: docker.redpanda.com/redpandadata/redpanda:v25.2.10
     container_name: redpanda
     command:
       - redpanda
@@ -57,7 +57,7 @@ services:
           memory: 450M
 
   console:
-    image: docker.redpanda.com/redpandadata/console:v2.7.2
+    image: docker.redpanda.com/redpandadata/console:v3.2.2
     container_name: redpanda-console
     ports:
       - "0.0.0.0:8080:8080"

@@ -5,14 +5,14 @@ version: "3"
 
 tasks:
   sustained:
-    desc: Sustained capacity test (publisher + 1000 WebSocket clients)
+    desc: Sustained capacity test (publisher + 12000 WebSocket clients)
     cmds:
       - echo "=========================================="
       - echo "SUSTAINED CAPACITY TEST"
       - echo "=========================================="
-      - echo "   Publisher - 1000 events/sec"
-      - echo "   Clients - 1000 WebSocket connections"
-      - echo "   Ramp Rate - 50 conn/sec"
+      - echo "   Publisher - 25 events/sec"
+      - echo "   Clients - 12000 WebSocket connections"
+      - echo "   Ramp Rate - 100 conn/sec"
       - echo "   Duration - 60 minutes"
       - echo ""
       - echo "   Monitor -"
@@ -41,7 +41,7 @@ tasks:
         curl -X POST http://localhost:3006/start \
           -H "Content-Type: application/json" \
           -d '{
-            "rate": 1000,
+            "rate": 25,
             "tokenIds": [
               "BTC", "ETH", "SOL", "DOGE", "ODIN",
               "AVAX", "MATIC", "LINK", "UNI", "AAVE",
@@ -57,8 +57,8 @@ tasks:
         ./sustained-load-test \
           -url ws://localhost:3005/ws \
           -health http://localhost:3005/health \
-          -connections 1000 \
-          -ramp-rate 50 \
+          -connections 12000 \
+          -ramp-rate 100 \
           -duration 3600 \
           > /tmp/loadtest.log 2>&1 &
         echo "✅ Clients started! (logs: /tmp/loadtest.log)"

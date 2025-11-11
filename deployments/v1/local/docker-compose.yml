@@ -14,7 +14,7 @@ services:
   # REDPANDA - Kafka/Streaming Platform
   # ============================================================================
   redpanda:
-    image: docker.redpanda.com/redpandadata/redpanda:v24.2.11
+    image: docker.redpanda.com/redpandadata/redpanda:v25.2.10
     container_name: redpanda-local
     command:
       - redpanda
@@ -59,7 +59,7 @@ services:
   # REDPANDA CONSOLE - Web UI for Redpanda
   # ============================================================================
   console:
-    image: docker.redpanda.com/redpandadata/console:v2.7.2
+    image: docker.redpanda.com/redpandadata/console:v3.2.2
     container_name: redpanda-console-local
     ports:
       - "8080:8080"
@@ -132,11 +132,16 @@ services:
       resources:
         limits:
           cpus: "1.0"
-          memory: 4G
+          memory: 14G
+    # Kernel tuning matching GCP production (12K capacity)
     ulimits:
       nofile:
-        soft: 100000
-        hard: 100000
+        soft: 1048576
+        hard: 1048576
+    sysctls:
+      - net.core.somaxconn=65535
+      - net.ipv4.ip_local_port_range=1024 65535
+      - net.ipv4.tcp_tw_reuse=1
 
   # ============================================================================
   # PROMETHEUS - Metrics Collection
