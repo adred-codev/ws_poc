@@ -2,6 +2,7 @@ package multi
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httputil"
@@ -69,7 +70,7 @@ func (lb *LoadBalancer) Start() error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", lb.handleWebSocket)
-	// TODO: Add health check endpoint for the load balancer itself
+	mux.HandleFunc("/health", lb.handleHealth)
 
 	server := &http.Server{
 		Addr:    lb.addr,
@@ -143,4 +144,75 @@ func (lb *LoadBalancer) selectShard() (int, *Shard) {
 	}
 
 	return selectedIndex, selectedShard
+}
+
+// handleHealth aggregates health status from all shards.
+// Returns a simplified health response matching the expected format.
+func (lb *LoadBalancer) handleHealth(w http.ResponseWriter, r *http.Request) {
+	// Set CORS headers
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+	w.Header().Set("Content-Type", "application/json")
+
+	// Handle preflight requests
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	// Aggregate metrics from all shards
+	var totalConnections int64
+	var totalMaxConnections int64
+	allShardsHealthy := true
+
+	for _, shard := range lb.shards {
+		currentConns := shard.GetCurrentConnections()
+		maxConns := int64(shard.GetMaxConnections())
+
+		totalConnections += currentConns
+		totalMaxConnections += maxConns
+
+		// Simple health check: if shard is at over capacity, mark as unhealthy
+		if currentConns > maxConns {
+			allShardsHealthy = false
+		}
+	}
+
+	// Calculate capacity percentage
+	var capacityPercent float64
+	if totalMaxConnections > 0 {
+		capacityPercent = float64(totalConnections) / float64(totalMaxConnections) * 100
+	}
+
+	// Build simplified health response matching expected format
+	isHealthy := allShardsHealthy && totalConnections <= totalMaxConnections
+	status := "healthy"
+	statusCode := http.StatusOK
+
+	if !isHealthy {
+		status = "unhealthy"
+		statusCode = http.StatusServiceUnavailable
+	} else if capacityPercent > 90 {
+		status = "degraded"
+	}
+
+	response := map[string]interface{}{
+		"status":  status,
+		"healthy": isHealthy,
+		"checks": map[string]interface{}{
+			"capacity": map[string]interface{}{
+				"current": int(totalConnections),
+			},
+			"cpu": map[string]interface{}{
+				"percentage": 0.0, // Load balancer doesn't track CPU
+			},
+			"memory": map[string]interface{}{
+				"percentage": 0.0, // Load balancer doesn't track memory
+			},
+		},
+	}
+
+	w.WriteHeader(statusCode)
+	json.NewEncoder(w).Encode(response)
 }
