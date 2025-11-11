@@ -3,7 +3,6 @@ package shared
 import (
 	"net/http"
 	"sync/atomic"
-	"time"
 
 	"github.com/adred-codev/ws_poc/internal/shared/monitoring"
 	"github.com/gobwas/ws"
@@ -33,20 +32,10 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Try to acquire connection slot (non-blocking with timeout)
-	select {
-	case s.connectionsSem <- struct{}{}:
-		// Slot acquired
-	case <-time.After(5 * time.Second):
-		// Server at capacity, reject with 503
-		s.auditLogger.Warning("ServerAtCapacity", "Connection rejected - server at maximum capacity", map[string]any{
-			"currentConnections": atomic.LoadInt64(&s.stats.CurrentConnections),
-			"maxConnections":     s.config.MaxConnections,
-		})
-		monitoring.ConnectionsFailed.Inc()
-		http.Error(w, "Server at capacity", http.StatusServiceUnavailable)
-		return
-	}
+	// Try to acquire connection slot (blocking, no timeout)
+	// In multi-core mode with LoadBalancer, capacity control happens at LB level
+	// This semaphore just ensures we don't exceed shard capacity
+	s.connectionsSem <- struct{}{}
 
 	conn, _, _, err := ws.UpgradeHTTP(r, w)
 	if err != nil {
