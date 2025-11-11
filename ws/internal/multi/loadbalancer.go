@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"math"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"sync"
 	"time"
 
+	"github.com/koding/websocketproxy"
 	"github.com/rs/zerolog"
 )
 
@@ -19,7 +19,7 @@ import (
 type LoadBalancer struct {
 	addr    string
 	shards  []*Shard
-	proxies []*httputil.ReverseProxy // One proxy per shard
+	proxies []http.Handler // One WebSocket proxy per shard
 	logger  zerolog.Logger
 
 	ctx    context.Context
@@ -42,28 +42,17 @@ func NewLoadBalancer(cfg LoadBalancerConfig) (*LoadBalancer, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	proxies := make([]*httputil.ReverseProxy, len(cfg.Shards))
+	proxies := make([]http.Handler, len(cfg.Shards))
 	for i, shard := range cfg.Shards {
-		shardURL, err := url.Parse(fmt.Sprintf("http://%s", shard.GetAddr()))
+		// Parse shard URL - use ws:// scheme for WebSocket proxy
+		shardURL, err := url.Parse(fmt.Sprintf("ws://%s", shard.GetAddr()))
 		if err != nil {
 			cancel()
 			return nil, fmt.Errorf("failed to parse shard address %s: %w", shard.GetAddr(), err)
 		}
-		// Create reverse proxy with WebSocket support
-		proxy := httputil.NewSingleHostReverseProxy(shardURL)
-
-		// Enable immediate flushing for WebSocket bidirectional streams
-		proxy.FlushInterval = -1 // Flush immediately
-
-		// Configure proxy to handle WebSocket upgrades properly
-		originalDirector := proxy.Director
-		proxy.Director = func(req *http.Request) {
-			originalDirector(req)
-			// Preserve WebSocket upgrade headers
-			req.Header.Set("X-Forwarded-For", req.RemoteAddr)
-		}
-
-		proxies[i] = proxy
+		// Create WebSocket-aware proxy using koding/websocketproxy
+		// This library properly handles WebSocket upgrade protocol
+		proxies[i] = websocketproxy.NewProxy(shardURL)
 	}
 
 	lb := &LoadBalancer{
