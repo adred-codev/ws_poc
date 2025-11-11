@@ -49,8 +49,21 @@ func NewLoadBalancer(cfg LoadBalancerConfig) (*LoadBalancer, error) {
 			cancel()
 			return nil, fmt.Errorf("failed to parse shard address %s: %w", shard.GetAddr(), err)
 		}
-		// Use NewSingleHostReverseProxy for Go 1.25+
-		proxies[i] = httputil.NewSingleHostReverseProxy(shardURL)
+		// Create reverse proxy with WebSocket support
+		proxy := httputil.NewSingleHostReverseProxy(shardURL)
+
+		// Enable immediate flushing for WebSocket bidirectional streams
+		proxy.FlushInterval = -1 // Flush immediately
+
+		// Configure proxy to handle WebSocket upgrades properly
+		originalDirector := proxy.Director
+		proxy.Director = func(req *http.Request) {
+			originalDirector(req)
+			// Preserve WebSocket upgrade headers
+			req.Header.Set("X-Forwarded-For", req.RemoteAddr)
+		}
+
+		proxies[i] = proxy
 	}
 
 	lb := &LoadBalancer{
@@ -137,10 +150,9 @@ func (lb *LoadBalancer) selectShard() (int, *Shard) {
 			continue
 		}
 
-		// Use <= to ensure fair distribution when shards have equal connections
-		// This will select the last shard with the fewest connections, providing
-		// a simple round-robin effect when all shards are equally loaded
-		if currentConns <= leastConnections {
+		// Use < to select first shard with fewest connections
+		// This reduces bias toward higher-indexed shards
+		if currentConns < leastConnections {
 			leastConnections = currentConns
 			selectedShard = shard
 			selectedIndex = i
