@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -122,7 +123,7 @@ func (lb *LoadBalancer) handleWebSocket(w http.ResponseWriter, r *http.Request) 
 // It also respects the WS_MAX_CONNECTIONS limit per shard.
 func (lb *LoadBalancer) selectShard() (int, *Shard) {
 	var (
-		leastConnections int64 = -1
+		leastConnections int64 = math.MaxInt64
 		selectedShard    *Shard
 		selectedIndex    int = -1
 	)
@@ -136,7 +137,10 @@ func (lb *LoadBalancer) selectShard() (int, *Shard) {
 			continue
 		}
 
-		if selectedShard == nil || currentConns < leastConnections {
+		// Use <= to ensure fair distribution when shards have equal connections
+		// This will select the last shard with the fewest connections, providing
+		// a simple round-robin effect when all shards are equally loaded
+		if currentConns <= leastConnections {
 			leastConnections = currentConns
 			selectedShard = shard
 			selectedIndex = i
