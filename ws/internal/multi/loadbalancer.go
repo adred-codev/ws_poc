@@ -129,7 +129,19 @@ func (lb *LoadBalancer) handleWebSocket(w http.ResponseWriter, r *http.Request) 
 		ResponseWriter: w,
 		shard:          selectedShard,
 		logger:         lb.logger,
+		hijacked:       false,
 	}
+
+	// Ensure slot is released if hijack fails (e.g., bad handshake)
+	defer func() {
+		if !wrappedWriter.hijacked {
+			selectedShard.ReleaseSlot()
+			lb.logger.Debug().
+				Int("shard_id", selectedShard.ID).
+				Int("available_slots", selectedShard.GetAvailableSlots()).
+				Msg("Released slot after failed handshake")
+		}
+	}()
 
 	// Proxy the WebSocket connection
 	lb.proxies[selectedShardIndex].ServeHTTP(wrappedWriter, r)
@@ -174,8 +186,9 @@ func (lb *LoadBalancer) selectAndAcquireShard() (int, *Shard) {
 // slotReleasingWriter wraps http.ResponseWriter to release shard slot on connection close
 type slotReleasingWriter struct {
 	http.ResponseWriter
-	shard  *Shard
-	logger zerolog.Logger
+	shard    *Shard
+	logger   zerolog.Logger
+	hijacked bool
 }
 
 // Hijack implements http.Hijacker interface to detect connection close
@@ -187,10 +200,12 @@ func (w *slotReleasingWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 
 	conn, rw, err := hijacker.Hijack()
 	if err != nil {
-		// If hijack fails, release the slot immediately
-		w.shard.ReleaseSlot()
+		// If hijack fails, don't mark as hijacked - let defer release the slot
 		return nil, nil, err
 	}
+
+	// Mark as hijacked so defer doesn't release the slot
+	w.hijacked = true
 
 	// Wrap connection to release slot on close
 	wrappedConn := &slotReleasingConn{
