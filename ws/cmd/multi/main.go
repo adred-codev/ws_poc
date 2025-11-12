@@ -83,7 +83,7 @@ func main() {
 	// Create and start shards
 	shards := make([]*multi.Shard, *numShards)
 	for i := 0; i < *numShards; i++ {
-		shardAddr := fmt.Sprintf("127.0.0.1:%d", *basePort+i) // Each shard listens on a unique internal port
+		shardAddr := fmt.Sprintf("0.0.0.0:%d", *basePort+i) // Bind to all interfaces (fixes IPv4/IPv6 mismatch)
 
 		shardConfig := types.ServerConfig{
 			Addr:           shardAddr,
