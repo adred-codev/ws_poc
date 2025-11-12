@@ -88,6 +88,13 @@ func NewShard(cfg ShardConfig) (*Shard, error) {
 		cancel:         cancel,
 	}
 
+	// Log bind vs advertise addresses (one-time, no performance impact)
+	shard.logger.Info().
+		Str("bind_addr", cfg.Addr).
+		Str("advertise_addr", cfg.AdvertiseAddr).
+		Int("max_connections", cfg.MaxConnections).
+		Msg("Shard created with separate bind/advertise addresses")
+
 	return shard, nil
 }
 

@@ -47,14 +47,21 @@ func NewLoadBalancer(cfg LoadBalancerConfig) (*LoadBalancer, error) {
 	proxies := make([]http.Handler, len(cfg.Shards))
 	for i, shard := range cfg.Shards {
 		// Parse shard URL - use ws:// scheme for WebSocket proxy
-		shardURL, err := url.Parse(fmt.Sprintf("ws://%s", shard.GetAddr()))
+		shardAddr := shard.GetAddr()
+		shardURL, err := url.Parse(fmt.Sprintf("ws://%s", shardAddr))
 		if err != nil {
 			cancel()
-			return nil, fmt.Errorf("failed to parse shard address %s: %w", shard.GetAddr(), err)
+			return nil, fmt.Errorf("failed to parse shard address %s: %w", shardAddr, err)
 		}
 		// Create WebSocket-aware proxy using koding/websocketproxy
 		// This library properly handles WebSocket upgrade protocol
 		proxies[i] = websocketproxy.NewProxy(shardURL)
+
+		// Log proxy target (one-time, no performance impact)
+		cfg.Logger.Info().
+			Int("shard_id", shard.ID).
+			Str("target_url", shardURL.String()).
+			Msg("Created WebSocket proxy for shard")
 	}
 
 	lb := &LoadBalancer{
