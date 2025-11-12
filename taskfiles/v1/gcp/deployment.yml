@@ -211,7 +211,7 @@ tasks:
         echo "⚠️  Startup timeout (may still be installing)"
 
   create:ws:
-    desc: Create WebSocket server GCP instance (e2-standard-4) - smart, idempotent
+    desc: Create WebSocket server GCP instance (e2-highcpu-8) - smart, idempotent
     cmds:
       - |
         echo "🔍 Checking WS server instance..."
@@ -232,7 +232,7 @@ tasks:
           echo "📦 Creating new instance..."
           gcloud compute instances create {{.WS_INSTANCE}} \
             --project={{.GCP_PROJECT}} --zone={{.GCP_ZONE}} \
-            --machine-type=e2-standard-4 --image-family=ubuntu-2204-lts \
+            --machine-type=e2-highcpu-8 --image-family=ubuntu-2204-lts \
             --image-project=ubuntu-os-cloud --boot-disk-size=20GB \
             --boot-disk-type=pd-standard --tags=odin-ws-server --quiet \
             --metadata=startup-script='#!/bin/bash
