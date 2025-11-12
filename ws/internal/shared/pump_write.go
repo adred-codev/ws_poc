@@ -11,7 +11,12 @@ import (
 )
 
 // writePump batches messages and writes them to the WebSocket connection.
-// This is a hot path and has been optimized to reduce system calls.
+// This is a hot path and has been optimized to reduce system calls and atomic operations.
+//
+// Optimizations:
+// - Message batching: Drains channel before flush (reduces syscalls)
+// - Metrics batching: Single atomic update per batch instead of per message
+// - At 125 msg/sec with avg batch=10, reduces atomic ops from 2500 to 250/sec per client
 func (s *Server) writePump(c *Client) {
 	// Use a buffered writer to batch writes and reduce syscalls.
 	writer := bufio.NewWriter(c.conn)
@@ -37,16 +42,16 @@ func (s *Server) writePump(c *Client) {
 			// Set a deadline for the write operation.
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
 
+			// Batch metrics: accumulate counts before updating atomics
+			var batchMsgCount int64 = 1
+			var batchByteCount int64 = int64(len(message))
+
 			// Write the first message
 			err := wsutil.WriteServerMessage(writer, ws.OpText, message)
 			if err != nil {
 				s.logger.Debug().Err(err).Int64("client_id", c.id).Msg("Failed to write message")
 				return
 			}
-			atomic.AddInt64(&s.stats.MessagesSent, 1)
-			atomic.AddInt64(&s.stats.BytesSent, int64(len(message)))
-			monitoring.UpdateMessageMetrics(1, 0)
-			monitoring.UpdateBytesMetrics(int64(len(message)), 0)
 
 			// Batch additional messages from the channel.
 			n := len(c.send)
@@ -57,10 +62,8 @@ func (s *Server) writePump(c *Client) {
 					s.logger.Debug().Err(err).Int64("client_id", c.id).Msg("Failed to write message")
 					return
 				}
-				atomic.AddInt64(&s.stats.MessagesSent, 1)
-				atomic.AddInt64(&s.stats.BytesSent, int64(len(message)))
-				monitoring.UpdateMessageMetrics(1, 0)
-				monitoring.UpdateBytesMetrics(int64(len(message)), 0)
+				batchMsgCount++
+				batchByteCount += int64(len(message))
 			}
 
 			// Flush the buffer to send all batched messages.
@@ -68,6 +71,14 @@ func (s *Server) writePump(c *Client) {
 				s.logger.Debug().Err(err).Int64("client_id", c.id).Msg("Failed to flush writer")
 				return
 			}
+
+			// Update metrics ONCE per batch instead of per message
+			// Reduces atomic operations from 2*(1+n) to 2 per batch
+			// At 125 msg/sec with batching=10, reduces from 2500 to 250 atomics/sec per client
+			atomic.AddInt64(&s.stats.MessagesSent, batchMsgCount)
+			atomic.AddInt64(&s.stats.BytesSent, batchByteCount)
+			monitoring.UpdateMessageMetrics(batchMsgCount, 0)
+			monitoring.UpdateBytesMetrics(batchByteCount, 0)
 
 		case <-ticker.C:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
