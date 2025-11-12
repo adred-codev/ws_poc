@@ -85,8 +85,8 @@ func main() {
 	for i := 0; i < *numShards; i++ {
 		// Bind address: 0.0.0.0 to accept both IPv4/IPv6 connections
 		shardBindAddr := fmt.Sprintf("0.0.0.0:%d", *basePort+i)
-		// Advertise address: localhost for LoadBalancer to connect to
-		shardAdvertiseAddr := fmt.Sprintf("localhost:%d", *basePort+i)
+		// Advertise address: 127.0.0.1 (IPv4 loopback) for LoadBalancer to connect to
+		shardAdvertiseAddr := fmt.Sprintf("127.0.0.1:%d", *basePort+i)
 
 		shardConfig := types.ServerConfig{
 			Addr:           shardBindAddr,
