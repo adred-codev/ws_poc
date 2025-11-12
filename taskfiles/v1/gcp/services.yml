@@ -45,7 +45,7 @@ tasks:
   # === WEBSOCKET SERVER ===
 
   start:ws:
-    desc: Start WebSocket server (mode-aware: reads WS_MODE from .env.production)
+    desc: "Start WebSocket server (mode-aware: reads WS_MODE from .env.production)"
     cmds:
       - echo "🚀 Starting WebSocket server on {{.WS_INSTANCE}}..."
       - |

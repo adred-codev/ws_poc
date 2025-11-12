@@ -11,22 +11,22 @@ includes:
     taskfile: ./taskfiles/version.yml
     dir: .
 
-  # Local deployment (Kafka/Redpanda) - v1
-  local:
-    taskfile: ./taskfiles/v1/local/services.yml
-    dir: .
-  local:health:
-    taskfile: ./taskfiles/v1/local/health.yml
-    dir: .
-  local:deploy:
-    taskfile: ./taskfiles/v1/local/deployment.yml
-    dir: .
-  local:test:
-    taskfile: ./taskfiles/v1/local/load-test.yml
-    dir: .
-  local:stats:
-    taskfile: ./taskfiles/v1/local/stats.yml
-    dir: .
+  # Local deployment (Kafka/Redpanda) - v1 (TEMPORARILY DISABLED)
+  # local:
+  #   taskfile: ./taskfiles/v1/local/services.yml
+  #   dir: .
+  # local:health:
+  #   taskfile: ./taskfiles/v1/local/health.yml
+  #   dir: .
+  # local:deploy:
+  #   taskfile: ./taskfiles/v1/local/deployment.yml
+  #   dir: .
+  # local:test:
+  #   taskfile: ./taskfiles/v1/local/load-test.yml
+  #   dir: .
+  # local:stats:
+  #   taskfile: ./taskfiles/v1/local/stats.yml
+  #   dir: .
 
   # GCP deployment (Kafka/Redpanda, Distributed) - v1
   gcp:

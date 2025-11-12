@@ -14,9 +14,6 @@ includes:
     taskfile: ./health.yml
     internal: true
 
-vars:
-  WS_MODE: '{{.WS_MODE | default "single"}}'
-
 tasks:
   setup:
     desc: Complete local deployment from scratch

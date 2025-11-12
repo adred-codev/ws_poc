@@ -7,9 +7,7 @@ version: "3"
 dotenv: ["{{.USER_WORKING_DIR}}/deployments/v1/local/.env.local"]
 
 vars:
-  # Default to single-core if WS_MODE not set
-  WS_MODE: '{{.WS_MODE | default "single"}}'
-  # Dynamically choose compose file based on mode
+  # Dynamically choose compose file based on mode (reads WS_MODE from .env.local)
   COMPOSE_FILE: '{{if eq .WS_MODE "multi"}}{{.USER_WORKING_DIR}}/deployments/v1/local/docker-compose.multi.yml{{else}}{{.USER_WORKING_DIR}}/deployments/v1/local/docker-compose.yml{{end}}'
   # Dynamically choose container name based on mode
   WS_CONTAINER: '{{if eq .WS_MODE "multi"}}odin-ws-multi-local{{else}}odin-ws-local{{end}}'
@@ -46,9 +44,9 @@ tasks:
   delete:ws:
     desc: Delete WS server container
     cmds:
-      - docker-compose -f {{.COMPOSE_FILE}} stop {{.WS_SERVICE}}
-      - docker-compose -f {{.COMPOSE_FILE}} rm -f {{.WS_SERVICE}}
-      - echo "✅ WS server deleted (mode: {{.WS_MODE}})"
+      - docker-compose -f "{{.COMPOSE_FILE}}" stop "{{.WS_SERVICE}}"
+      - docker-compose -f "{{.COMPOSE_FILE}}" rm -f "{{.WS_SERVICE}}"
+      - echo "✅ WS server deleted"
 
   delete:prometheus:
     desc: Delete Prometheus container and volumes
