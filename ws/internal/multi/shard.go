@@ -197,6 +197,16 @@ func (s *Shard) GetAvailableSlots() int {
 	return len(s.slots)
 }
 
+// GetSystemStats returns system-wide CPU and memory metrics.
+// Since all shards run in the same process, these metrics are shared.
+// Returns CPUPercent and MemoryMB from the underlying server stats.
+func (s *Shard) GetSystemStats() (cpuPercent float64, memoryMB float64) {
+	stats := s.server.GetStats()
+	stats.Mu.RLock()
+	defer stats.Mu.RUnlock()
+	return stats.CPUPercent, stats.MemoryMB
+}
+
 // BroadcastMessage is the type of message sent over the central BroadcastBus
 type BroadcastMessage struct {
 	Subject string

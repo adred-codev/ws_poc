@@ -289,28 +289,73 @@ func (lb *LoadBalancer) handleHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Aggregate metrics from all shards
+	// Aggregate metrics from all shards and collect per-shard stats
 	var totalConnections int64
 	var totalMaxConnections int64
 	allShardsHealthy := true
 
+	// Build per-shard stats array (zero performance impact - just atomic reads)
+	type ShardStats struct {
+		ID              int     `json:"id"`
+		Connections     int64   `json:"connections"`
+		MaxConnections  int     `json:"max_connections"`
+		AvailableSlots  int     `json:"available_slots"`
+		Utilization     float64 `json:"utilization"`
+		Status          string  `json:"status"`
+	}
+	shardStats := make([]ShardStats, 0, len(lb.shards))
+
 	for _, shard := range lb.shards {
 		currentConns := shard.GetCurrentConnections()
 		maxConns := int64(shard.GetMaxConnections())
+		availableSlots := shard.GetAvailableSlots()
 
 		totalConnections += currentConns
 		totalMaxConnections += maxConns
+
+		// Calculate utilization percentage
+		utilization := 0.0
+		if maxConns > 0 {
+			utilization = (float64(currentConns) / float64(maxConns)) * 100
+		}
+
+		// Determine shard status
+		shardStatus := "available"
+		if currentConns >= maxConns {
+			shardStatus = "full"
+		} else if utilization > 90 {
+			shardStatus = "high"
+		} else if utilization > 75 {
+			shardStatus = "medium"
+		}
 
 		// Simple health check: if shard is at over capacity, mark as unhealthy
 		if currentConns > maxConns {
 			allShardsHealthy = false
 		}
+
+		// Add per-shard stats (all atomic reads - zero performance cost)
+		shardStats = append(shardStats, ShardStats{
+			ID:              shard.ID,
+			Connections:     currentConns,
+			MaxConnections:  int(maxConns),
+			AvailableSlots:  availableSlots,
+			Utilization:     utilization,
+			Status:          shardStatus,
+		})
 	}
 
 	// Calculate capacity percentage
 	var capacityPercent float64
 	if totalMaxConnections > 0 {
 		capacityPercent = float64(totalConnections) / float64(totalMaxConnections) * 100
+	}
+
+	// Get system-wide CPU/memory metrics (same for all shards - single process)
+	// Query from shard 0 (arbitrary choice - all shards share the same metrics)
+	cpuPercent, memoryMB := 0.0, 0.0
+	if len(lb.shards) > 0 {
+		cpuPercent, memoryMB = lb.shards[0].GetSystemStats()
 	}
 
 	// Build simplified health response matching expected format
@@ -330,15 +375,19 @@ func (lb *LoadBalancer) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"healthy": isHealthy,
 		"checks": map[string]interface{}{
 			"capacity": map[string]interface{}{
-				"current": int(totalConnections),
+				"current":    int(totalConnections),
+				"max":        int(totalMaxConnections),
+				"percentage": capacityPercent,
 			},
 			"cpu": map[string]interface{}{
-				"percentage": 0.0, // Load balancer doesn't track CPU
+				"percentage": cpuPercent, // System-wide CPU (all shards share same process)
 			},
 			"memory": map[string]interface{}{
-				"percentage": 0.0, // Load balancer doesn't track memory
+				"used_mb":    memoryMB,   // System-wide memory (all shards share same heap)
+				"percentage": 0.0,        // Could calculate from memory limit if needed
 			},
 		},
+		"shards": shardStats, // Per-shard connection breakdown (zero performance cost)
 	}
 
 	w.WriteHeader(statusCode)
