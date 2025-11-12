@@ -22,12 +22,12 @@ services:
       dockerfile: Dockerfile.multi
     container_name: odin-ws-multi
     ports:
-      - "0.0.0.0:3004:3005"  # LoadBalancer port (external:internal)
+      - "0.0.0.0:3004:3001"  # LoadBalancer port (external:internal)
     command:
       - "./odin-ws-multi"
       - "--shards=7"
       - "--base-port=3002"
-      - "--lb-addr=:3005"
+      - "--lb-addr=:3001"
     # Load configuration in priority order:
     # 1. shared/base.env - Common defaults
     # 2. shared/kafka-topics.env - Topic configuration
