@@ -16,6 +16,7 @@ import (
 type Shard struct {
 	ID             int // Exported for external access
 	server         *shared.Server
+	advertiseAddr  string                  // Address advertised to LoadBalancer (e.g., localhost:3002)
 	broadcastChan  chan *BroadcastMessage // Channel to receive messages from the central bus
 	logger         zerolog.Logger
 	maxConnections int         // Max connections this shard can handle
@@ -29,7 +30,8 @@ type Shard struct {
 // ShardConfig holds configuration for a single Shard
 type ShardConfig struct {
 	ID             int
-	Addr           string // Address for this shard's internal listener
+	Addr           string // Address for this shard to bind/listen on (e.g., 0.0.0.0:3002)
+	AdvertiseAddr  string // Address advertised to LoadBalancer (e.g., localhost:3002)
 	ServerConfig   types.ServerConfig
 	BroadcastBus   *BroadcastBus // Reference to the central bus
 	Logger         zerolog.Logger
@@ -77,6 +79,7 @@ func NewShard(cfg ShardConfig) (*Shard, error) {
 	shard := &Shard{
 		ID:             cfg.ID,
 		server:         sharedServer,
+		advertiseAddr:  cfg.AdvertiseAddr, // Address for LoadBalancer to connect to
 		broadcastChan:  broadcastChan,
 		logger:         cfg.Logger.With().Int("shard_id", cfg.ID).Logger(),
 		maxConnections: cfg.MaxConnections,
@@ -155,7 +158,7 @@ func (s *Shard) GetMaxConnections() int {
 
 // GetAddr returns the address this shard is listening on
 func (s *Shard) GetAddr() string {
-	return s.server.GetConfig().Addr
+	return s.advertiseAddr // Return advertise address for LoadBalancer, not bind address
 }
 
 // TryAcquireSlot attempts to reserve a connection slot non-blockingly.

@@ -83,10 +83,13 @@ func main() {
 	// Create and start shards
 	shards := make([]*multi.Shard, *numShards)
 	for i := 0; i < *numShards; i++ {
-		shardAddr := fmt.Sprintf("0.0.0.0:%d", *basePort+i) // Bind to all interfaces (fixes IPv4/IPv6 mismatch)
+		// Bind address: 0.0.0.0 to accept both IPv4/IPv6 connections
+		shardBindAddr := fmt.Sprintf("0.0.0.0:%d", *basePort+i)
+		// Advertise address: localhost for LoadBalancer to connect to
+		shardAdvertiseAddr := fmt.Sprintf("localhost:%d", *basePort+i)
 
 		shardConfig := types.ServerConfig{
-			Addr:           shardAddr,
+			Addr:           shardBindAddr,
 			KafkaBrokers:   kafkaBrokers,
 			ConsumerGroup:  cfg.ConsumerGroup, // Base consumer group name
 			MaxConnections: maxConnsPerShard,  // Shard-specific max connections
@@ -105,7 +108,8 @@ func main() {
 
 		shard, err := multi.NewShard(multi.ShardConfig{
 			ID:             i,
-			Addr:           shardAddr,
+			Addr:           shardBindAddr,      // Bind address for listening
+			AdvertiseAddr:  shardAdvertiseAddr, // Address for LoadBalancer connections
 			ServerConfig:   shardConfig,
 			BroadcastBus:   broadcastBus, // Pass reference to bus, shard will subscribe internally
 			Logger:         monitoring.NewLogger(monitoring.LoggerConfig{Level: types.LogLevel(cfg.LogLevel), Format: types.LogFormat(cfg.LogFormat)}),
