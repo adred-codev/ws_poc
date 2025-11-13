@@ -3,12 +3,10 @@ package limits
 import (
 	"context"
 	"fmt"
-	"runtime"
 	"sync/atomic"
 	"time"
 
 	"github.com/adred-codev/ws_poc/internal/shared/monitoring"
-	"github.com/adred-codev/ws_poc/internal/shared/platform"
 	"github.com/adred-codev/ws_poc/internal/shared/types"
 	"github.com/rs/zerolog"
 	"golang.org/x/time/rate"
@@ -21,6 +19,7 @@ import (
 //   - Rate limiting (prevent work overload)
 //   - Safety valves (emergency brakes)
 //   - No auto-calculation (deterministic)
+//   - Single source of truth via SystemMonitor (eliminates duplicate measurements)
 //
 // Unlike DynamicCapacityManager, ResourceGuard does NOT:
 //   - Calculate capacity from measurements
@@ -33,6 +32,7 @@ import (
 //   - Rate limit broadcasts
 //   - Provide safety checks (CPU, memory, goroutines)
 //   - Log all decisions to Loki
+//   - Query SystemMonitor for resource metrics (no duplicate measurements)
 type ResourceGuard struct {
 	// Static configuration
 	config types.ServerConfig
@@ -45,12 +45,8 @@ type ResourceGuard struct {
 	// Goroutine limiter
 	goroutineLimiter *GoroutineLimiter
 
-	// CPU monitor (container-aware with fallback)
-	cpuMonitor *platform.CPUMonitor
-
-	// Current resource state (atomic)
-	currentCPU    atomic.Value // float64
-	currentMemory atomic.Value // int64 (bytes)
+	// System monitor (singleton, shared across all ResourceGuards)
+	systemMonitor *monitoring.SystemMonitor
 
 	// External state (pointers to server stats)
 	currentConns *int64 // Pointer to server's current connection count (atomic operations used)
@@ -124,8 +120,8 @@ func NewResourceGuard(config types.ServerConfig, logger zerolog.Logger, currentC
 	// Create goroutine limiter
 	goroutineLimiter := NewGoroutineLimiter(config.MaxGoroutines)
 
-	// Initialize CPU monitor (container-aware with fallback)
-	cpuMonitor := platform.NewCPUMonitor(logger)
+	// Get SystemMonitor singleton (shared across all ResourceGuards)
+	systemMonitor := monitoring.GetSystemMonitor(logger)
 
 	rg := &ResourceGuard{
 		config:           config,
@@ -133,17 +129,12 @@ func NewResourceGuard(config types.ServerConfig, logger zerolog.Logger, currentC
 		kafkaLimiter:     kafkaLimiter,
 		broadcastLimiter: broadcastLimiter,
 		goroutineLimiter: goroutineLimiter,
-		cpuMonitor:       cpuMonitor,
+		systemMonitor:    systemMonitor,
 		currentConns:     currentConns,
 	}
 
-	// Initialize atomic values
-	rg.currentCPU.Store(0.0)
-	rg.currentMemory.Store(int64(0))
-
 	logger.Info().
-		Str("cpu_mode", cpuMonitor.Mode()).
-		Float64("cpu_allocation", cpuMonitor.GetAllocation()).
+		Float64("cpu_allocation", systemMonitor.GetCPUAllocation()).
 		Float64("cpu_limit", config.CPULimit).
 		Int64("memory_limit", config.MemoryLimit).
 		Int("max_connections", config.MaxConnections).
@@ -151,7 +142,7 @@ func NewResourceGuard(config types.ServerConfig, logger zerolog.Logger, currentC
 		Int("max_broadcast_rate", config.MaxBroadcastsPerSec).
 		Int("max_goroutines", config.MaxGoroutines).
 		Msgf("ResourceGuard initialized: %.1f CPUs allocated, will reject at %.0f%%",
-			cpuMonitor.GetAllocation(),
+			systemMonitor.GetCPUAllocation(),
 			config.CPURejectThreshold)
 
 	return rg
@@ -169,10 +160,11 @@ func NewResourceGuard(config types.ServerConfig, logger zerolog.Logger, currentC
 //   - accept: true if connection should be accepted
 //   - reason: human-readable rejection reason (if rejected)
 func (rg *ResourceGuard) ShouldAcceptConnection() (accept bool, reason string) {
+	// Query current resource metrics from SystemMonitor (single source of truth)
 	currentConns := atomic.LoadInt64(rg.currentConns)
-	currentCPU := rg.currentCPU.Load().(float64)
-	currentMemory := rg.currentMemory.Load().(int64)
-	currentGoros := runtime.NumGoroutine()
+	currentCPU := rg.systemMonitor.GetCPUPercent()
+	currentMemory := rg.systemMonitor.GetMemoryBytes()
+	currentGoros := rg.systemMonitor.GetGoroutines()
 
 	// Check 1: Hard connection limit
 	if currentConns >= int64(rg.config.MaxConnections) {
@@ -229,7 +221,7 @@ func (rg *ResourceGuard) ShouldAcceptConnection() (accept bool, reason string) {
 // This provides backpressure when CPU is critically high.
 // Consumer will pause partition consumption temporarily.
 func (rg *ResourceGuard) ShouldPauseKafka() bool {
-	currentCPU := rg.currentCPU.Load().(float64)
+	currentCPU := rg.systemMonitor.GetCPUPercent()
 	return currentCPU > rg.config.CPUPauseThreshold
 }
 
@@ -294,59 +286,36 @@ func (rg *ResourceGuard) ReleaseGoroutine() {
 	rg.goroutineLimiter.Release()
 }
 
-// UpdateResources updates current resource usage
+// UpdateResources updates server stats with current resource metrics from SystemMonitor.
 //
-// Call this periodically (e.g., every 15 seconds) to keep resource state current.
-// Now also updates server stats to provide single source of truth.
+// This method no longer performs measurements - it just copies metrics from the
+// global SystemMonitor singleton to the server's stats structure for health endpoints.
+// The SystemMonitor handles all actual measurement work.
 func (rg *ResourceGuard) UpdateResources(serverStats *types.Stats) {
-	// Get container-aware CPU usage
-	cpuPercent, throttleStats, err := rg.cpuMonitor.GetPercent()
-	if err != nil {
-		monitoring.LogError(rg.logger, err, "Failed to get CPU usage", nil)
-		cpuPercent = 0
-	}
+	// Get metrics from SystemMonitor (single source of truth)
+	metrics := rg.systemMonitor.GetMetrics()
 
-	// Store in ResourceGuard (for admission control)
-	rg.currentCPU.Store(cpuPercent)
-
-	// ALSO update server stats (for Prometheus/health endpoint)
-	// This unifies the measurement - single source of truth
+	// Copy to server stats (for health endpoint)
 	if serverStats != nil {
 		serverStats.Mu.Lock()
-		serverStats.CPUPercent = cpuPercent
+		serverStats.CPUPercent = metrics.CPUPercent
+		serverStats.MemoryMB = metrics.MemoryMB
 		serverStats.Mu.Unlock()
 	}
 
-	// Update throttling metrics if available
-	if throttleStats.NrThrottled > 0 {
-		monitoring.CpuThrottleEventsTotal.Add(float64(throttleStats.NrThrottled))
-	}
-	if throttleStats.ThrottledSec > 0 {
-		monitoring.CpuThrottledSecondsTotal.Add(throttleStats.ThrottledSec)
-	}
-
-	// Get memory usage via ReadMemStats (proven reliable)
-	// Why ReadMemStats instead of runtime/metrics:
-	// - runtime/metrics returns KindBad on Docker/GCP environments (returns metric_kind=0)
-	// - ReadMemStats is universal and reliable across all platforms
-	// - Stop-the-world pause is < 1ms typically, acceptable for 15s update interval
-	var mem runtime.MemStats
-	runtime.ReadMemStats(&mem)
-	rg.currentMemory.Store(int64(mem.Alloc))
-
-	currentMemory := rg.currentMemory.Load().(int64)
-
 	rg.logger.Debug().
-		Float64("cpu_percent", cpuPercent).
-		Uint64("cpu_throttled_events", throttleStats.NrThrottled).
-		Float64("cpu_throttled_sec", throttleStats.ThrottledSec).
-		Int64("memory_mb", currentMemory/(1024*1024)).
+		Float64("cpu_percent", metrics.CPUPercent).
+		Float64("memory_mb", metrics.MemoryMB).
 		Int64("connections", atomic.LoadInt64(rg.currentConns)).
-		Int("goroutines", runtime.NumGoroutine()).
-		Msg("Resource state updated")
+		Int("goroutines", metrics.Goroutines).
+		Msg("Server stats updated from SystemMonitor")
 }
 
-// StartMonitoring begins periodic resource updates
+// StartMonitoring begins periodic stats synchronization from SystemMonitor.
+//
+// This method no longer performs measurements - it just periodically copies metrics
+// from SystemMonitor to server stats and updates Prometheus metrics.
+// The SystemMonitor singleton handles all actual CPU/memory measurements.
 func (rg *ResourceGuard) StartMonitoring(ctx context.Context, interval time.Duration, serverStats *types.Stats) {
 	ticker := time.NewTicker(interval)
 
@@ -356,26 +325,17 @@ func (rg *ResourceGuard) StartMonitoring(ctx context.Context, interval time.Dura
 		for {
 			select {
 			case <-ticker.C:
+				// Copy metrics from SystemMonitor to server stats
 				rg.UpdateResources(serverStats)
 
-				// Update Prometheus metrics
-				currentCPU := rg.currentCPU.Load().(float64)
-				currentMemory := rg.currentMemory.Load().(int64)
+				// Get metrics for Prometheus updates
+				metrics := rg.systemMonitor.GetMetrics()
 
-				// Update container-aware CPU metrics
-				monitoring.CpuUsagePercent.Set(currentCPU)
-				monitoring.CpuContainerPercent.Set(currentCPU)
-				monitoring.CpuAllocationCores.Set(rg.cpuMonitor.GetAllocation())
-
-				// Also get host CPU for reference
-				if hostCPU, err := rg.cpuMonitor.GetHostPercent(); err == nil {
-					monitoring.CpuHostPercent.Set(hostCPU)
-				}
-
-				cpuHeadroom := 100.0 - currentCPU
+				// Update Prometheus capacity metrics
+				cpuHeadroom := 100.0 - metrics.CPUPercent
 				memPercent := 0.0
 				if rg.config.MemoryLimit > 0 {
-					memPercent = (float64(currentMemory) / float64(rg.config.MemoryLimit)) * 100
+					memPercent = (float64(metrics.MemoryBytes) / float64(rg.config.MemoryLimit)) * 100
 				}
 				memHeadroom := 100.0 - memPercent
 
@@ -383,7 +343,7 @@ func (rg *ResourceGuard) StartMonitoring(ctx context.Context, interval time.Dura
 				monitoring.UpdateCapacityMetrics(rg.config.MaxConnections, rg.config.CPURejectThreshold)
 
 			case <-ctx.Done():
-				rg.logger.Info().Msg("ResourceGuard monitoring stopped")
+				rg.logger.Info().Msg("ResourceGuard stats sync stopped")
 				return
 			}
 		}
@@ -391,20 +351,22 @@ func (rg *ResourceGuard) StartMonitoring(ctx context.Context, interval time.Dura
 
 	rg.logger.Info().
 		Dur("interval", interval).
-		Msg("ResourceGuard monitoring started")
+		Msg("ResourceGuard stats sync started (metrics from SystemMonitor)")
 }
 
 // GetStats returns current resource statistics for debugging
 func (rg *ResourceGuard) GetStats() map[string]any {
+	metrics := rg.systemMonitor.GetMetrics()
+
 	return map[string]any{
 		"max_connections":      rg.config.MaxConnections,
 		"current_connections":  atomic.LoadInt64(rg.currentConns),
-		"cpu_percent":          rg.currentCPU.Load().(float64),
+		"cpu_percent":          metrics.CPUPercent,
 		"cpu_reject_threshold": rg.config.CPURejectThreshold,
 		"cpu_pause_threshold":  rg.config.CPUPauseThreshold,
-		"memory_bytes":         rg.currentMemory.Load().(int64),
+		"memory_bytes":         metrics.MemoryBytes,
 		"memory_limit_bytes":   rg.config.MemoryLimit,
-		"goroutines_current":   runtime.NumGoroutine(),
+		"goroutines_current":   metrics.Goroutines,
 		"goroutines_limit":     rg.config.MaxGoroutines,
 		"kafka_rate_limit":     rg.config.MaxKafkaMessagesPerSec,
 		"broadcast_rate_limit": rg.config.MaxBroadcastsPerSec,

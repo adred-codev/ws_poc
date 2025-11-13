@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 
 	"github.com/adred-codev/ws_poc/internal/shared"
+	"github.com/adred-codev/ws_poc/internal/shared/monitoring"
 	"github.com/adred-codev/ws_poc/internal/shared/types"
 	"github.com/rs/zerolog"
 )
@@ -203,12 +204,12 @@ func (s *Shard) GetAvailableSlots() int {
 
 // GetSystemStats returns system-wide CPU and memory metrics.
 // Since all shards run in the same process, these metrics are shared.
-// Returns CPUPercent and MemoryMB from the underlying server stats.
+// Queries directly from SystemMonitor singleton (single source of truth).
 func (s *Shard) GetSystemStats() (cpuPercent float64, memoryMB float64) {
-	stats := s.server.GetStats()
-	stats.Mu.RLock()
-	defer stats.Mu.RUnlock()
-	return stats.CPUPercent, stats.MemoryMB
+	// Get SystemMonitor singleton (all shards share the same instance)
+	systemMonitor := monitoring.GetSystemMonitor(s.logger)
+	metrics := systemMonitor.GetMetrics()
+	return metrics.CPUPercent, metrics.MemoryMB
 }
 
 // BroadcastMessage is the type of message sent over the central BroadcastBus

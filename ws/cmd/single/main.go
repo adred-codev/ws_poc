@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/adred-codev/ws_poc/internal/shared"
+	"github.com/adred-codev/ws_poc/internal/shared/monitoring"
 	"github.com/adred-codev/ws_poc/internal/shared/platform"
 	"github.com/adred-codev/ws_poc/internal/shared/types"
 	_ "go.uber.org/automaxprocs"
@@ -57,6 +58,16 @@ func main() {
 
 	// Print human-readable config for startup logs
 	cfg.Print()
+
+	// Initialize SystemMonitor singleton FIRST (before creating ResourceGuard)
+	// This ensures all ResourceGuards share the same system metrics source
+	structuredLogger := monitoring.NewLogger(monitoring.LoggerConfig{
+		Level:  types.LogLevel(cfg.LogLevel),
+		Format: types.LogFormat(cfg.LogFormat),
+	})
+	systemMonitor := monitoring.GetSystemMonitor(structuredLogger)
+	systemMonitor.StartMonitoring(cfg.MetricsInterval)
+	logger.Printf("✅ SystemMonitor singleton started (centralizes CPU/memory measurement)")
 
 	// Create and configure server with loaded configuration
 	// Parse Kafka brokers from comma-separated string
@@ -121,4 +132,8 @@ func main() {
 	if err := server.Shutdown(); err != nil {
 		logger.Printf("Error during shutdown: %v", err)
 	}
+
+	// Shutdown SystemMonitor
+	systemMonitor.Shutdown()
+	logger.Println("SystemMonitor shut down")
 }

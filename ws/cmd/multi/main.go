@@ -61,6 +61,16 @@ func main() {
 	// Print human-readable config for startup logs
 	cfg.Print()
 
+	// Initialize SystemMonitor singleton FIRST (before creating any ResourceGuards)
+	// This ensures all ResourceGuards share the same system metrics source
+	structuredLogger := monitoring.NewLogger(monitoring.LoggerConfig{
+		Level:  types.LogLevel(cfg.LogLevel),
+		Format: types.LogFormat(cfg.LogFormat),
+	})
+	systemMonitor := monitoring.GetSystemMonitor(structuredLogger)
+	systemMonitor.StartMonitoring(cfg.MetricsInterval)
+	logger.Printf("✅ SystemMonitor singleton started (centralizes CPU/memory measurement)")
+
 	// Create and configure server with loaded configuration
 	kafkaBrokers := []string{}
 	if cfg.KafkaBrokers != "" {
@@ -208,6 +218,10 @@ func main() {
 
 	// Shutdown BroadcastBus
 	broadcastBus.Shutdown()
+
+	// Shutdown SystemMonitor
+	systemMonitor.Shutdown()
+	logger.Println("SystemMonitor shut down")
 
 	logger.Println("Multi-core server gracefully shut down.")
 }
