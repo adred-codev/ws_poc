@@ -35,6 +35,7 @@ type ShardConfig struct {
 	ServerConfig         types.ServerConfig
 	BroadcastBus         *BroadcastBus // Reference to the central bus
 	DisableKafkaConsumer bool          // When true, shard will not create its own Kafka consumer (for shared pool mode)
+	SharedKafkaConsumer  interface{}   // Optional: Shared Kafka consumer for message replay (set when using pool mode)
 	Logger               zerolog.Logger
 	MaxConnections       int
 }
@@ -46,8 +47,9 @@ func NewShard(cfg ShardConfig) (*Shard, error) {
 	// Create a shared.Server instance for this shard
 	// The shared.Server will use the shard's specific maxConnections
 	serverConfig := cfg.ServerConfig
-	serverConfig.MaxConnections = cfg.MaxConnections               // Override with shard-specific limit
-	serverConfig.DisableKafkaConsumer = cfg.DisableKafkaConsumer   // Pass flag to disable per-shard consumer
+	serverConfig.MaxConnections = cfg.MaxConnections                        // Override with shard-specific limit
+	serverConfig.DisableKafkaConsumer = cfg.DisableKafkaConsumer            // Pass flag to disable per-shard consumer
+	serverConfig.SharedKafkaConsumer = cfg.SharedKafkaConsumer              // Pass shared consumer for replay
 	serverConfig.ConsumerGroup = fmt.Sprintf("%s-%d", serverConfig.ConsumerGroup, cfg.ID) // Unique consumer group per shard (only used if not disabled)
 
 	// Create broadcast function that will publish to the central bus

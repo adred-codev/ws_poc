@@ -149,6 +149,12 @@ func (p *KafkaConsumerPool) GetMetrics() KafkaPoolMetrics {
 	}
 }
 
+// GetConsumer returns the shared Kafka consumer for replay operations
+// This allows shards to perform message replay without creating new consumers
+func (p *KafkaConsumerPool) GetConsumer() interface{} {
+	return p.consumer
+}
+
 // KafkaPoolMetrics contains metrics for the consumer pool
 type KafkaPoolMetrics struct {
 	MessagesRouted  uint64

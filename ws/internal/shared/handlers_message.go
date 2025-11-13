@@ -1,10 +1,13 @@
 package shared
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"sync/atomic"
 	"time"
 
+	"github.com/adred-codev/ws_poc/internal/shared/messaging"
 	"github.com/adred-codev/ws_poc/internal/shared/monitoring"
 )
 
@@ -212,22 +215,91 @@ func (s *Server) handleKafkaReconnect(c *Client, data []byte) {
 		Interface("last_offsets", reconnectReq.LastOffset).
 		Msg("Client requesting Kafka-based reconnection")
 
-	// TODO: Implement full Kafka replay from offsets
-	// This would require:
-	// 1. Create temporary Kafka consumer for this client's subscribed topics
-	// 2. Seek to last_offset for each topic
-	// 3. Read messages from [last_offset → current offset]
-	// 4. Filter by client's subscriptions (only send subscribed channels)
-	// 5. Send missed messages to client
-	// 6. Close temporary consumer
-	//
-	// For now, send acknowledgment that client should resubscribe
-	// For crypto trading at 25 msg/sec, missing 1-2 seconds during reconnect is acceptable
+	// Check if Kafka consumer is available for replay
+	if s.kafkaConsumer == nil {
+		s.logger.Warn().
+			Int64("client_id", c.id).
+			Msg("Kafka replay requested but no consumer available")
+
+		errorMsg := map[string]any{
+			"type":    "reconnect_error",
+			"message": "Message replay not available (no Kafka consumer)",
+		}
+		if errorData, err := json.Marshal(errorMsg); err == nil {
+			select {
+			case c.send <- errorData:
+			default:
+			}
+		}
+		return
+	}
+
+	// Get client's subscriptions for filtering
+	subscriptions := c.subscriptions.List()
+
+	// Create context with timeout for replay operation (5 seconds max)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Perform replay from Kafka
+	replayedMsgs, err := s.kafkaConsumer.ReplayFromOffsets(
+		ctx,
+		reconnectReq.LastOffset,
+		100,           // Max 100 messages to prevent overwhelming client
+		subscriptions, // Only send messages for subscribed channels
+	)
+
+	if err != nil {
+		s.logger.Warn().
+			Int64("client_id", c.id).
+			Err(err).
+			Msg("Failed to replay messages from Kafka")
+
+		errorMsg := map[string]any{
+			"type":    "reconnect_error",
+			"message": fmt.Sprintf("Failed to replay messages: %v", err),
+		}
+		if errorData, err := json.Marshal(errorMsg); err == nil {
+			select {
+			case c.send <- errorData:
+			default:
+			}
+		}
+		return
+	}
+
+	// Send replayed messages to client
+	replayedCount := 0
+	for _, msg := range replayedMsgs {
+		// Wrap in message envelope with sequence number
+		envelope := &messaging.MessageEnvelope{
+			Seq:       c.seqGen.Next(), // Generate unique sequence number for this client
+			Timestamp: time.Now().UnixMilli(),
+			Type:      "replay:message",
+			Priority:  messaging.PRIORITY_NORMAL,
+			Data:      json.RawMessage(msg.Data),
+		}
+
+		envelopeData, err := envelope.Serialize()
+		if err == nil {
+			select {
+			case c.send <- envelopeData:
+				replayedCount++
+			default:
+				s.logger.Warn().
+					Int64("client_id", c.id).
+					Msg("Client send buffer full during replay")
+				break
+			}
+		}
+	}
+
+	// Send acknowledgment with replay statistics
 	ackMsg := map[string]any{
-		"type":    "reconnect_ack",
-		"status":  "simplified",
-		"message": "Reconnected. Please resubscribe to channels.",
-		"note":    "Full Kafka replay coming in Phase 2. For live tickers, next update arrives in 40ms.",
+		"type":            "reconnect_ack",
+		"status":          "completed",
+		"messages_replayed": replayedCount,
+		"message":         fmt.Sprintf("Replayed %d missed messages", replayedCount),
 	}
 
 	if ackData, err := json.Marshal(ackMsg); err == nil {
@@ -236,6 +308,11 @@ func (s *Server) handleKafkaReconnect(c *Client, data []byte) {
 		default:
 		}
 	}
+
+	s.logger.Info().
+		Int64("client_id", c.id).
+		Int("messages_replayed", replayedCount).
+		Msg("Kafka replay completed successfully")
 
 	// Increment reconnect counter for monitoring
 	atomic.AddInt64(&s.stats.MessageReplayRequests, 1)

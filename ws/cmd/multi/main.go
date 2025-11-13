@@ -142,13 +142,20 @@ func main() {
 			LogFormat:              types.LogFormat(cfg.LogFormat),
 		}
 
+		// Get shared consumer for replay (if pool exists)
+		var sharedConsumer interface{}
+		if kafkaPool != nil {
+			sharedConsumer = kafkaPool.GetConsumer()
+		}
+
 		shard, err := multi.NewShard(multi.ShardConfig{
 			ID:                   i,
 			Addr:                 shardBindAddr,      // Bind address for listening
 			AdvertiseAddr:        shardAdvertiseAddr, // Address for LoadBalancer connections
 			ServerConfig:         shardConfig,
-			BroadcastBus:         broadcastBus, // Pass reference to bus, shard will subscribe internally
-			DisableKafkaConsumer: len(kafkaBrokers) > 0, // Disable per-shard consumer when using shared pool
+			BroadcastBus:         broadcastBus,              // Pass reference to bus, shard will subscribe internally
+			DisableKafkaConsumer: len(kafkaBrokers) > 0,     // Disable per-shard consumer when using shared pool
+			SharedKafkaConsumer:  sharedConsumer,            // Pass shared consumer for message replay
 			Logger:               monitoring.NewLogger(monitoring.LoggerConfig{Level: types.LogLevel(cfg.LogLevel), Format: types.LogFormat(cfg.LogFormat)}),
 			MaxConnections:       maxConnsPerShard,
 		})

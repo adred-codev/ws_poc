@@ -499,3 +499,173 @@ func (c *Consumer) getBatchCount() uint64 {
 	defer c.mu.RUnlock()
 	return c.batchesSent
 }
+
+// ReplayMessage represents a message replayed from Kafka
+type ReplayMessage struct {
+	Topic     string
+	Partition int32
+	Offset    int64
+	TokenID   string
+	EventType string
+	Data      []byte
+}
+
+// ReplayFromOffsets creates a temporary consumer and replays messages from specified offsets
+// This is used for client reconnection to retrieve missed messages
+//
+// Parameters:
+//   - ctx: Context for cancellation (should have timeout, e.g. 5 seconds)
+//   - topicOffsets: Map of topic -> starting offset to replay from
+//   - maxMessages: Maximum number of messages to replay (prevents overwhelming client)
+//   - subscriptions: Filter to only include messages for these channels (e.g. ["BTC.trade", "ETH.trade"])
+//
+// Returns:
+//   - []ReplayMessage: Messages from [startOffset → current] filtered by subscriptions
+//   - error: If consumer creation or replay fails
+//
+// Implementation notes:
+//   - Creates isolated consumer (doesn't affect main consumer group)
+//   - Reads from specific offsets to current position
+//   - Filters by client subscriptions (only return relevant messages)
+//   - Respects context timeout (typically 5 seconds for reconnect)
+//   - Closes temporary consumer after replay
+//
+// Usage example:
+//
+//	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+//	defer cancel()
+//	messages, err := consumer.ReplayFromOffsets(ctx, map[string]int64{
+//	    "odin.trades": 12345,  // Start from offset 12345
+//	    "odin.liquidity": 67890,
+//	}, 100, []string{"BTC.trade", "ETH.trade"})
+func (c *Consumer) ReplayFromOffsets(
+	ctx context.Context,
+	topicOffsets map[string]int64,
+	maxMessages int,
+	subscriptions []string,
+) ([]ReplayMessage, error) {
+	if len(topicOffsets) == 0 {
+		return nil, fmt.Errorf("at least one topic offset is required")
+	}
+
+	c.logger.Info().
+		Interface("topic_offsets", topicOffsets).
+		Int("max_messages", maxMessages).
+		Strs("subscriptions", subscriptions).
+		Msg("Starting Kafka replay from offsets")
+
+	// Extract topics from offsets map
+	topics := make([]string, 0, len(topicOffsets))
+	for topic := range topicOffsets {
+		topics = append(topics, topic)
+	}
+
+	// Create temporary consumer for replay (isolated from main consumer group)
+	// Use unique consumer group to avoid affecting main consumption
+	tempGroupID := fmt.Sprintf("replay-%d", time.Now().UnixNano())
+
+	// Build offset map for kgo
+	startOffsets := make(map[string]map[int32]kgo.Offset)
+	for topic, offset := range topicOffsets {
+		startOffsets[topic] = map[int32]kgo.Offset{
+			-1: kgo.NewOffset().At(offset), // -1 means all partitions
+		}
+	}
+
+	tempClient, err := kgo.NewClient(
+		kgo.SeedBrokers(c.client.OptValue(kgo.SeedBrokers).([]string)...),
+		kgo.ConsumerGroup(tempGroupID),
+		kgo.ConsumeTopics(topics...),
+		kgo.ConsumePartitions(startOffsets), // Start from specified offsets
+		kgo.FetchMaxWait(500*time.Millisecond),
+		kgo.FetchMinBytes(1),
+		kgo.FetchMaxBytes(5*1024*1024), // 5MB for replay
+	)
+	if err != nil {
+		c.logger.Error().Err(err).Msg("Failed to create replay consumer")
+		return nil, fmt.Errorf("failed to create replay consumer: %w", err)
+	}
+	defer tempClient.Close()
+
+	// Create subscription filter set for O(1) lookup
+	subSet := make(map[string]struct{}, len(subscriptions))
+	for _, sub := range subscriptions {
+		subSet[sub] = struct{}{}
+	}
+
+	// Collect replayed messages
+	var messages []ReplayMessage
+	messagesRead := 0
+
+	// Poll for messages until we reach current position or max messages
+	for messagesRead < maxMessages {
+		select {
+		case <-ctx.Done():
+			c.logger.Warn().
+				Int("messages_read", messagesRead).
+				Msg("Replay cancelled by context timeout")
+			return messages, ctx.Err()
+		default:
+		}
+
+		fetches := tempClient.PollFetches(ctx)
+		if fetches.IsClientClosed() {
+			break
+		}
+
+		// Check for errors
+		if errs := fetches.Errors(); len(errs) > 0 {
+			for _, err := range errs {
+				c.logger.Warn().
+					Err(err.Err).
+					Str("topic", err.Topic).
+					Int32("partition", err.Partition).
+					Msg("Replay fetch error")
+			}
+		}
+
+		// No more records, we've reached current position
+		if fetches.NumRecords() == 0 {
+			break
+		}
+
+		// Process records
+		fetches.EachRecord(func(record *kgo.Record) {
+			if messagesRead >= maxMessages {
+				return // Stop if we've hit the limit
+			}
+
+			// Parse message to get token ID and event type
+			msg := c.prepareMessage(record)
+			if msg == nil {
+				return
+			}
+
+			// Filter by subscriptions (only return messages client is subscribed to)
+			channel := fmt.Sprintf("%s.%s", msg.tokenID, msg.eventType)
+			if len(subSet) > 0 {
+				if _, subscribed := subSet[channel]; !subscribed {
+					return // Skip messages for unsubscribed channels
+				}
+			}
+
+			// Add to replay results
+			messages = append(messages, ReplayMessage{
+				Topic:     record.Topic,
+				Partition: record.Partition,
+				Offset:    record.Offset,
+				TokenID:   msg.tokenID,
+				EventType: msg.eventType,
+				Data:      msg.message,
+			})
+			messagesRead++
+		})
+	}
+
+	c.logger.Info().
+		Int("messages_replayed", len(messages)).
+		Int("messages_read", messagesRead).
+		Msg("Kafka replay completed")
+
+	return messages, nil
+}

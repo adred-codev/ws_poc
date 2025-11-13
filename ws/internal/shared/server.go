@@ -130,7 +130,13 @@ func NewServer(config types.ServerConfig, broadcastToBusFunc kafka.BroadcastFunc
 			"topics":         kafka.AllTopics(),
 		})
 	} else if config.DisableKafkaConsumer {
-		logger.Printf("Kafka consumer creation skipped (using shared pool mode)")
+		// In shared pool mode, use the shared consumer reference for replay operations
+		if config.SharedKafkaConsumer != nil {
+			s.kafkaConsumer = config.SharedKafkaConsumer.(*kafka.Consumer)
+			logger.Printf("Using shared Kafka consumer for message replay")
+		} else {
+			logger.Printf("Kafka consumer creation skipped (using shared pool mode)")
+		}
 	}
 
 	return s, nil
