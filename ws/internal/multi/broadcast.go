@@ -15,6 +15,16 @@ type BroadcastBus struct {
 	mu          sync.RWMutex                    // Protects access to subscribers
 	logger      zerolog.Logger                  // Logger for the bus
 
+	// Batching configuration
+	batchSize    int // Max messages to drain per batch (default: 100, 0 = disabled)
+	batchEnabled bool
+
+	// Metrics
+	batchesSent   uint64
+	messagesSent  uint64
+	messagesDropped uint64
+	metricsMu     sync.RWMutex
+
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -24,12 +34,26 @@ type BroadcastBus struct {
 // bufferSize determines the capacity of the internal publish channel.
 func NewBroadcastBus(bufferSize int, logger zerolog.Logger) *BroadcastBus {
 	ctx, cancel := context.WithCancel(context.Background())
+
+	// Enable batching by default for performance
+	batchSize := 100 // Drain up to 100 messages per batch
+	batchEnabled := batchSize > 1
+
+	busLogger := logger.With().Str("component", "broadcast_bus").Logger()
+	if batchEnabled {
+		busLogger.Info().
+			Int("batch_size", batchSize).
+			Msg("Broadcast message batching enabled")
+	}
+
 	return &BroadcastBus{
-		publishCh:   make(chan *BroadcastMessage, bufferSize),
-		subscribers: make([]chan *BroadcastMessage, 0),
-		logger:      logger.With().Str("component", "broadcast_bus").Logger(),
-		ctx:         ctx,
-		cancel:      cancel,
+		publishCh:    make(chan *BroadcastMessage, bufferSize),
+		subscribers:  make([]chan *BroadcastMessage, 0),
+		logger:       busLogger,
+		batchSize:    batchSize,
+		batchEnabled: batchEnabled,
+		ctx:          ctx,
+		cancel:       cancel,
 	}
 }
 
@@ -39,16 +63,61 @@ func (b *BroadcastBus) Run() {
 	b.wg.Add(1)
 	go func() {
 		defer b.wg.Done()
+
+		if !b.batchEnabled {
+			// Unbatched mode: process one message at a time
+			b.runUnbatched()
+			return
+		}
+
+		// Batched mode: drain multiple messages and fan out in batch
+		batch := make([]*BroadcastMessage, 0, b.batchSize)
 		for {
 			select {
 			case msg := <-b.publishCh:
-				b.fanOut(msg)
+				batch = append(batch, msg)
+
+				// Drain additional messages from channel (up to batchSize)
+			drainLoop:
+				for len(batch) < b.batchSize {
+					select {
+					case msg := <-b.publishCh:
+						batch = append(batch, msg)
+					default:
+						// No more messages available, break drain loop
+						break drainLoop
+					}
+				}
+
+				// Fan out batch
+				b.fanOutBatch(batch)
+
+				// Clear batch for reuse
+				batch = batch[:0]
+
 			case <-b.ctx.Done():
+				// Fan out any remaining messages before shutdown
+				if len(batch) > 0 {
+					b.fanOutBatch(batch)
+				}
 				b.logger.Info().Msg("BroadcastBus stopped")
 				return
 			}
 		}
 	}()
+}
+
+// runUnbatched is the original implementation without batching
+func (b *BroadcastBus) runUnbatched() {
+	for {
+		select {
+		case msg := <-b.publishCh:
+			b.fanOut(msg)
+		case <-b.ctx.Done():
+			b.logger.Info().Msg("BroadcastBus stopped")
+			return
+		}
+	}
 }
 
 // Shutdown gracefully stops the BroadcastBus.
@@ -94,15 +163,106 @@ func (b *BroadcastBus) fanOut(msg *BroadcastMessage) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
+	sent := 0
 	for _, subCh := range b.subscribers {
 		select {
 		case subCh <- msg:
-			// Message sent to subscriber
+			sent++
 		case <-b.ctx.Done():
 			return // Bus is shutting down
 		default:
 			// This indicates a slow subscriber, message dropped for this shard
 			b.logger.Warn().Msg("Subscriber channel full, message dropped for a shard")
+			b.incrementDropped()
 		}
 	}
+
+	if sent > 0 {
+		b.incrementSent(1)
+	}
+}
+
+// fanOutBatch sends multiple messages to all subscribed shards efficiently.
+func (b *BroadcastBus) fanOutBatch(batch []*BroadcastMessage) {
+	if len(batch) == 0 {
+		return
+	}
+
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	totalSent := 0
+	totalDropped := 0
+
+	// Send each message to all subscribers
+	for _, msg := range batch {
+		for _, subCh := range b.subscribers {
+			select {
+			case subCh <- msg:
+				totalSent++
+			case <-b.ctx.Done():
+				return // Bus is shutting down
+			default:
+				// Subscriber channel full, drop message
+				totalDropped++
+			}
+		}
+	}
+
+	// Update metrics
+	if totalSent > 0 {
+		b.incrementSent(uint64(len(batch)))
+	}
+	if totalDropped > 0 {
+		b.incrementDropped()
+		if totalDropped%100 == 0 {
+			b.logger.Warn().
+				Int("dropped", totalDropped).
+				Int("batch_size", len(batch)).
+				Msg("Dropped messages due to slow subscribers")
+		}
+	}
+
+	// Track batching metrics
+	b.incrementBatches()
+
+	// Log batching metrics periodically
+	if batches := b.getBatchCount(); batches%100 == 0 {
+		b.logger.Debug().
+			Uint64("batches_sent", batches).
+			Uint64("messages_sent", b.getMessageCount()).
+			Int("last_batch_size", len(batch)).
+			Msg("Broadcast batching metrics")
+	}
+}
+
+// Metrics helper methods
+func (b *BroadcastBus) incrementSent(count uint64) {
+	b.metricsMu.Lock()
+	b.messagesSent += count
+	b.metricsMu.Unlock()
+}
+
+func (b *BroadcastBus) incrementDropped() {
+	b.metricsMu.Lock()
+	b.messagesDropped++
+	b.metricsMu.Unlock()
+}
+
+func (b *BroadcastBus) incrementBatches() {
+	b.metricsMu.Lock()
+	b.batchesSent++
+	b.metricsMu.Unlock()
+}
+
+func (b *BroadcastBus) getBatchCount() uint64 {
+	b.metricsMu.RLock()
+	defer b.metricsMu.RUnlock()
+	return b.batchesSent
+}
+
+func (b *BroadcastBus) getMessageCount() uint64 {
+	b.metricsMu.RLock()
+	defer b.metricsMu.RUnlock()
+	return b.messagesSent
 }
