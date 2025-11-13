@@ -37,10 +37,16 @@ type Consumer struct {
 	cancel        context.CancelFunc
 	wg            sync.WaitGroup
 
+	// Batching configuration
+	batchSize     int           // Max messages per batch (default: 50)
+	batchTimeout  time.Duration // Max time to wait for batch (default: 10ms)
+	batchEnabled  bool          // Enable batching (default: true for performance)
+
 	// Metrics
 	messagesProcessed uint64
 	messagesFailed    uint64
 	messagesDropped   uint64 // Rate limited or CPU paused
+	batchesSent       uint64 // Number of batches sent
 	mu                sync.RWMutex
 }
 
@@ -52,6 +58,10 @@ type ConsumerConfig struct {
 	Logger        *zerolog.Logger
 	Broadcast     BroadcastFunc
 	ResourceGuard ResourceGuard // For rate limiting and CPU brake
+
+	// Optional batching configuration
+	BatchSize    int           // Max messages per batch (default: 50, 0 = disabled)
+	BatchTimeout time.Duration // Max wait for batch (default: 10ms)
 }
 
 // NewConsumer creates a new Kafka consumer
@@ -105,6 +115,17 @@ func NewConsumer(cfg ConsumerConfig) (*Consumer, error) {
 		return nil, fmt.Errorf("failed to create kafka client: %w", err)
 	}
 
+	// Set batching defaults
+	batchSize := cfg.BatchSize
+	if batchSize == 0 {
+		batchSize = 50 // Default: batch up to 50 messages
+	}
+	batchTimeout := cfg.BatchTimeout
+	if batchTimeout == 0 {
+		batchTimeout = 10 * time.Millisecond // Default: 10ms max wait
+	}
+	batchEnabled := batchSize > 1
+
 	consumer := &Consumer{
 		client:        client,
 		logger:        cfg.Logger,
@@ -112,6 +133,16 @@ func NewConsumer(cfg ConsumerConfig) (*Consumer, error) {
 		resourceGuard: cfg.ResourceGuard,
 		ctx:           ctx,
 		cancel:        cancel,
+		batchSize:     batchSize,
+		batchTimeout:  batchTimeout,
+		batchEnabled:  batchEnabled,
+	}
+
+	if batchEnabled {
+		cfg.Logger.Info().
+			Int("batch_size", batchSize).
+			Dur("batch_timeout", batchTimeout).
+			Msg("Kafka message batching enabled")
 	}
 
 	return consumer, nil
@@ -153,6 +184,93 @@ func (c *Consumer) Stop() error {
 func (c *Consumer) consumeLoop() {
 	defer c.wg.Done()
 
+	// If batching is disabled, use the old one-by-one processing
+	if !c.batchEnabled {
+		c.consumeLoopUnbatched()
+		return
+	}
+
+	// Batching enabled: accumulate messages and flush periodically
+	type batchedMessage struct {
+		tokenID   string
+		eventType string
+		message   []byte
+	}
+
+	batch := make([]batchedMessage, 0, c.batchSize)
+	flushTimer := time.NewTimer(c.batchTimeout)
+	defer flushTimer.Stop()
+
+	flushBatch := func() {
+		if len(batch) == 0 {
+			return
+		}
+
+		// Send all messages in batch
+		for _, msg := range batch {
+			c.broadcast(msg.tokenID, msg.eventType, msg.message)
+			c.incrementProcessed()
+		}
+
+		c.incrementBatches()
+
+		// Log batching metrics periodically
+		if batches := c.getBatchCount(); batches%100 == 0 {
+			c.logger.Debug().
+				Uint64("batches_sent", batches).
+				Int("last_batch_size", len(batch)).
+				Msg("Kafka batching metrics")
+		}
+
+		// Clear batch
+		batch = batch[:0]
+		flushTimer.Reset(c.batchTimeout)
+	}
+
+	for {
+		select {
+		case <-c.ctx.Done():
+			// Flush remaining messages before exit
+			flushBatch()
+			return
+
+		case <-flushTimer.C:
+			// Timeout: flush accumulated batch
+			flushBatch()
+
+		default:
+			// Poll for messages
+			fetches := c.client.PollFetches(c.ctx)
+
+			// Check for errors
+			if errs := fetches.Errors(); len(errs) > 0 {
+				for _, err := range errs {
+					c.logger.Error().
+						Err(err.Err).
+						Str("topic", err.Topic).
+						Int32("partition", err.Partition).
+						Msg("Fetch error")
+				}
+			}
+
+			// Accumulate records into batch
+			fetches.EachRecord(func(record *kgo.Record) {
+				msg := c.prepareMessage(record)
+				if msg != nil {
+					batch = append(batch, *msg)
+
+					// Flush if batch is full
+					if len(batch) >= c.batchSize {
+						flushBatch()
+					}
+				}
+			})
+		}
+	}
+}
+
+// consumeLoopUnbatched is the original implementation without batching (for backward compatibility)
+func (c *Consumer) consumeLoopUnbatched() {
 	for {
 		select {
 		case <-c.ctx.Done():
@@ -172,11 +290,78 @@ func (c *Consumer) consumeLoop() {
 				}
 			}
 
-			// Process records
+			// Process records one by one
 			fetches.EachRecord(func(record *kgo.Record) {
 				c.processRecord(record)
 			})
 		}
+	}
+}
+
+// prepareMessage validates and prepares a message for batching
+// Returns nil if message should be dropped (rate limited, invalid, etc.)
+func (c *Consumer) prepareMessage(record *kgo.Record) *struct {
+	tokenID   string
+	eventType string
+	message   []byte
+} {
+	// ============================================================================
+	// LAYER 1: RATE LIMITING
+	// ============================================================================
+	allow, waitDuration := c.resourceGuard.AllowKafkaMessage(c.ctx)
+	if !allow {
+		c.incrementDropped()
+
+		// Log every 100th drop to avoid log spam
+		dropped := c.getDroppedCount()
+		if dropped%100 == 0 {
+			c.logger.Warn().
+				Uint64("dropped_count", dropped).
+				Dur("would_wait", waitDuration).
+				Str("topic", record.Topic).
+				Msg("Kafka rate limit exceeded - dropping messages")
+		}
+		return nil
+	}
+
+	// ============================================================================
+	// LAYER 2: CPU EMERGENCY BRAKE
+	// ============================================================================
+	if c.resourceGuard.ShouldPauseKafka() {
+		c.incrementDropped()
+
+		// Log every 100th drop to avoid log spam
+		dropped := c.getDroppedCount()
+		if dropped%100 == 0 {
+			c.logger.Warn().
+				Uint64("dropped_count", dropped).
+				Str("topic", record.Topic).
+				Msg("CPU emergency brake - pausing Kafka consumption")
+		}
+		return nil
+	}
+
+	// Extract token ID from key
+	tokenID := string(record.Key)
+	if tokenID == "" {
+		c.logger.Warn().
+			Str("topic", record.Topic).
+			Msg("Record missing token ID key")
+		c.incrementFailed()
+		return nil
+	}
+
+	// Get event type category from topic
+	eventType := TopicToEventType(record.Topic)
+
+	return &struct {
+		tokenID   string
+		eventType string
+		message   []byte
+	}{
+		tokenID:   tokenID,
+		eventType: eventType,
+		message:   record.Value,
 	}
 }
 
@@ -301,4 +486,16 @@ func (c *Consumer) getDroppedCount() uint64 {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.messagesDropped
+}
+
+func (c *Consumer) incrementBatches() {
+	c.mu.Lock()
+	c.batchesSent++
+	c.mu.Unlock()
+}
+
+func (c *Consumer) getBatchCount() uint64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.batchesSent
 }
