@@ -1,6 +1,6 @@
 # WebSocket Server - Multi-Core Mode (GCP Production)
 # Instance: odin-ws-go (dedicated e2-highcpu-8)
-# Architecture: 7 shards + load balancer (1 CPU per shard, 1 CPU for system)
+# Architecture: 3 shards + load balancer (optimal based on empirical data)
 # Connects to Kafka on backend instance via internal network
 #
 # DEPLOYMENT:
@@ -9,11 +9,11 @@
 #   3. Run: export BACKEND_INTERNAL_IP=10.128.0.2 && docker-compose -f docker-compose.multi.yml up -d
 #
 # DOCKER RESOURCE LIMITS (e2-highcpu-8: 8 vCPU, 8GB RAM):
-#   - ws-multi CPU: 7.0 cores (1 per shard, 7 shards total)
+#   - ws-multi CPU: 7.0 cores (allocation for 3 shards + system + headroom)
 #   - ws-multi Memory: 7.0 GB (85% of available, leaves 1GB for system)
 #   - promtail CPU: 1.0 core (log shipping, ~0.05 actual usage)
 #   - promtail Memory: 512 MB
-#   - Configuration: 18K connections distributed across 7 shards (~2.6K each)
+#   - Configuration: 18K connections distributed across 3 shards (6K each)
 
 services:
   ws-multi:
@@ -25,7 +25,7 @@ services:
       - "0.0.0.0:3004:3001"  # LoadBalancer port (external:internal)
     command:
       - "./odin-ws-multi"
-      - "--shards=7"
+      - "--shards=3"
       - "--base-port=3002"
       - "--lb-addr=:3001"
     # Load configuration in priority order:
