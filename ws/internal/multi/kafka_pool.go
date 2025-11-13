@@ -61,7 +61,8 @@ func NewKafkaConsumerPool(config KafkaPoolConfig) (*KafkaConsumerPool, error) {
 		Brokers:       config.Brokers,
 		ConsumerGroup: config.ConsumerGroup, // Single group for all shards
 		Topics:        kafka.AllTopics(),
-		Broadcast:     pool.routeMessage, // Route to BroadcastBus
+		Logger:        &pool.logger, // Pass logger for Kafka consumer
+		Broadcast:     pool.routeMessage,    // Route to BroadcastBus
 		ResourceGuard: config.ResourceGuard,
 	})
 	if err != nil {
