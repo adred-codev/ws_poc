@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/adred-codev/ws_poc/internal/multi"
+	"github.com/adred-codev/ws_poc/internal/shared/limits"
 	"github.com/adred-codev/ws_poc/internal/shared/monitoring"
 	"github.com/adred-codev/ws_poc/internal/shared/platform"
 	"github.com/adred-codev/ws_poc/internal/shared/types"
@@ -80,6 +81,41 @@ func main() {
 	}))
 	broadcastBus.Run()
 
+	// Create shared Kafka consumer pool (replaces per-shard consumers)
+	// This eliminates 9x message duplication (3 consumers × 3 broadcasts)
+	var kafkaPool *multi.KafkaConsumerPool
+	if len(kafkaBrokers) > 0 {
+		// Create resource guard for CPU brake (shared across pool)
+		poolLogger := monitoring.NewLogger(monitoring.LoggerConfig{
+			Level:  types.LogLevel(cfg.LogLevel),
+			Format: types.LogFormat(cfg.LogFormat),
+		})
+		resourceGuard := limits.NewResourceGuard(types.ServerConfig{
+			MaxKafkaMessagesPerSec: cfg.MaxKafkaRate,
+			MaxBroadcastsPerSec:    cfg.MaxBroadcastRate,
+			CPUPauseThreshold:      cfg.CPUPauseThreshold,
+			CPURejectThreshold:     cfg.CPURejectThreshold,
+		}, poolLogger, new(int64)) // Pass dummy connection counter for pool
+
+		var err error
+		kafkaPool, err = multi.NewKafkaConsumerPool(multi.KafkaPoolConfig{
+			Brokers:       kafkaBrokers,
+			ConsumerGroup: cfg.ConsumerGroup, // Single group for all shards
+			BroadcastBus:  broadcastBus,
+			ResourceGuard: resourceGuard,
+			Logger:        poolLogger,
+		})
+		if err != nil {
+			logger.Fatalf("Failed to create Kafka consumer pool: %v", err)
+		}
+
+		if err := kafkaPool.Start(); err != nil {
+			logger.Fatalf("Failed to start Kafka consumer pool: %v", err)
+		}
+
+		logger.Printf("✅ Shared Kafka consumer pool started (replaces %d per-shard consumers)", *numShards)
+	}
+
 	// Create and start shards
 	shards := make([]*multi.Shard, *numShards)
 	for i := 0; i < *numShards; i++ {
@@ -107,13 +143,14 @@ func main() {
 		}
 
 		shard, err := multi.NewShard(multi.ShardConfig{
-			ID:             i,
-			Addr:           shardBindAddr,      // Bind address for listening
-			AdvertiseAddr:  shardAdvertiseAddr, // Address for LoadBalancer connections
-			ServerConfig:   shardConfig,
-			BroadcastBus:   broadcastBus, // Pass reference to bus, shard will subscribe internally
-			Logger:         monitoring.NewLogger(monitoring.LoggerConfig{Level: types.LogLevel(cfg.LogLevel), Format: types.LogFormat(cfg.LogFormat)}),
-			MaxConnections: maxConnsPerShard,
+			ID:                   i,
+			Addr:                 shardBindAddr,      // Bind address for listening
+			AdvertiseAddr:        shardAdvertiseAddr, // Address for LoadBalancer connections
+			ServerConfig:         shardConfig,
+			BroadcastBus:         broadcastBus, // Pass reference to bus, shard will subscribe internally
+			DisableKafkaConsumer: len(kafkaBrokers) > 0, // Disable per-shard consumer when using shared pool
+			Logger:               monitoring.NewLogger(monitoring.LoggerConfig{Level: types.LogLevel(cfg.LogLevel), Format: types.LogFormat(cfg.LogFormat)}),
+			MaxConnections:       maxConnsPerShard,
 		})
 		if err != nil {
 			logger.Fatalf("Failed to create shard %d: %v", i, err)
@@ -152,6 +189,13 @@ func main() {
 	for _, shard := range shards {
 		if err := shard.Shutdown(); err != nil {
 			logger.Printf("Error during shard %d shutdown: %v", shard.ID, err)
+		}
+	}
+
+	// Shutdown Kafka pool (before BroadcastBus)
+	if kafkaPool != nil {
+		if err := kafkaPool.Stop(); err != nil {
+			logger.Printf("Error stopping Kafka pool: %v", err)
 		}
 	}
 

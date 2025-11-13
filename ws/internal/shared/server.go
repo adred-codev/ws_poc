@@ -104,8 +104,8 @@ func NewServer(config types.ServerConfig, broadcastToBusFunc kafka.BroadcastFunc
 		Int("broadcast_rate_limit", config.MaxBroadcastsPerSec).
 		Msg("Server initialized with ResourceGuard")
 
-	// Initialize Kafka consumer
-	if len(config.KafkaBrokers) > 0 {
+	// Initialize Kafka consumer (skip if DisableKafkaConsumer flag is set for shared pool mode)
+	if len(config.KafkaBrokers) > 0 && !config.DisableKafkaConsumer {
 		consumer, err := kafka.NewConsumer(kafka.ConsumerConfig{
 			Brokers:       config.KafkaBrokers,
 			ConsumerGroup: config.ConsumerGroup,
@@ -129,7 +129,8 @@ func NewServer(config types.ServerConfig, broadcastToBusFunc kafka.BroadcastFunc
 			"consumer_group": config.ConsumerGroup,
 			"topics":         kafka.AllTopics(),
 		})
-
+	} else if config.DisableKafkaConsumer {
+		logger.Printf("Kafka consumer creation skipped (using shared pool mode)")
 	}
 
 	return s, nil

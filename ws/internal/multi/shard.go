@@ -29,13 +29,14 @@ type Shard struct {
 
 // ShardConfig holds configuration for a single Shard
 type ShardConfig struct {
-	ID             int
-	Addr           string // Address for this shard to bind/listen on (e.g., 0.0.0.0:3002)
-	AdvertiseAddr  string // Address advertised to LoadBalancer (e.g., localhost:3002)
-	ServerConfig   types.ServerConfig
-	BroadcastBus   *BroadcastBus // Reference to the central bus
-	Logger         zerolog.Logger
-	MaxConnections int
+	ID                   int
+	Addr                 string // Address for this shard to bind/listen on (e.g., 0.0.0.0:3002)
+	AdvertiseAddr        string // Address advertised to LoadBalancer (e.g., localhost:3002)
+	ServerConfig         types.ServerConfig
+	BroadcastBus         *BroadcastBus // Reference to the central bus
+	DisableKafkaConsumer bool          // When true, shard will not create its own Kafka consumer (for shared pool mode)
+	Logger               zerolog.Logger
+	MaxConnections       int
 }
 
 // NewShard creates a new Shard instance
@@ -45,8 +46,9 @@ func NewShard(cfg ShardConfig) (*Shard, error) {
 	// Create a shared.Server instance for this shard
 	// The shared.Server will use the shard's specific maxConnections
 	serverConfig := cfg.ServerConfig
-	serverConfig.MaxConnections = cfg.MaxConnections // Override with shard-specific limit
-	serverConfig.ConsumerGroup = fmt.Sprintf("%s-%d", serverConfig.ConsumerGroup, cfg.ID) // Unique consumer group per shard
+	serverConfig.MaxConnections = cfg.MaxConnections               // Override with shard-specific limit
+	serverConfig.DisableKafkaConsumer = cfg.DisableKafkaConsumer   // Pass flag to disable per-shard consumer
+	serverConfig.ConsumerGroup = fmt.Sprintf("%s-%d", serverConfig.ConsumerGroup, cfg.ID) // Unique consumer group per shard (only used if not disabled)
 
 	// Create broadcast function that will publish to the central bus
 	// instead of directly broadcasting to local clients

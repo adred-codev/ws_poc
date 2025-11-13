@@ -6,8 +6,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/adred-codev/ws_poc/internal/shared/kafka"
 	"github.com/rs/zerolog"
-	"ws_poc/ws/internal/shared/kafka"
 )
 
 // KafkaConsumerPool manages a shared pool of Kafka consumers that distribute

@@ -26,10 +26,11 @@ const (
 
 // ServerConfig contains the configuration for the WebSocket server
 type ServerConfig struct {
-	Addr           string
-	KafkaBrokers   []string
-	ConsumerGroup  string
-	MaxConnections int
+	Addr                 string
+	KafkaBrokers         []string
+	ConsumerGroup        string
+	DisableKafkaConsumer bool // When true, skip Kafka consumer creation (for shared pool mode)
+	MaxConnections       int
 
 	// Static resource limits (explicit configuration)
 	CPULimit    float64 // CPU cores available (from docker limit)
