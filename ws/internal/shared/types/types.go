@@ -42,6 +42,13 @@ type ServerConfig struct {
 	MaxBroadcastsPerSec    int // Max broadcasts per second
 	MaxGoroutines          int // Hard goroutine limit
 
+	// Connection rate limiting (DoS protection)
+	ConnectionRateLimitEnabled bool
+	ConnRateLimitIPBurst       int
+	ConnRateLimitIPRate        float64
+	ConnRateLimitGlobalBurst   int
+	ConnRateLimitGlobalRate    float64
+
 	// Safety thresholds (emergency brakes)
 	CPURejectThreshold float64 // Reject new connections above this CPU % (default: 75)
 	CPUPauseThreshold  float64 // Pause Kafka consumption above this CPU % (default: 80)

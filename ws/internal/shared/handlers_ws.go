@@ -1,7 +1,9 @@
 package shared
 
 import (
+	"net"
 	"net/http"
+	"strings"
 	"sync/atomic"
 
 	"github.com/adred-codev/ws_poc/internal/shared/monitoring"
@@ -14,6 +16,18 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	if atomic.LoadInt32(&s.shuttingDown) == 1 {
 		http.Error(w, "Server is shutting down", http.StatusServiceUnavailable)
 		return
+	}
+
+	// Connection rate limiting (DoS protection)
+	if s.connectionRateLimiter != nil {
+		clientIP := getClientIP(r)
+		if !s.connectionRateLimiter.CheckConnectionAllowed(clientIP) {
+			s.logger.Warn().
+				Str("ip", clientIP).
+				Msg("Connection rejected: rate limit exceeded")
+			http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
+			return
+		}
 	}
 
 	// ResourceGuard admission control - static limits with safety checks
@@ -65,6 +79,27 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	go s.writePump(client)
 	go s.readPump(client)
+}
+
+// getClientIP extracts the client IP from the request.
+// Checks X-Forwarded-For header first (for load balancers/proxies),
+// then falls back to RemoteAddr.
+func getClientIP(r *http.Request) string {
+	// Check X-Forwarded-For header (standard for load balancers)
+	forwarded := r.Header.Get("X-Forwarded-For")
+	if forwarded != "" {
+		// Use first IP in the chain (client IP)
+		parts := strings.Split(forwarded, ",")
+		return strings.TrimSpace(parts[0])
+	}
+
+	// Fall back to RemoteAddr
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		// If split fails, return as-is (might be just IP without port)
+		return r.RemoteAddr
+	}
+	return ip
 }
 
 // disconnectClient handles client disconnect with proper instrumentation

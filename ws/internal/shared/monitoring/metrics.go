@@ -85,6 +85,11 @@ var (
 		Help: "Total number of replay requests served",
 	})
 
+	connectionRateLimited = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "ws_connection_rate_limited_total",
+		Help: "Total number of connections rate limited by type (per_ip or global)",
+	}, []string{"type"})
+
 	droppedBroadcasts = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "ws_dropped_broadcasts_total",
 		Help: "Total number of broadcast tasks dropped when worker pool queue full",
@@ -232,6 +237,7 @@ func init() {
 	prometheus.MustRegister(slowClientsDisconnected)
 	prometheus.MustRegister(rateLimitedMessages)
 	prometheus.MustRegister(replayRequests)
+	prometheus.MustRegister(connectionRateLimited)
 	prometheus.MustRegister(droppedBroadcasts)
 	prometheus.MustRegister(droppedBroadcastsDetailed)
 	prometheus.MustRegister(clientSendBufferSize)
@@ -399,6 +405,11 @@ func IncrementRateLimitedMessages() {
 // IncrementReplayRequests increments replay request counter
 func IncrementReplayRequests() {
 	replayRequests.Inc()
+}
+
+// IncrementConnectionRateLimit increments connection rate limit counter
+func IncrementConnectionRateLimit(limitType string) {
+	connectionRateLimited.WithLabelValues(limitType).Inc()
 }
 
 // IncrementKafkaMessages increments Kafka message counter

@@ -91,6 +91,13 @@ func main() {
 		MaxBroadcastsPerSec:    cfg.MaxBroadcastRate,
 		MaxGoroutines:          cfg.MaxGoroutines,
 
+		// Connection rate limiting (DoS protection)
+		ConnectionRateLimitEnabled: cfg.ConnectionRateLimitEnabled,
+		ConnRateLimitIPBurst:       cfg.ConnRateLimitIPBurst,
+		ConnRateLimitIPRate:        cfg.ConnRateLimitIPRate,
+		ConnRateLimitGlobalBurst:   cfg.ConnRateLimitGlobalBurst,
+		ConnRateLimitGlobalRate:    cfg.ConnRateLimitGlobalRate,
+
 		// Safety thresholds (emergency brakes)
 		CPURejectThreshold: cfg.CPURejectThreshold,
 		CPUPauseThreshold:  cfg.CPUPauseThreshold,

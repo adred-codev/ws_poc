@@ -46,7 +46,8 @@ type Server struct {
 	subscriptionIndex *SubscriptionIndex // Fast lookup: channel → subscribers (93% CPU savings!)
 
 	// Rate limiting
-	rateLimiter *limits.RateLimiter
+	rateLimiter           *limits.RateLimiter
+	connectionRateLimiter *limits.ConnectionRateLimiter
 
 	// Monitoring
 	auditLogger      *monitoring.AuditLogger
@@ -96,6 +97,19 @@ func NewServer(config types.ServerConfig, broadcastToBusFunc kafka.BroadcastFunc
 
 	// Initialize ResourceGuard with static configuration
 	s.resourceGuard = limits.NewResourceGuard(config, logger, &s.stats.CurrentConnections)
+
+	// Initialize connection rate limiter (if enabled)
+	if config.ConnectionRateLimitEnabled {
+		s.connectionRateLimiter = limits.NewConnectionRateLimiter(limits.ConnectionRateLimiterConfig{
+			IPBurst:     config.ConnRateLimitIPBurst,
+			IPRate:      config.ConnRateLimitIPRate,
+			IPTTL:       5 * time.Minute,
+			GlobalBurst: config.ConnRateLimitGlobalBurst,
+			GlobalRate:  config.ConnRateLimitGlobalRate,
+			Logger:      logger,
+		})
+		logger.Info().Msg("Connection rate limiting enabled")
+	}
 
 	logger.Info().
 		Str("addr", config.Addr).
@@ -310,6 +324,11 @@ forceClose:
 cleanup:
 	// Cancel context to stop all goroutines
 	s.cancel()
+
+	// Stop connection rate limiter cleanup goroutine
+	if s.connectionRateLimiter != nil {
+		s.connectionRateLimiter.Stop()
+	}
 
 	// Wait for all goroutines to finish
 	s.logger.Info().Msg("Waiting for all goroutines to finish")

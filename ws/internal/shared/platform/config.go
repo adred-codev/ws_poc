@@ -33,6 +33,13 @@ type Config struct {
 	MaxBroadcastRate int `env:"WS_MAX_BROADCAST_RATE" envDefault:"20"`
 	MaxGoroutines    int `env:"WS_MAX_GOROUTINES" envDefault:"1000"`
 
+	// Connection rate limiting (DoS protection)
+	ConnectionRateLimitEnabled bool    `env:"CONN_RATE_LIMIT_ENABLED" envDefault:"true"`
+	ConnRateLimitIPBurst       int     `env:"CONN_RATE_LIMIT_IP_BURST" envDefault:"10"`
+	ConnRateLimitIPRate        float64 `env:"CONN_RATE_LIMIT_IP_RATE" envDefault:"1.0"`
+	ConnRateLimitGlobalBurst   int     `env:"CONN_RATE_LIMIT_GLOBAL_BURST" envDefault:"300"`
+	ConnRateLimitGlobalRate    float64 `env:"CONN_RATE_LIMIT_GLOBAL_RATE" envDefault:"50.0"`
+
 	// CPU Safety Thresholds (Container-Aware)
 	//
 	// These thresholds are relative to CONTAINER CPU ALLOCATION, not host CPU.
@@ -157,6 +164,12 @@ func (c *Config) Print() {
 	fmt.Printf("Kafka Messages:  %d/sec\n", c.MaxKafkaRate)
 	fmt.Printf("Broadcasts:      %d/sec\n", c.MaxBroadcastRate)
 	fmt.Printf("Max Goroutines:  %d\n", c.MaxGoroutines)
+	fmt.Println("\n=== Connection Rate Limiting (DoS Protection) ===")
+	fmt.Printf("Enabled:         %v\n", c.ConnectionRateLimitEnabled)
+	fmt.Printf("IP Burst:        %d connections\n", c.ConnRateLimitIPBurst)
+	fmt.Printf("IP Rate:         %.1f conn/sec\n", c.ConnRateLimitIPRate)
+	fmt.Printf("Global Burst:    %d connections\n", c.ConnRateLimitGlobalBurst)
+	fmt.Printf("Global Rate:     %.1f conn/sec\n", c.ConnRateLimitGlobalRate)
 	fmt.Println("\n=== Safety Thresholds ===")
 	fmt.Printf("CPU Reject:      %.1f%%\n", c.CPURejectThreshold)
 	fmt.Printf("CPU Pause:       %.1f%%\n", c.CPUPauseThreshold)
@@ -179,6 +192,11 @@ func (c *Config) LogConfig(logger zerolog.Logger) {
 		Int("max_kafka_rate", c.MaxKafkaRate).
 		Int("max_broadcast_rate", c.MaxBroadcastRate).
 		Int("max_goroutines", c.MaxGoroutines).
+		Bool("conn_rate_limit_enabled", c.ConnectionRateLimitEnabled).
+		Int("conn_rate_limit_ip_burst", c.ConnRateLimitIPBurst).
+		Float64("conn_rate_limit_ip_rate", c.ConnRateLimitIPRate).
+		Int("conn_rate_limit_global_burst", c.ConnRateLimitGlobalBurst).
+		Float64("conn_rate_limit_global_rate", c.ConnRateLimitGlobalRate).
 		Float64("cpu_reject_threshold", c.CPURejectThreshold).
 		Float64("cpu_pause_threshold", c.CPUPauseThreshold).
 		Dur("metrics_interval", c.MetricsInterval).

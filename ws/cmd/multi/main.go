@@ -145,6 +145,14 @@ func main() {
 			MaxKafkaMessagesPerSec: cfg.MaxKafkaRate,
 			MaxBroadcastsPerSec:    cfg.MaxBroadcastRate,
 			MaxGoroutines:          cfg.MaxGoroutines,
+
+			// Connection rate limiting (DoS protection)
+			ConnectionRateLimitEnabled: cfg.ConnectionRateLimitEnabled,
+			ConnRateLimitIPBurst:       cfg.ConnRateLimitIPBurst,
+			ConnRateLimitIPRate:        cfg.ConnRateLimitIPRate,
+			ConnRateLimitGlobalBurst:   cfg.ConnRateLimitGlobalBurst,
+			ConnRateLimitGlobalRate:    cfg.ConnRateLimitGlobalRate,
+
 			CPURejectThreshold:     cfg.CPURejectThreshold,
 			CPUPauseThreshold:      cfg.CPUPauseThreshold,
 			MetricsInterval:        cfg.MetricsInterval,
