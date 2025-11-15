@@ -58,6 +58,19 @@ type Config struct {
 	CPURejectThreshold float64 `env:"WS_CPU_REJECT_THRESHOLD" envDefault:"75.0"` // Reject new connections above this %
 	CPUPauseThreshold  float64 `env:"WS_CPU_PAUSE_THRESHOLD" envDefault:"80.0"`  // Pause Kafka consumption above this %
 
+	// TCP/Network Tuning (Burst Tolerance)
+	//
+	// These settings improve tolerance to connection bursts by increasing buffers and timeouts.
+	// Defaults are conservative - increase for high-burst workloads.
+	//
+	// REVERT: Set TCP_LISTEN_BACKLOG=0 to disable custom backlog (use Go defaults)
+	//         Set HTTP_*_TIMEOUT to lower values if needed
+	//
+	TCPListenBacklog  int           `env:"TCP_LISTEN_BACKLOG" envDefault:"2048"` // TCP accept queue size (0 = Go default ~128)
+	HTTPReadTimeout   time.Duration `env:"HTTP_READ_TIMEOUT" envDefault:"15s"`   // HTTP server read timeout
+	HTTPWriteTimeout  time.Duration `env:"HTTP_WRITE_TIMEOUT" envDefault:"15s"`  // HTTP server write timeout
+	HTTPIdleTimeout   time.Duration `env:"HTTP_IDLE_TIMEOUT" envDefault:"60s"`   // HTTP server idle timeout
+
 	// Monitoring
 	MetricsInterval time.Duration `env:"METRICS_INTERVAL" envDefault:"15s"`
 
@@ -173,6 +186,11 @@ func (c *Config) Print() {
 	fmt.Println("\n=== Safety Thresholds ===")
 	fmt.Printf("CPU Reject:      %.1f%%\n", c.CPURejectThreshold)
 	fmt.Printf("CPU Pause:       %.1f%%\n", c.CPUPauseThreshold)
+	fmt.Println("\n=== TCP/Network Tuning ===")
+	fmt.Printf("Listen Backlog:  %d\n", c.TCPListenBacklog)
+	fmt.Printf("Read Timeout:    %s\n", c.HTTPReadTimeout)
+	fmt.Printf("Write Timeout:   %s\n", c.HTTPWriteTimeout)
+	fmt.Printf("Idle Timeout:    %s\n", c.HTTPIdleTimeout)
 	fmt.Println("\n=== Logging ===")
 	fmt.Printf("Level:           %s\n", c.LogLevel)
 	fmt.Printf("Format:          %s\n", c.LogFormat)
@@ -199,6 +217,10 @@ func (c *Config) LogConfig(logger zerolog.Logger) {
 		Float64("conn_rate_limit_global_rate", c.ConnRateLimitGlobalRate).
 		Float64("cpu_reject_threshold", c.CPURejectThreshold).
 		Float64("cpu_pause_threshold", c.CPUPauseThreshold).
+		Int("tcp_listen_backlog", c.TCPListenBacklog).
+		Dur("http_read_timeout", c.HTTPReadTimeout).
+		Dur("http_write_timeout", c.HTTPWriteTimeout).
+		Dur("http_idle_timeout", c.HTTPIdleTimeout).
 		Dur("metrics_interval", c.MetricsInterval).
 		Str("log_level", c.LogLevel).
 		Str("log_format", c.LogFormat).

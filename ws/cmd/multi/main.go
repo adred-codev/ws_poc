@@ -192,6 +192,10 @@ func main() {
 		Addr:   *lbAddr,
 		Shards: shards,
 		Logger: monitoring.NewLogger(monitoring.LoggerConfig{Level: types.LogLevel(cfg.LogLevel), Format: types.LogFormat(cfg.LogFormat)}),
+		// TCP/HTTP tuning for trading platform burst tolerance
+		HTTPReadTimeout:  cfg.HTTPReadTimeout,
+		HTTPWriteTimeout: cfg.HTTPWriteTimeout,
+		HTTPIdleTimeout:  cfg.HTTPIdleTimeout,
 	})
 	if err != nil {
 		logger.Fatalf("Failed to create load balancer: %v", err)

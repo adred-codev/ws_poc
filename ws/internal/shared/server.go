@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/adred-codev/ws_poc/internal/shared/kafka"
@@ -172,12 +173,30 @@ func (s *Server) GetKafkaConsumer() interface{} {
 }
 
 func (s *Server) Start() error {
-	// Simple TCP listener without custom socket control
-	// Custom socket options were causing bind issues in containers
+	// Create TCP listener with custom backlog for burst tolerance
 	listener, err := net.Listen("tcp", s.config.Addr)
 	if err != nil {
 		return fmt.Errorf("failed to listen: %w", err)
 	}
+
+	// Apply custom TCP backlog if configured (trading platform optimization)
+	if s.config.TCPListenBacklog > 0 {
+		if tcpLn, ok := listener.(*net.TCPListener); ok {
+			file, err := tcpLn.File()
+			if err == nil {
+				// syscall.Listen sets the TCP accept queue size
+				// This allows the OS to queue more pending connections during bursts
+				// Critical for trading platforms where connection timing affects fairness
+				syscall.Listen(int(file.Fd()), s.config.TCPListenBacklog)
+				file.Close()
+
+				s.logger.Info().
+					Int("backlog", s.config.TCPListenBacklog).
+					Msg("Set custom TCP listen backlog for burst tolerance")
+			}
+		}
+	}
+
 	s.listener = listener
 
 	s.logger.Info().
@@ -203,9 +222,9 @@ func (s *Server) Start() error {
 
 	server := &http.Server{
 		Handler:        mux,
-		ReadTimeout:    10 * time.Second,
-		WriteTimeout:   10 * time.Second,
-		IdleTimeout:    120 * time.Second,
+		ReadTimeout:    s.config.HTTPReadTimeout,
+		WriteTimeout:   s.config.HTTPWriteTimeout,
+		IdleTimeout:    s.config.HTTPIdleTimeout,
 		MaxHeaderBytes: 1 << 20,
 	}
 

@@ -24,6 +24,11 @@ type LoadBalancer struct {
 	proxies []http.Handler // One WebSocket proxy per shard
 	logger  zerolog.Logger
 
+	// HTTP timeouts (configured from platform config)
+	httpReadTimeout  time.Duration
+	httpWriteTimeout time.Duration
+	httpIdleTimeout  time.Duration
+
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -34,6 +39,11 @@ type LoadBalancerConfig struct {
 	Addr   string
 	Shards []*Shard
 	Logger zerolog.Logger
+
+	// HTTP timeouts (for trading platform burst tolerance)
+	HTTPReadTimeout  time.Duration
+	HTTPWriteTimeout time.Duration
+	HTTPIdleTimeout  time.Duration
 }
 
 // NewLoadBalancer creates a new LoadBalancer instance.
@@ -69,8 +79,12 @@ func NewLoadBalancer(cfg LoadBalancerConfig) (*LoadBalancer, error) {
 		shards:  cfg.Shards,
 		proxies: proxies,
 		logger:  cfg.Logger.With().Str("component", "load_balancer").Logger(),
-		ctx:     ctx,
-		cancel:  cancel,
+		// Store HTTP timeouts from config
+		httpReadTimeout:  cfg.HTTPReadTimeout,
+		httpWriteTimeout: cfg.HTTPWriteTimeout,
+		httpIdleTimeout:  cfg.HTTPIdleTimeout,
+		ctx:              ctx,
+		cancel:           cancel,
 	}
 
 	return lb, nil
@@ -84,13 +98,17 @@ func (lb *LoadBalancer) Start() error {
 	mux.HandleFunc("/ws", lb.handleWebSocket)
 	mux.HandleFunc("/health", lb.handleHealth)
 
+	// Store config in LoadBalancer so we can access timeouts
+	// Need to get these from the cfg parameter in Start()
+	// For now, we'll need to store cfg in NewLoadBalancer
 	server := &http.Server{
 		Addr:    lb.addr,
 		Handler: mux,
-		// Use shorter timeouts for load balancer to quickly reject bad connections
-		ReadTimeout:    5 * time.Second,
-		WriteTimeout:   5 * time.Second,
-		IdleTimeout:    10 * time.Second,
+		// Timeouts now configurable for trading platform burst tolerance
+		// Defaults in platform/config.go: Read 15s, Write 15s, Idle 60s
+		ReadTimeout:    lb.httpReadTimeout,
+		WriteTimeout:   lb.httpWriteTimeout,
+		IdleTimeout:    lb.httpIdleTimeout,
 		MaxHeaderBytes: 1 << 20,
 	}
 
