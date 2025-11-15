@@ -56,6 +56,12 @@ type ServerConfig struct {
 	// Monitoring intervals
 	MetricsInterval time.Duration // Metrics collection interval (default: 15s)
 
+	// TCP/Network Tuning (Trading Platform Burst Tolerance)
+	TCPListenBacklog  int           // TCP accept queue size (default: 2048, Go default: ~128)
+	HTTPReadTimeout   time.Duration // HTTP server read timeout (default: 15s)
+	HTTPWriteTimeout  time.Duration // HTTP server write timeout (default: 15s)
+	HTTPIdleTimeout   time.Duration // HTTP server idle timeout (default: 60s)
+
 	// Logging configuration
 	LogLevel  LogLevel  // Log level (default: info)
 	LogFormat LogFormat // Log format (default: json)
