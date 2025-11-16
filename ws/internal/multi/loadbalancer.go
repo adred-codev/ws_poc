@@ -1,18 +1,15 @@
 package multi
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"math"
-	"net"
 	"net/http"
 	"net/url"
 	"sync"
 	"time"
 
-	"github.com/koding/websocketproxy"
 	"github.com/rs/zerolog"
 )
 
@@ -63,15 +60,15 @@ func NewLoadBalancer(cfg LoadBalancerConfig) (*LoadBalancer, error) {
 			cancel()
 			return nil, fmt.Errorf("failed to parse shard address %s: %w", shardAddr, err)
 		}
-		// Create WebSocket-aware proxy using koding/websocketproxy
-		// This library properly handles WebSocket upgrade protocol
-		proxies[i] = websocketproxy.NewProxy(shardURL)
+		// Create custom SlotAwareProxy that fixes slot leak bug
+		// Upgrades to WebSocket BEFORE acquiring slot, preventing leaks
+		proxies[i] = NewSlotAwareProxy(shard, shardURL, cfg.Logger)
 
 		// Log proxy target (one-time, no performance impact)
 		cfg.Logger.Info().
 			Int("shard_id", shard.ID).
 			Str("target_url", shardURL.String()).
-			Msg("Created WebSocket proxy for shard")
+			Msg("Created SlotAwareProxy for shard")
 	}
 
 	lb := &LoadBalancer{
@@ -134,132 +131,23 @@ func (lb *LoadBalancer) Shutdown() {
 }
 
 // handleWebSocket handles incoming WebSocket upgrade requests.
-// It selects a shard with available capacity and reserves a slot before proxying.
+// Selects a shard and delegates to SlotAwareProxy which handles all slot lifecycle management.
 func (lb *LoadBalancer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
-	// Select shard and try to acquire a slot atomically
-	selectedShardIndex, selectedShard := lb.selectAndAcquireShard()
+	// Select shard with most available capacity
+	selectedShardIndex, selectedShard := lb.selectShard()
 	if selectedShard == nil {
 		lb.logger.Warn().Msg("No available shards to accept connection")
 		http.Error(w, "Server overloaded", http.StatusServiceUnavailable)
 		return
 	}
 
-	lb.logger.Info().
+	lb.logger.Debug().
 		Int("shard_id", selectedShard.ID).
 		Int("available_slots", selectedShard.GetAvailableSlots()).
-		Msg("Proxying connection to shard")
+		Msg("Routing connection to shard proxy")
 
-	// Wrap ResponseWriter to release slot when connection closes
-	wrappedWriter := &slotReleasingWriter{
-		ResponseWriter: w,
-		shard:          selectedShard,
-		logger:         lb.logger,
-		hijacked:       false,
-	}
-
-	// Ensure slot is released if hijack fails (e.g., bad handshake)
-	defer func() {
-		if !wrappedWriter.hijacked {
-			selectedShard.ReleaseSlot()
-			lb.logger.Debug().
-				Int("shard_id", selectedShard.ID).
-				Int("available_slots", selectedShard.GetAvailableSlots()).
-				Msg("Released slot after failed handshake")
-		}
-	}()
-
-	// Proxy the WebSocket connection
-	lb.proxies[selectedShardIndex].ServeHTTP(wrappedWriter, r)
-}
-
-// selectAndAcquireShard atomically selects a shard and acquires a connection slot.
-// Returns nil if all shards are at capacity.
-// Uses "most available slots first" strategy for better distribution.
-func (lb *LoadBalancer) selectAndAcquireShard() (int, *Shard) {
-	var (
-		mostAvailableSlots int   = -1
-		selectedShard      *Shard
-		selectedIndex      int = -1
-	)
-
-	// First pass: find shard with most available slots
-	for i, shard := range lb.shards {
-		availableSlots := shard.GetAvailableSlots()
-
-		if availableSlots > mostAvailableSlots {
-			mostAvailableSlots = availableSlots
-			selectedShard = shard
-			selectedIndex = i
-		}
-	}
-
-	// If no shard has available slots, return nil
-	if selectedShard == nil || mostAvailableSlots == 0 {
-		return -1, nil
-	}
-
-	// Try to acquire slot atomically
-	if !selectedShard.TryAcquireSlot() {
-		// Race condition: slot was taken between check and acquire
-		// Return nil to indicate failure
-		return -1, nil
-	}
-
-	return selectedIndex, selectedShard
-}
-
-// slotReleasingWriter wraps http.ResponseWriter to release shard slot on connection close
-type slotReleasingWriter struct {
-	http.ResponseWriter
-	shard    *Shard
-	logger   zerolog.Logger
-	hijacked bool
-}
-
-// Hijack implements http.Hijacker interface to detect connection close
-func (w *slotReleasingWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	hijacker, ok := w.ResponseWriter.(http.Hijacker)
-	if !ok {
-		return nil, nil, fmt.Errorf("ResponseWriter does not support hijacking")
-	}
-
-	conn, rw, err := hijacker.Hijack()
-	if err != nil {
-		// If hijack fails, don't mark as hijacked - let defer release the slot
-		return nil, nil, err
-	}
-
-	// Mark as hijacked so defer doesn't release the slot
-	w.hijacked = true
-
-	// Wrap connection to release slot on close
-	wrappedConn := &slotReleasingConn{
-		Conn:   conn,
-		shard:  w.shard,
-		logger: w.logger,
-	}
-
-	return wrappedConn, rw, nil
-}
-
-// slotReleasingConn wraps net.Conn to release shard slot when connection closes
-type slotReleasingConn struct {
-	net.Conn
-	shard  *Shard
-	logger zerolog.Logger
-	once   sync.Once
-}
-
-// Close releases the shard slot and closes the underlying connection
-func (c *slotReleasingConn) Close() error {
-	c.once.Do(func() {
-		c.shard.ReleaseSlot()
-		c.logger.Debug().
-			Int("shard_id", c.shard.ID).
-			Int("available_slots", c.shard.GetAvailableSlots()).
-			Msg("Released connection slot")
-	})
-	return c.Conn.Close()
+	// Proxy handles all slot lifecycle management internally
+	lb.proxies[selectedShardIndex].ServeHTTP(w, r)
 }
 
 // selectShard selects a shard using the "least connections" strategy.
