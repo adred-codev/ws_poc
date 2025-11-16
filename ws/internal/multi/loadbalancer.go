@@ -54,8 +54,9 @@ func NewLoadBalancer(cfg LoadBalancerConfig) (*LoadBalancer, error) {
 	proxies := make([]http.Handler, len(cfg.Shards))
 	for i, shard := range cfg.Shards {
 		// Parse shard URL - use ws:// scheme for WebSocket proxy
+		// CRITICAL: Must include /ws path to match shard's WebSocket endpoint
 		shardAddr := shard.GetAddr()
-		shardURL, err := url.Parse(fmt.Sprintf("ws://%s", shardAddr))
+		shardURL, err := url.Parse(fmt.Sprintf("ws://%s/ws", shardAddr))
 		if err != nil {
 			cancel()
 			return nil, fmt.Errorf("failed to parse shard address %s: %w", shardAddr, err)
