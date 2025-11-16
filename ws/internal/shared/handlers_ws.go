@@ -19,14 +19,24 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Connection rate limiting (DoS protection)
+	// Skip rate limiting for internal LoadBalancer proxy connections
 	if s.connectionRateLimiter != nil {
 		clientIP := getClientIP(r)
-		if !s.connectionRateLimiter.CheckConnectionAllowed(clientIP) {
-			s.logger.Warn().
+
+		// Bypass rate limiting for localhost (internal proxy from LoadBalancer)
+		// External rate limiting should happen at LoadBalancer level
+		if clientIP != "127.0.0.1" && clientIP != "::1" {
+			if !s.connectionRateLimiter.CheckConnectionAllowed(clientIP) {
+				s.logger.Warn().
+					Str("ip", clientIP).
+					Msg("Connection rejected: rate limit exceeded")
+				http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
+				return
+			}
+		} else {
+			s.logger.Debug().
 				Str("ip", clientIP).
-				Msg("Connection rejected: rate limit exceeded")
-			http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
-			return
+				Msg("Skipping rate limit for internal LoadBalancer connection")
 		}
 	}
 
