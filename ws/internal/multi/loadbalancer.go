@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/adred-codev/ws_poc/internal/shared/monitoring"
 	"github.com/rs/zerolog"
 )
 
@@ -112,6 +113,9 @@ func (lb *LoadBalancer) Start() error {
 
 	lb.wg.Add(1)
 	go func() {
+		// CRITICAL: Panic recovery must be FIRST defer (executes LAST in LIFO order)
+		defer monitoring.RecoverPanic(lb.logger, "loadbalancer.ListenAndServe", nil)
+
 		defer lb.wg.Done()
 		lb.logger.Info().Str("address", server.Addr).Msg("LoadBalancer listening")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {

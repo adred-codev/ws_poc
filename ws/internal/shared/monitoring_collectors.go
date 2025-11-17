@@ -12,6 +12,9 @@ import (
 
 // Internal monitoring and metric collection
 func (s *Server) collectMetrics() {
+	// CRITICAL: Panic recovery must be FIRST defer (executes LAST in LIFO order)
+	defer monitoring.RecoverPanic(s.logger, "collectMetrics", nil)
+
 	defer s.wg.Done()
 
 	ticker := time.NewTicker(2 * time.Second)
@@ -60,6 +63,9 @@ func (s *Server) collectMetrics() {
 }
 
 func (s *Server) monitorMemory() {
+	// CRITICAL: Panic recovery must be FIRST defer (executes LAST in LIFO order)
+	defer monitoring.RecoverPanic(s.logger, "monitorMemory", nil)
+
 	defer s.wg.Done()
 
 	ticker := time.NewTicker(30 * time.Second)
@@ -103,6 +109,9 @@ func (s *Server) monitorMemory() {
 // sampleClientBuffers periodically samples client send buffer usage for saturation metrics
 // Samples a subset of clients to avoid expensive iteration over all connections
 func (s *Server) sampleClientBuffers() {
+	// CRITICAL: Panic recovery must be FIRST defer (executes LAST in LIFO order)
+	defer monitoring.RecoverPanic(s.logger, "sampleClientBuffers", nil)
+
 	defer s.wg.Done()
 
 	// Sample every 10 seconds (balance between granularity and overhead)
