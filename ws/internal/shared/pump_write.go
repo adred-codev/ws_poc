@@ -18,6 +18,12 @@ import (
 // - Metrics batching: Single atomic update per batch instead of per message
 // - At 125 msg/sec with avg batch=10, reduces atomic ops from 2500 to 250/sec per client
 func (s *Server) writePump(c *Client) {
+	// CRITICAL: Panic recovery to catch unlogged panics that crash the server
+	// This is the original location of bufio.Writer.Flush nil pointer panic
+	defer monitoring.RecoverPanic(s.logger, "writePump", map[string]any{
+		"client_id": c.id,
+	})
+
 	// Use a buffered writer to batch writes and reduce syscalls.
 	writer := bufio.NewWriter(c.conn)
 	ticker := time.NewTicker(pingPeriod)

@@ -182,6 +182,11 @@ func (c *Consumer) Stop() error {
 
 // consumeLoop continuously polls for messages
 func (c *Consumer) consumeLoop() {
+	// CRITICAL: Panic recovery must be FIRST defer (executes LAST in LIFO order)
+	defer monitoring.RecoverPanic(c.logger, "consumeLoop", map[string]any{
+		"topics": c.topics,
+	})
+
 	defer c.wg.Done()
 
 	// If batching is disabled, use the old one-by-one processing

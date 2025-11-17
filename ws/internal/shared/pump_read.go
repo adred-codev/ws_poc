@@ -12,6 +12,12 @@ import (
 
 // readPump reads messages from the WebSocket connection
 func (s *Server) readPump(c *Client) {
+	// CRITICAL: Panic recovery must be FIRST defer (executes LAST in LIFO order)
+	// This catches any panics including those in cleanup code
+	defer monitoring.RecoverPanic(s.logger, "readPump", map[string]any{
+		"client_id": c.id,
+	})
+
 	var disconnectReason string
 	var initiatedBy string
 

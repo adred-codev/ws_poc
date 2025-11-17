@@ -230,6 +230,9 @@ func (s *Server) Start() error {
 
 	s.wg.Add(1)
 	go func() {
+		// CRITICAL: Panic recovery must be FIRST defer (executes LAST in LIFO order)
+		defer monitoring.RecoverPanic(s.logger, "server.Serve", nil)
+
 		defer s.wg.Done()
 		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			s.logger.Error().

@@ -139,6 +139,11 @@ func (s *Shard) Shutdown() error {
 
 // runBroadcastListener listens to the central BroadcastBus and broadcasts messages locally
 func (s *Shard) runBroadcastListener() {
+	// CRITICAL: Panic recovery must be FIRST defer (executes LAST in LIFO order)
+	defer monitoring.RecoverPanic(s.logger, "runBroadcastListener", map[string]any{
+		"shard_id": s.ID,
+	})
+
 	defer s.wg.Done()
 	s.logger.Info().Msg("Broadcast listener started")
 
