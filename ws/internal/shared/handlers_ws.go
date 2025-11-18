@@ -38,7 +38,10 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Connection rate limiting (DoS protection)
-	if s.connectionRateLimiter != nil {
+	// IMPORTANT: Skip rate limiting for internal LoadBalancer traffic (127.0.0.1)
+	// The LoadBalancer proxies external clients to shards via localhost,
+	// and we don't want to rate limit our own internal connections.
+	if s.connectionRateLimiter != nil && clientIP != "127.0.0.1" {
 		if !s.connectionRateLimiter.CheckConnectionAllowed(clientIP) {
 			s.logger.Warn().
 				Str("client_ip", clientIP).
