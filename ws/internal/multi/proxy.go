@@ -119,18 +119,49 @@ func (p *SlotAwareProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), p.dialTimeout)
 	defer cancel()
 
-	backendConn, _, err := p.dialer.DialContext(ctx, p.backendURL.String(), nil)
+	// DEBUG: Log before backend dial attempt
+	dialStart := time.Now()
+	p.logger.Debug().
+		Str("backend_url", p.backendURL.String()).
+		Dur("dial_timeout", p.dialTimeout).
+		Str("client_remote_addr", r.RemoteAddr).
+		Msg("Attempting to dial backend shard")
+
+	backendConn, resp, err := p.dialer.DialContext(ctx, p.backendURL.String(), nil)
+	dialDuration := time.Since(dialStart)
+
 	if err != nil {
-		p.logger.Error().
+		// DEBUG: Enhanced backend dial failure logging
+		logEvent := p.logger.Error().
 			Err(err).
 			Str("backend_url", p.backendURL.String()).
-			Msg("Backend dial failed")
+			Dur("dial_duration_ms", dialDuration).
+			Dur("elapsed_since_start_ms", time.Since(startTime)).
+			Str("client_remote_addr", r.RemoteAddr).
+			Int("shard_id", p.shard.ID)
+
+		// Add HTTP response details if available
+		if resp != nil {
+			logEvent = logEvent.
+				Int("http_status", resp.StatusCode).
+				Str("http_status_text", resp.Status)
+		}
+
+		logEvent.Msg("Backend dial failed")
+
 		// Send error to client
 		closeMsg := websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "Backend unavailable")
 		clientConn.WriteControl(websocket.CloseMessage, closeMsg, time.Now().Add(time.Second))
 		return // Slot released by defer
 	}
 	defer backendConn.Close()
+
+	// DEBUG: Backend dial successful
+	p.logger.Debug().
+		Str("backend_url", p.backendURL.String()).
+		Dur("dial_duration_ms", dialDuration).
+		Int("shard_id", p.shard.ID).
+		Msg("Backend dial successful")
 
 	p.logger.Debug().
 		Str("backend_url", p.backendURL.String()).

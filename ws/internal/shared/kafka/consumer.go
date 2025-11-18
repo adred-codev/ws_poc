@@ -183,9 +183,14 @@ func (c *Consumer) Stop() error {
 // consumeLoop continuously polls for messages
 func (c *Consumer) consumeLoop() {
 	// CRITICAL: Panic recovery must be FIRST defer (executes LAST in LIFO order)
-	defer monitoring.RecoverPanic(c.logger, "consumeLoop", map[string]any{
-		"topics": c.topics,
-	})
+	defer func() {
+		if r := recover(); r != nil {
+			c.logger.Error().
+				Interface("panic", r).
+				Str("goroutine", "consumeLoop").
+				Msg("Panic recovered in consumeLoop")
+		}
+	}()
 
 	defer c.wg.Done()
 

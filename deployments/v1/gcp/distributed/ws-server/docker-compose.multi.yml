@@ -25,21 +25,24 @@ services:
       - "0.0.0.0:3004:3001"  # LoadBalancer port (external:internal)
     command:
       - "./odin-ws-multi"
-      - "--shards=3"
-      - "--base-port=3002"
-      - "--lb-addr=:3001"
-    # Load configuration in priority order:
+      - "--shards=${NUM_SHARDS:-3}"
+      - "--base-port=${SHARD_BASE_PORT:-3002}"
+      - "--lb-addr=${LB_ADDR:-:3001}"
+    # Load configuration in priority order (last wins):
     # 1. shared/base.env - Common defaults
     # 2. shared/kafka-topics.env - Topic configuration
     # 3. shared/ports.env - Port mappings
-    # 4. overrides.multi.env - GCP multi-core production values
+    # 4. overrides.multi.env - GCP multi-core production values (NUM_SHARDS=3)
     # 5. .env.production - Secrets and instance-specific overrides
+    # 6. .env.debug - Optional debug overrides (create from .env.debug.template)
+    #                 File presence = debug mode, delete to return to production
     env_file:
       - ../../../shared/base.env
       - ../../../shared/kafka-topics.env
       - ../../../shared/ports.env
       - ./overrides.multi.env
       - .env.production
+      - .env.debug
     restart: unless-stopped
     deploy:
       resources:

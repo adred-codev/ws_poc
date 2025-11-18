@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/adred-codev/ws_poc/internal/shared/monitoring"
 	"github.com/gobwas/ws"
@@ -12,18 +13,36 @@ import (
 
 // WebSocket upgrade handler
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
+	clientIP := getClientIP(r)
+
+	// DEBUG: Log incoming WebSocket upgrade request
+	s.logger.Debug().
+		Str("remote_addr", r.RemoteAddr).
+		Str("client_ip", clientIP).
+		Str("user_agent", r.Header.Get("User-Agent")).
+		Str("origin", r.Header.Get("Origin")).
+		Str("upgrade", r.Header.Get("Upgrade")).
+		Str("connection", r.Header.Get("Connection")).
+		Str("sec_websocket_version", r.Header.Get("Sec-WebSocket-Version")).
+		Str("sec_websocket_key", r.Header.Get("Sec-WebSocket-Key")).
+		Msg("WebSocket upgrade request received")
+
 	// Reject new connections during graceful shutdown
 	if atomic.LoadInt32(&s.shuttingDown) == 1 {
+		s.logger.Debug().
+			Str("client_ip", clientIP).
+			Msg("Connection rejected: server shutting down")
 		http.Error(w, "Server is shutting down", http.StatusServiceUnavailable)
 		return
 	}
 
 	// Connection rate limiting (DoS protection)
 	if s.connectionRateLimiter != nil {
-		clientIP := getClientIP(r)
 		if !s.connectionRateLimiter.CheckConnectionAllowed(clientIP) {
 			s.logger.Warn().
-				Str("ip", clientIP).
+				Str("client_ip", clientIP).
+				Dur("elapsed_ms", time.Since(startTime)).
 				Msg("Connection rejected: rate limit exceeded")
 			http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
 			return
@@ -34,36 +53,69 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	shouldAccept, reason := s.resourceGuard.ShouldAcceptConnection()
 	if !shouldAccept {
 		currentConnections := atomic.LoadInt64(&s.stats.CurrentConnections)
-		// Removed audit logger call - rejections tracked via Prometheus metrics
-		// s.auditLogger.Warning("ConnectionRejected", reason, map[string]any{...})
-		s.logger.Debug().
+		// DEBUG: Enhanced ResourceGuard rejection logging
+		s.logger.Warn().
+			Str("client_ip", clientIP).
 			Int64("current_connections", currentConnections).
 			Int("max_connections", s.config.MaxConnections).
 			Str("reason", reason).
+			Dur("elapsed_ms", time.Since(startTime)).
 			Msg("Connection rejected by ResourceGuard")
 		monitoring.ConnectionsFailed.Inc()
 		http.Error(w, "Server overloaded", http.StatusServiceUnavailable)
 		return
 	}
 
+	// DEBUG: ResourceGuard accepted connection
+	s.logger.Debug().
+		Str("client_ip", clientIP).
+		Int64("current_connections", atomic.LoadInt64(&s.stats.CurrentConnections)).
+		Int("max_connections", s.config.MaxConnections).
+		Msg("ResourceGuard accepted connection")
+
 	// Try to acquire connection slot (blocking, no timeout)
 	// In multi-core mode with LoadBalancer, capacity control happens at LB level
 	// This semaphore just ensures we don't exceed shard capacity
 	s.connectionsSem <- struct{}{}
 
+	// DEBUG: Log before upgrade attempt
+	upgradeStart := time.Now()
+	s.logger.Debug().
+		Str("client_ip", clientIP).
+		Dur("pre_upgrade_elapsed_ms", time.Since(startTime)).
+		Msg("Attempting WebSocket upgrade")
+
 	conn, _, _, err := ws.UpgradeHTTP(r, w)
+	upgradeDuration := time.Since(upgradeStart)
+
 	if err != nil {
 		<-s.connectionsSem // Release slot
+		// DEBUG: Enhanced upgrade failure logging
 		s.auditLogger.Error("WebSocketUpgradeFailed", "Failed to upgrade HTTP connection to WebSocket", map[string]any{
-			"error":      err.Error(),
-			"remoteAddr": r.RemoteAddr,
+			"error":            err.Error(),
+			"remoteAddr":       r.RemoteAddr,
+			"client_ip":        clientIP,
+			"upgrade_duration": upgradeDuration.String(),
+			"total_elapsed":    time.Since(startTime).String(),
 		})
 		monitoring.ConnectionsFailed.Inc()
 		s.logger.Error().
 			Err(err).
-			Msg("Failed to upgrade connection")
+			Str("client_ip", clientIP).
+			Dur("upgrade_duration_ms", upgradeDuration).
+			Dur("total_elapsed_ms", time.Since(startTime)).
+			Str("user_agent", r.Header.Get("User-Agent")).
+			Str("sec_websocket_version", r.Header.Get("Sec-WebSocket-Version")).
+			Msg("WebSocket upgrade failed")
 		return
 	}
+
+	// DEBUG: Successful upgrade logging
+	s.logger.Debug().
+		Str("client_ip", clientIP).
+		Dur("upgrade_duration_ms", upgradeDuration).
+		Dur("total_elapsed_ms", time.Since(startTime)).
+		Msg("WebSocket upgrade successful")
 
 	client := s.connections.Get()
 	client.conn = conn
@@ -72,10 +124,18 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	s.clients.Store(client, true)
 	atomic.AddInt64(&s.stats.TotalConnections, 1)
-	atomic.AddInt64(&s.stats.CurrentConnections, 1)
+	currentConns := atomic.AddInt64(&s.stats.CurrentConnections, 1)
 
 	// Update Prometheus metrics
 	monitoring.UpdateConnectionMetrics(s)
+
+	// DEBUG: Client fully initialized, starting pumps
+	s.logger.Info().
+		Str("client_ip", clientIP).
+		Int64("client_id", client.id).
+		Int64("current_connections", currentConns).
+		Dur("total_setup_time_ms", time.Since(startTime)).
+		Msg("Client connected successfully - pumps starting")
 
 	go s.writePump(client)
 	go s.readPump(client)
