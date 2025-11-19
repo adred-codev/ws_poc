@@ -76,6 +76,8 @@ func (p *SlotAwareProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// STEP 2: Try to acquire slot (upgrade succeeded)
+	// Client receives: WebSocket Close Frame (code: 1012, reason: "Server overloaded")
+	// See: docs/API_REJECTION_RESPONSES.md (Scenario 5)
 	if !p.shard.TryAcquireSlot() {
 		p.logger.Warn().
 			Int("available_slots", p.shard.GetAvailableSlots()).
@@ -150,6 +152,8 @@ func (p *SlotAwareProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		logEvent.Msg("Backend dial failed")
 
 		// Send error to client
+		// Client receives: WebSocket Close Frame (code: 1011, reason: "Backend unavailable")
+		// See: docs/API_REJECTION_RESPONSES.md (Scenario 6)
 		closeMsg := websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "Backend unavailable")
 		clientConn.WriteControl(websocket.CloseMessage, closeMsg, time.Now().Add(time.Second))
 		return // Slot released by defer

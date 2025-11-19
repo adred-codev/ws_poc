@@ -29,6 +29,8 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		Msg("WebSocket upgrade request received")
 
 	// Reject new connections during graceful shutdown
+	// Client receives: HTTP 503 "Server is shutting down"
+	// See: docs/API_REJECTION_RESPONSES.md (Scenario 1)
 	if atomic.LoadInt32(&s.shuttingDown) == 1 {
 		s.logger.Debug().
 			Str("client_ip", clientIP).
@@ -41,6 +43,8 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// IMPORTANT: Skip rate limiting for internal LoadBalancer traffic (127.0.0.1)
 	// The LoadBalancer proxies external clients to shards via localhost,
 	// and we don't want to rate limit our own internal connections.
+	// Client receives: HTTP 429 "Rate limit exceeded" (non-localhost only)
+	// See: docs/API_REJECTION_RESPONSES.md (Scenario 2)
 	if s.connectionRateLimiter != nil && clientIP != "127.0.0.1" {
 		if !s.connectionRateLimiter.CheckConnectionAllowed(clientIP) {
 			s.logger.Warn().
@@ -53,6 +57,9 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ResourceGuard admission control - static limits with safety checks
+	// Checks: goroutine limit, CPU usage, memory usage, connection count
+	// Client receives: HTTP 503 "Server overloaded"
+	// See: docs/API_REJECTION_RESPONSES.md (Scenario 3)
 	shouldAccept, reason := s.resourceGuard.ShouldAcceptConnection()
 	if !shouldAccept {
 		currentConnections := atomic.LoadInt64(&s.stats.CurrentConnections)

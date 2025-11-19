@@ -139,6 +139,8 @@ func (lb *LoadBalancer) Shutdown() {
 // Selects a shard and delegates to SlotAwareProxy which handles all slot lifecycle management.
 func (lb *LoadBalancer) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Select shard with most available capacity
+	// Client receives: HTTP 503 "Server overloaded" (all shards full)
+	// See: docs/API_REJECTION_RESPONSES.md (Scenario 4)
 	selectedShardIndex, selectedShard := lb.selectShard()
 	if selectedShard == nil {
 		lb.logger.Warn().Msg("No available shards to accept connection")
