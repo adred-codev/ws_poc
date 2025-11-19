@@ -69,7 +69,7 @@ func main() {
 	})
 	systemMonitor := monitoring.GetSystemMonitor(structuredLogger)
 	systemMonitor.StartMonitoring(cfg.MetricsInterval)
-	logger.Printf("✅ SystemMonitor singleton started (centralizes CPU/memory measurement)")
+	logger.Printf("SystemMonitor singleton started (centralizes CPU/memory measurement)")
 
 	// Create and configure server with loaded configuration
 	kafkaBrokers := []string{}
@@ -123,7 +123,7 @@ func main() {
 			logger.Fatalf("Failed to start Kafka consumer pool: %v", err)
 		}
 
-		logger.Printf("✅ Shared Kafka consumer pool started (replaces %d per-shard consumers)", *numShards)
+		logger.Printf("Shared Kafka consumer pool started (replaces %d per-shard consumers)", *numShards)
 	}
 
 	// Create and start shards

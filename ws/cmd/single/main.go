@@ -67,7 +67,7 @@ func main() {
 	})
 	systemMonitor := monitoring.GetSystemMonitor(structuredLogger)
 	systemMonitor.StartMonitoring(cfg.MetricsInterval)
-	logger.Printf("✅ SystemMonitor singleton started (centralizes CPU/memory measurement)")
+	logger.Printf("SystemMonitor singleton started (centralizes CPU/memory measurement)")
 
 	// Create and configure server with loaded configuration
 	// Parse Kafka brokers from comma-separated string

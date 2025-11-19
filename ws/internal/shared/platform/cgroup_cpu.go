@@ -372,7 +372,7 @@ func NewCPUMonitor(logger zerolog.Logger) *CPUMonitor {
 			Int("cgroup_version", containerCPU.cgroupVersion).
 			Float64("cpus_allocated", containerCPU.GetAllocation()).
 			Str("cgroup_path", containerCPU.cgroupPath).
-			Msg("✅ Using container-aware CPU measurement")
+			Msg("Using container-aware CPU measurement")
 
 		return &CPUMonitor{
 			mode:         "container",
@@ -384,7 +384,7 @@ func NewCPUMonitor(logger zerolog.Logger) *CPUMonitor {
 	// Fallback to host CPU measurement
 	logger.Warn().
 		Err(err).
-		Msg("⚠️  Failed to initialize container CPU measurement, falling back to host CPU")
+		Msg("Failed to initialize container CPU measurement, falling back to host CPU")
 
 	return &CPUMonitor{
 		mode:   "host",
