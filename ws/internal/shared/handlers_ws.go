@@ -9,6 +9,7 @@ import (
 
 	"github.com/adred-codev/ws_poc/internal/shared/monitoring"
 	"github.com/gobwas/ws"
+	"github.com/rs/zerolog"
 )
 
 // WebSocket upgrade handler
@@ -77,11 +78,14 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// DEBUG: ResourceGuard accepted connection
-	s.logger.Debug().
-		Str("client_ip", clientIP).
-		Int64("current_connections", atomic.LoadInt64(&s.stats.CurrentConnections)).
-		Int("max_connections", s.config.MaxConnections).
-		Msg("ResourceGuard accepted connection")
+	// Guard with level check to avoid unnecessary atomic load when debug disabled
+	if s.logger.GetLevel() <= zerolog.DebugLevel {
+		s.logger.Debug().
+			Str("client_ip", clientIP).
+			Int64("current_connections", atomic.LoadInt64(&s.stats.CurrentConnections)).
+			Int("max_connections", s.config.MaxConnections).
+			Msg("ResourceGuard accepted connection")
+	}
 
 	// Try to acquire connection slot (blocking, no timeout)
 	// In multi-core mode with LoadBalancer, capacity control happens at LB level

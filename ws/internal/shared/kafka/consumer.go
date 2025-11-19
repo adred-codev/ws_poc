@@ -224,12 +224,16 @@ func (c *Consumer) consumeLoop() {
 
 		c.incrementBatches()
 
-		// Log batching metrics periodically
-		if batches := c.getBatchCount(); batches%100 == 0 {
-			c.logger.Debug().
-				Uint64("batches_sent", batches).
-				Int("last_batch_size", len(batch)).
-				Msg("Kafka batching metrics")
+		// Log batching metrics periodically (only when debug enabled)
+		// IMPORTANT: Guard with level check to avoid expensive mutex lock in getBatchCount()
+		// Cost when disabled: ~1ns (level check) vs ~100ns (modulo + mutex lock)
+		if c.logger.GetLevel() <= zerolog.DebugLevel {
+			if batches := c.getBatchCount(); batches%100 == 0 {
+				c.logger.Debug().
+					Uint64("batches_sent", batches).
+					Int("last_batch_size", len(batch)).
+					Msg("Kafka batching metrics")
+			}
 		}
 
 		// Clear batch

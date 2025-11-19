@@ -226,13 +226,17 @@ func (b *BroadcastBus) fanOutBatch(batch []*BroadcastMessage) {
 	// Track batching metrics
 	b.incrementBatches()
 
-	// Log batching metrics periodically
-	if batches := b.getBatchCount(); batches%100 == 0 {
-		b.logger.Debug().
-			Uint64("batches_sent", batches).
-			Uint64("messages_sent", b.getMessageCount()).
-			Int("last_batch_size", len(batch)).
-			Msg("Broadcast batching metrics")
+	// Log batching metrics periodically (only when debug enabled)
+	// IMPORTANT: Guard with level check to avoid expensive mutex locks in getBatchCount()/getMessageCount()
+	// Cost when disabled: ~1ns (level check) vs ~150ns (modulo + 2 mutex locks)
+	if b.logger.GetLevel() <= zerolog.DebugLevel {
+		if batches := b.getBatchCount(); batches%100 == 0 {
+			b.logger.Debug().
+				Uint64("batches_sent", batches).
+				Uint64("messages_sent", b.getMessageCount()).
+				Int("last_batch_size", len(batch)).
+				Msg("Broadcast batching metrics")
+		}
 	}
 }
 
